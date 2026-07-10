@@ -1,0 +1,51 @@
+{
+  "name": "spectrum-fe",
+  "private": true,
+  "license": "CC0-1.0",
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "init:env": "node scripts/init-env.mjs",
+    "bake:colors": "node scripts/bake-token-meta.mjs",
+    "build:snapshot": "node scripts/build-snapshot.mjs",
+    "build:tokenlist": "node scripts/build-tokenlist.mjs",
+    "check:config": "node scripts/check-config.mjs",
+    "verify:chain": "node ../create/verify.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "build:sitemap": "node scripts/build-sitemap.mjs",
+    "prebuild": "node scripts/check-config.mjs && node scripts/build-sitemap.mjs",
+    "build": "tsc -b && vite build",
+    "package": "npm run build && node scripts/package-site.mjs",
+    "package:only": "node scripts/package-site.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@paper-design/shaders-react": "^0.0.77",
+    "@tanstack/react-query": "^5.62.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.0",
+    "recharts": "^3.8.1",
+    "three": "^0.184.0",
+    "viem": "^2.21.0",
+    "wagmi": "^2.14.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.184.1",
+    "@vitejs/plugin-react": "^4.3.0",
+    "jimp": "^1.6.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.9"
+  }
+}

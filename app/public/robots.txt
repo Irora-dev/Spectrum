@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# Operator: add your own absolute sitemap URL when you host this build, e.g.
+# Sitemap: https://<your-origin>/sitemap.xml

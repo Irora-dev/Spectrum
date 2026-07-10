@@ -1,0 +1,6 @@
+# Coordination docs are shared but rarely structurally edited. Union-merge concurrent
+# edits so adjacent-line changes combine instead of conflicting. This is a SAFETY NET,
+# not the mechanism: live status lives in each lane's PR + its branch NOTES.md, so the
+# board itself should almost never be edited mid-work. (Caveat: union can duplicate an
+# in-place edit — review the result if it ever triggers.)
+SPECTRUM-MINI-BUILD.md merge=union

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <clipPath id="pc"><path d="M24 8 L41 38 L7 38 Z"/></clipPath>
+  </defs>
+  <rect width="48" height="48" rx="10" fill="#07070b"/>
+  <path d="M24 8 L41 38 L7 38 Z" fill="#0b0b12"/>
+  <g clip-path="url(#pc)" stroke-linecap="round" stroke-width="2.1">
+    <line x1="24" y1="24" x2="11" y2="38" stroke="rgb(255,114,125)"/>
+    <line x1="24" y1="24" x2="18" y2="38" stroke="rgb(216,81,205)"/>
+    <line x1="24" y1="24" x2="24" y2="38" stroke="rgb(123,92,255)"/>
+    <line x1="24" y1="24" x2="30" y2="38" stroke="rgb(74,185,255)"/>
+    <line x1="24" y1="24" x2="37" y2="38" stroke="rgb(52,219,224)"/>
+    <line x1="24" y1="24" x2="33" y2="25" stroke="rgb(53,223,251)"/>
+    <line x1="24" y1="24" x2="38" y2="33" stroke="rgb(53,218,217)"/>
+    <line x1="24" y1="24" x2="15" y2="25" stroke="rgb(255,81,177)"/>
+    <line x1="24" y1="24" x2="10" y2="33" stroke="rgb(255,122,112)"/>
+  </g>
+  <path d="M24 8 L41 38 L7 38 Z" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>

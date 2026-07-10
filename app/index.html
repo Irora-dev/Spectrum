@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spectrum · onchain baskets</title>
+    <meta name="description" content="Spectrum is software for creating and reading onchain basket tokens on Base. Each basket is a single token that holds a whole basket of assets." />
+    <meta name="theme-color" content="#07070b" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Design-style type system: the faces every design style draws from (spectral = Chakra
+         Petch + JetBrains + Space Grotesk; umbra = Inter; sylvan = Newsreader serif). Loaded
+         so a style reads intentionally, not on system fallbacks. structure.ts pins per style. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Open Graph + Twitter (static defaults). A client-rendered SPA can't emit
+         per-basket cards without prerender, so shared links show this site card.
+         %VITE_SITE_URL% is substituted at build time from src/site.config.json's
+         siteUrl (or the VITE_SITE_URL override) —
+         it ships empty by default. Operator sets their OWN origin; never point
+         this at any property of this package's authors. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Spectrum" />
+    <meta property="og:title" content="Spectrum · onchain baskets" />
+    <meta property="og:description" content="Spectrum is software for creating and reading onchain basket tokens on Base. Each basket is a single token that holds a whole basket of assets." />
+    <meta property="og:url" content="%VITE_SITE_URL%/" />
+    <meta property="og:image" content="%VITE_SITE_URL%/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Spectrum — onchain baskets. Many assets. One token." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Spectrum · onchain baskets" />
+    <meta name="twitter:description" content="Spectrum is software for creating and reading onchain basket tokens on Base. Each basket is a single token that holds a whole basket of assets." />
+    <meta name="twitter:image" content="%VITE_SITE_URL%/og.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

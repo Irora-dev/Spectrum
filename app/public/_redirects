@@ -1,0 +1,7 @@
+# Nested routes load their JS document-relative (vite base './'): a hard refresh of
+# /creator/0x… requests /creator/assets/index-*.js — map it back to the real bundle
+# BEFORE the SPA catch-all, or the fallback serves index.html AS the script (blank page).
+# Add a matching line whenever a new nested (multi-segment) route ships.
+/creator/assets/*  /assets/:splat  200
+/docs/assets/*     /assets/:splat  200
+/*    /index.html   200

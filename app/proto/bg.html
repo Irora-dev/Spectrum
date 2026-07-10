@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spectrum · edge-spectrum bg (tunable)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Space+Grotesk:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --text-primary: #ffffff;
+        --text-muted: #6e6481;
+        --text-dark: #3a324a;
+        --font-mono: 'Space Mono', monospace;
+        --font-num: 'Space Grotesk', sans-serif;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        background: #000; color: var(--text-primary);
+        font-family: var(--font-num); -webkit-font-smoothing: antialiased; overflow: hidden;
+      }
+      #canvas-container { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; }
+      .wrap { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 1rem; padding: 2rem; }
+      .label { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.3em; text-transform: uppercase; color: var(--text-muted); }
+      .tvl { font-family: var(--font-num); font-weight: 300; font-size: clamp(3.5rem, 8vw, 7.5rem); line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; text-shadow: 0 0 40px rgba(255,255,255,0.12); }
+      .explainer { max-width: 460px; color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
+      .row { margin-top: 1.5rem; display: flex; gap: 2.5rem; font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 1.3rem; }
+      .row .pos { color: #00f0ff; } .row .neg { color: #ff00b3; }
+
+      /* ── Tuning panel ───────────────────────────────────────────── */
+      #panel {
+        position: fixed; top: 1rem; right: 1rem; width: 250px; z-index: 50;
+        background: rgba(10,8,16,0.88); border: 1px solid var(--text-dark);
+        font-family: var(--font-mono); color: var(--text-muted); backdrop-filter: blur(8px);
+      }
+      #panel .head { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--text-dark); cursor: pointer; }
+      #panel .head b { color: #fff; font-size: 0.6rem; letter-spacing: 0.2em; }
+      #panel .head .tg { color: var(--text-muted); font-size: 0.7rem; }
+      #panel .body { padding: 0.6rem 0.75rem; display: grid; gap: 0.55rem; }
+      #panel.collapsed .body { display: none; }
+      .ctl { display: grid; grid-template-columns: 1fr auto; gap: 0.15rem 0.5rem; align-items: center; }
+      .ctl label { font-size: 0.55rem; letter-spacing: 0.12em; text-transform: uppercase; }
+      .ctl .val { color: #fff; font-size: 0.6rem; text-align: right; }
+      .ctl input[type=range] { grid-column: 1 / -1; width: 100%; height: 2px; -webkit-appearance: none; appearance: none; background: var(--text-dark); outline: none; }
+      .ctl input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; background: #00f0ff; cursor: pointer; border-radius: 0; }
+      #panel .acts { display: flex; gap: 0.4rem; margin-top: 0.25rem; }
+      #panel button { flex: 1; background: transparent; border: 1px solid var(--text-dark); color: #fff; font-family: var(--font-mono); font-size: 0.55rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 0.4rem; cursor: pointer; }
+      #panel button:hover { border-color: #fff; }
+      #out { margin-top: 0.4rem; width: 100%; min-height: 2.4rem; background: #000; border: 1px solid var(--text-dark); color: var(--text-muted); font-family: var(--font-mono); font-size: 0.5rem; padding: 0.3rem; resize: none; }
+    </style>
+  </head>
+  <body>
+    <div id="canvas-container"></div>
+
+    <div class="wrap">
+      <div class="label">Total Value Locked</div>
+      <div class="tvl">$142,059,102</div>
+      <p class="explainer">Edge-spectrum background — drag the sliders (top-right) to tune the motion and look. Black through the center keeps content legible.</p>
+      <div class="row"><span>$1,204.45 <span class="pos">+4.2%</span></span><span>$84.20 <span class="pos">+12.1%</span></span><span>$12.95 <span class="neg">-1.4%</span></span></div>
+    </div>
+
+    <div id="panel">
+      <div class="head" id="panelHead"><b>OPTICS · TUNE</b><span class="tg">[ – ]</span></div>
+      <div class="body" id="panelBody"></div>
+    </div>
+
+    <script>
+      const container = document.getElementById('canvas-container')
+      const scene = new THREE.Scene()
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+      const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false })
+      renderer.setSize(window.innerWidth, window.innerHeight)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      container.appendChild(renderer.domElement)
+
+      // Tunable parameters (defaults bumped slightly for a touch more motion).
+      const controls = [
+        { key: 'uIntensity',  label: 'Intensity',        min: 0.5,  max: 3.0,  step: 0.05,  val: 1.7  },
+        { key: 'uBandWidth',  label: 'Band width',       min: 0.06, max: 0.35, step: 0.005, val: 0.16 },
+        { key: 'uFlowAmount', label: 'Flow amount',      min: 0.0,  max: 0.7,  step: 0.01,  val: 0.42 },
+        { key: 'uFlowSpeed',  label: 'Flow speed',       min: 0.0,  max: 1.5,  step: 0.01,  val: 0.55 },
+        { key: 'uTwinkle',    label: 'Twinkle speed',    min: 0.0,  max: 1.0,  step: 0.01,  val: 0.30 },
+        { key: 'uUndulation', label: 'Undulation',       min: 0.0,  max: 0.6,  step: 0.01,  val: 0.26 },
+        { key: 'uUndSpeed',   label: 'Undulation speed', min: 0.0,  max: 0.5,  step: 0.01,  val: 0.12 },
+        { key: 'uBreathe',    label: 'Breathe',          min: 0.0,  max: 0.2,  step: 0.005, val: 0.06 },
+        { key: 'uGrain',      label: 'Grain',            min: 0.0,  max: 0.3,  step: 0.005, val: 0.10 },
+        { key: 'uCore',       label: 'Core line',        min: 0.0,  max: 2.0,  step: 0.05,  val: 1.0  },
+      ]
+
+      const uniforms = { uTime: { value: 0 } }
+      controls.forEach((c) => (uniforms[c.key] = { value: c.val }))
+
+      const vertexShader = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position, 1.0); }`
+
+      const fragmentShader = `
+        uniform float uTime, uIntensity, uBandWidth, uFlowAmount, uFlowSpeed, uTwinkle, uUndulation, uUndSpeed, uBreathe, uGrain, uCore;
+        varying vec2 vUv;
+        float random(vec2 st){ return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+        float noise(in vec2 st){
+          vec2 i = floor(st); vec2 f = fract(st);
+          float a = random(i); float b = random(i + vec2(1.0,0.0));
+          float c = random(i + vec2(0.0,1.0)); float d = random(i + vec2(1.0,1.0));
+          vec2 u = f*f*(3.0-2.0*f);
+          return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
+        }
+        void main(){
+          vec2 uv = vUv;
+          float edgeDist = min(uv.x, 1.0 - uv.x); // 0 at edges, 0.5 at center
+
+          float core = 1.0 - smoothstep(0.0, 0.008, edgeDist);
+          vec3 coreColor = vec3(1.0, 0.92, 0.96) * core * uCore;
+
+          vec3 spectralColor = vec3(0.0);
+          spectralColor += vec3(0.0, 0.94, 1.0) * smoothstep(0.004, 0.030, edgeDist) * (1.0 - smoothstep(0.025, 0.070, edgeDist));
+          spectralColor += vec3(1.0, 0.0, 0.70) * smoothstep(0.015, 0.050, edgeDist) * (1.0 - smoothstep(0.045, 0.100, edgeDist));
+          spectralColor += vec3(1.0, 0.5, 0.0)  * smoothstep(0.040, 0.080, edgeDist) * (1.0 - smoothstep(0.075, 0.130, edgeDist));
+
+          // striation with a slow twinkle
+          float barcodeNoise = noise(vec2(uv.x * 200.0 + uTime * uTwinkle, uv.y * 0.6));
+          spectralColor *= barcodeNoise * uIntensity;
+
+          // brightness wave travelling up the bands (the main visible motion)
+          float flow = (1.0 - uFlowAmount) + uFlowAmount * sin(uv.y * 5.0 - uTime * uFlowSpeed);
+          spectralColor *= flow;
+
+          // slow large-scale undulation
+          float aurora = (1.0 - uUndulation) + uUndulation * noise(vec2(uv.y * 2.0, uTime * uUndSpeed));
+          spectralColor *= aurora;
+
+          // global breathe
+          float breathe = (1.0 - uBreathe) + uBreathe * sin(uTime * 0.18);
+          spectralColor *= breathe; coreColor *= breathe;
+
+          float vertFade = 0.55 + 0.45 * sin(uv.y * 3.1415);
+          spectralColor *= vertFade; coreColor *= vertFade;
+
+          float edgeMask = 1.0 - smoothstep(uBandWidth * 0.4, uBandWidth, edgeDist);
+          vec3 bgColor = vec3(0.086, 0.070, 0.141) * edgeMask * 0.7;
+          vec3 finalColor = bgColor + (coreColor + spectralColor) * edgeMask;
+
+          float grain = random(uv + vec2(uTime * 0.08, uTime * 0.08));
+          finalColor -= grain * uGrain * edgeMask;
+          finalColor += grain * 0.04 * spectralColor;
+          finalColor += grain * 0.012;
+
+          gl_FragColor = vec4(finalColor, 1.0);
+        }
+      `
+
+      const material = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, depthWrite: false, depthTest: false })
+      scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material))
+
+      window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight))
+
+      const clock = typeof performance !== 'undefined' ? performance : Date
+      const startT = clock.now()
+      function animate() {
+        requestAnimationFrame(animate)
+        uniforms.uTime.value = (clock.now() - startT) / 1000
+        renderer.render(scene, camera)
+      }
+      animate()
+
+      // ── Build the tuning panel ────────────────────────────────────
+      const body = document.getElementById('panelBody')
+      controls.forEach((c) => {
+        const row = document.createElement('div')
+        row.className = 'ctl'
+        row.innerHTML = `<label>${c.label}</label><span class="val" id="v_${c.key}">${c.val}</span>
+          <input type="range" min="${c.min}" max="${c.max}" step="${c.step}" value="${c.val}" id="r_${c.key}">`
+        body.appendChild(row)
+        const input = row.querySelector('input')
+        const val = row.querySelector('.val')
+        input.addEventListener('input', (e) => {
+          const v = parseFloat(e.target.value)
+          uniforms[c.key].value = v
+          val.textContent = v
+        })
+      })
+      const acts = document.createElement('div')
+      acts.className = 'acts'
+      acts.innerHTML = `<button id="resetBtn">Reset</button><button id="copyBtn">Copy values</button>`
+      body.appendChild(acts)
+      const out = document.createElement('textarea')
+      out.id = 'out'; out.readOnly = true; out.placeholder = 'settings JSON appears here'
+      body.appendChild(out)
+
+      const snapshot = () => Object.fromEntries(controls.map((c) => [c.key, uniforms[c.key].value]))
+      document.getElementById('copyBtn').addEventListener('click', () => {
+        const json = JSON.stringify(snapshot())
+        out.value = json
+        try { navigator.clipboard.writeText(json) } catch (e) {}
+        console.log('spectrum settings', snapshot())
+      })
+      document.getElementById('resetBtn').addEventListener('click', () => {
+        controls.forEach((c) => {
+          uniforms[c.key].value = c.val
+          document.getElementById('r_' + c.key).value = c.val
+          document.getElementById('v_' + c.key).textContent = c.val
+        })
+      })
+      const panel = document.getElementById('panel')
+      document.getElementById('panelHead').addEventListener('click', () => panel.classList.toggle('collapsed'))
+
+      // Exposed for verification/debugging.
+      window.__spectrum = { uniforms, renderer, scene, camera, snapshot }
+    </script>
+  </body>
+</html>

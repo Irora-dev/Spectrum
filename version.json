@@ -1,0 +1,5 @@
+{
+  "version": "2026.07.10",
+  "note": "First public release: the full operator front end, the /setup studio, the agent runbook, canonical contracts wired by default.",
+  "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
+}

@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+*.local
+*-site.zip
+site.zip
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.vite
+*.tsbuildinfo
+.claude/settings.local.json

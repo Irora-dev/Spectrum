@@ -1,0 +1,14 @@
+{
+  "name": "spectrum-og-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test:render": "node test-render.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
+    "satori": "^0.12.0"
+  }
+}

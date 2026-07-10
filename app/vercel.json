@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/creator/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/docs/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

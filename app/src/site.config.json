@@ -1,0 +1,10 @@
+{
+  "siteUrl": "",
+  "feeWallet": "",
+  "features": {
+    "wallet": false,
+    "deploy": false,
+    "trading": false,
+    "swap": false
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "Spectrum Baskets",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "keywords": [
+    "spectrum",
+    "basket",
+    "onchain index"
+  ],
+  "tokens": []
+}

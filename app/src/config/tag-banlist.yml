@@ -1,0 +1,34 @@
+# Tag ban list (R+C 2026-07-06): creator tags are free-form and signed, so the
+# SITE filters what it will render/autocomplete — "take out the most egregious
+# from the get go", nothing more (edgy-funny stays; this is not a profanity
+# filter). Matching is whole-word within a tag plus compact-phrase containment,
+# so ordinary words that merely contain a banned string do not trip it.
+# Operators: extend freely — one entry per line.
+
+# slurs (the unambiguous worst)
+- nigger
+- nigga
+- faggot
+- kike
+- spic
+- chink
+- wetback
+- tranny
+- raghead
+
+# terrorism / atrocity
+- isis
+- alqaeda
+- al-qaeda
+- taliban
+- hitler
+- swastika
+- 1488
+- kkk
+
+# sexual abuse / minors
+- csam
+- childporn
+- child porn
+- loli
+- rape

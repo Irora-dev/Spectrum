@@ -1,0 +1,9 @@
+# Netlify build config — connect this repo to Netlify and nothing else needs setting.
+# Base `app` also makes Netlify auto-detect the OG edge function
+# (app/netlify/edge-functions/og.ts — it self-declares its routes); SPA deep links
+# ride app/public/_redirects. Add your VITE_* env vars in the Netlify dashboard
+# (they ship publicly in the client bundle — use origin-restricted keys).
+[build]
+  base = "app"
+  command = "npm run build"
+  publish = "dist"

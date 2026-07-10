@@ -1,0 +1,610 @@
+@import "tailwindcss";
+
+@theme {
+  /* Typefaces */
+  --font-display: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+  /* Numeric / display figures (TVL, prices) — set via the OPTICS·TUNE exploration */
+  --font-num: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+
+  /* Surfaces — near-black with a cool tint, layered upward */
+  --color-void: #07070b;
+  --color-panel: #0c0c12;
+  --color-panel-2: #111119;
+  --color-line: #1c1c28;
+  --color-line-bright: #2c2c3c;
+
+  /* Ink ramp */
+  --color-ink: #e8e8f0;
+  --color-ink-dim: #8b8b9e;
+  --color-ink-faint: #565669;
+
+  /* Accents */
+  --color-violet: #7b5cff;
+  --color-violet-bright: #a48bff;
+  --color-violet-deep: #4326a8;
+  --color-alert: #ff3b52;
+  --color-teal: #34d6c4;
+
+  /* Optics palette — tied to the spectrum background (edge dispersal) */
+  --color-cyan: #35e0ff;
+  --color-magenta: #ff4db8;
+  --color-amber: #ff9248;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-void);
+  /* Faint violet vignette + a barely-there technical grid */
+  background-image:
+    radial-gradient(
+      120% 80% at 50% -10%,
+      color-mix(in srgb, var(--color-violet) 10%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--color-line) 45%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-line) 45%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 100% 100%, 72px 72px, 72px 72px;
+  background-attachment: fixed;
+  color: var(--color-ink);
+  /* Body face is per-style: spectral keeps the mono technical voice; umbra/sylvan switch to a
+     sans body (structure.ts sets --font-body). Falls back to mono so the default is unchanged. */
+  font-family: var(--font-body, var(--font-mono));
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Raised card surface — lifted a few shades above the void (cool-tinted) so panels
+   read as distinct glass instead of a near-invisible wash on near-black. Single knob:
+   tune `background-color` here to lighten/darken every `.card-surface` at once.
+   Pair with `backdrop-blur-md` + a radius utility; sub-panels stay darker (bg-black/*)
+   for layered depth. */
+.card-surface {
+  /* Surface treatment comes from the active design style's --st-* vars (set by
+     applyBrand → structureToCssVars). Fallbacks = the reference glass, so the default
+     `spectral` build + the pre-hydration paint are byte-identical to before. A solid
+     style (umbra/sylvan) sets an OPAQUE --st-card-bg, so even where a component still
+     adds backdrop-blur the panel reads solid (nothing shows through). */
+  background: var(--st-card-bg, rgba(23, 23, 32, 0.78));
+  border: var(--st-card-border, 1px solid rgba(255, 255, 255, 0.1));
+  box-shadow: var(--st-card-shadow, inset 0 1px 0 rgba(255, 255, 255, 0.05));
+}
+
+/* Tabular figures everywhere numbers matter (also on by default via the body
+   `font-feature-settings: "tnum"`; this stays as the explicit opt-in for islands
+   that reset font features). */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tactile press — a subtle scale-down on click. Always 0.96 (anything below 0.95
+   reads as exaggerated). Bundles the usual hover transitions so a single
+   transition-property covers colour + press in one declaration — never
+   `transition: all`. Use in place of `transition-colors` on buttons/links; use
+   `press-lg` on large surfaces (cards) where a full 0.96 would feel heavy. */
+.press {
+  transition-property: color, background-color, border-color, box-shadow, scale;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.press:active {
+  scale: 0.96;
+}
+.press-lg {
+  transition: scale 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+.press-lg:active {
+  scale: 0.985;
+}
+@media (prefers-reduced-motion: reduce) {
+  .press:active,
+  .press-lg:active {
+    scale: 1;
+  }
+}
+
+/* Image containment outline — 1px, PURE white at 10% for this dark theme (never a
+   tinted near-black, which reads as dirt on the edge). Drawn 1px inside the edge
+   so it never changes layout size; modern `outline` follows `border-radius`, so it
+   works on circular logos too. */
+.img-outline {
+  outline: 1px solid rgba(255, 255, 255, 0.1);
+  outline-offset: -1px;
+}
+
+/* Headings balance their line lengths; body copy avoids orphans. Scoped to real
+   semantic elements (most display type in the app is divs, which opt in via the
+   Tailwind `text-balance`/`text-pretty` utilities where it matters). */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+
+/* SPECTRUM wordmark — a prism of light refracts across the letters. Two
+   spectral bands (crossing angles, opposite directions, different widths/speeds)
+   drift out and back on an eased path, so the highlights cross and interfere
+   like dispersed light dancing across the title rather than a band on a track. */
+.spectrum-wordmark {
+  display: inline-block;
+  /* BOTTOM layer is fully opaque everywhere (ink margins + a spectral band) so
+     the text is ALWAYS covered. TOP layer is transparent except for a fainter,
+     reversed prismatic streak — a second refracted highlight. Oversized widths
+     keep the ink margins overflowing the box → no uncovered (transparent) glyphs. */
+  background-image:
+    linear-gradient(
+      86deg,
+      transparent 0%,
+      transparent 43%,
+      color-mix(in srgb, var(--color-cyan) 50%, transparent) 47%,
+      color-mix(in srgb, var(--color-magenta) 50%, transparent) 50%,
+      color-mix(in srgb, var(--color-amber) 50%, transparent) 53%,
+      transparent 57%,
+      transparent 100%
+    ),
+    linear-gradient(
+      100deg,
+      var(--color-ink) 0%,
+      var(--color-ink) 41%,
+      var(--color-amber) 45%,
+      var(--color-magenta) 50%,
+      var(--color-cyan) 55%,
+      var(--color-ink) 59%,
+      var(--color-ink) 100%
+    );
+  background-size: 220% 100%, 300% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* Path goes out (0→50%) then back (50→100%) within one loop, so it's seamless
+     without `alternate`; ease-in-out makes it dwell at the crossover and the
+     edges → a slow swell that recedes, not a constant-velocity sweep. */
+  animation: spectrum-refract 16s ease-in-out infinite;
+}
+
+@keyframes spectrum-refract {
+  0% {
+    background-position: 100% 50%, 0% 50%;
+  }
+  50% {
+    background-position: 0% 50%, 100% 50%;
+  }
+  100% {
+    background-position: 100% 50%, 0% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spectrum-wordmark {
+    animation: none;
+    background-position: 50% 50%, 50% 50%;
+  }
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-violet) 40%, transparent);
+}
+
+/* Keyboard focus ring across all controls, at zero specificity so component
+   styles still win. */
+:where(a, button, input, select, textarea, summary, [tabindex], [role='button'], [role='link']):focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Bento tile sheen — a soft diagonal highlight that slowly sweeps across.
+   The band is off-screen at both ends of the cycle, so the loop is seamless;
+   tiles are phase-offset by position so the glint travels across the card. */
+@keyframes bento-sheen {
+  0% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: 100% 0;
+  }
+}
+.bento-sheen {
+  background-image: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.14) 50%, transparent 62%);
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
+  animation: bento-sheen 12s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bento-sheen {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
+
+/* ── Post-deploy portal animation (orbs → portal → reveal) ───────────────────
+   Used by the /post-deploy-test page. Orb motion is driven imperatively in JS;
+   only the portal's swirling energy + the final success pulse live here. */
+@keyframes portal-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.portal-spin {
+  animation: portal-spin 4s linear infinite;
+}
+.portal-spin-reverse {
+  animation: portal-spin 6s linear infinite reverse;
+}
+
+/* The ring is centered via margin:auto (no transform), so the pulse only needs
+   to scale — no translate, which means it can never knock the portal off-center. */
+@keyframes portal-success-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 80px rgba(16, 185, 129, 0.8);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 30px rgba(16, 185, 129, 0.3);
+  }
+}
+.portal-success-pulse {
+  animation: portal-success-pulse 1s ease-out forwards;
+}
+
+/* ── buy swirl (SwapPendingOverlay): the launch portal's feel, CSS-only ──
+   Constituent discs orbit the basket's avatar while the buy is in flight;
+   on success the whole orbit layer collapses into the center — the assets
+   "drop in" — and the celebration takes over. */
+@keyframes buy-orbit {
+  from {
+    transform: rotate(0deg) translateX(var(--orbit-r)) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(var(--orbit-r)) rotate(-360deg);
+  }
+}
+.buy-orbit {
+  animation: buy-orbit var(--orbit-t, 3.2s) linear infinite;
+}
+@keyframes buy-collapse {
+  to {
+    transform: scale(0.04);
+    opacity: 0;
+  }
+}
+.buy-collapse {
+  animation: buy-collapse 0.55s cubic-bezier(0.55, 0, 0.85, 0.36) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .buy-orbit {
+    animation: none;
+  }
+  .buy-collapse {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* ── blueprint ghost (BlueprintBasket): marching-ants schematic frame ── */
+@keyframes blueprint-dash {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+.blueprint-dash {
+  animation: blueprint-dash 2.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .blueprint-dash {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-spin,
+  .portal-spin-reverse,
+  .portal-success-pulse {
+    animation: none;
+  }
+}
+
+/* ── Concept reveal: real assets orbit, then fuse into one index token ───────
+   Used on the home page. The orb wrapper rotates slowly; each orb sits on a ring
+   (rotate(var(--angle)) translateX) and, on the loop, drifts to the centre and
+   fades as the index token pulses brightest — "many assets become one". */
+.concept-spin {
+  animation: portal-spin 50s linear infinite;
+}
+@keyframes concept-converge {
+  0% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(var(--orbit-r, 118px));
+    opacity: 0;
+  }
+  8% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(var(--orbit-r, 118px));
+    opacity: 1;
+  }
+  48% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(var(--orbit-r, 118px));
+    opacity: 1;
+  }
+  74% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(6px);
+    opacity: 0.85;
+  }
+  84% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(0);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(0);
+    opacity: 0;
+  }
+}
+.concept-orb {
+  transform: translate(-50%, -50%) rotate(var(--angle)) translateX(var(--orbit-r, 118px));
+  animation: concept-converge 7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform, opacity;
+}
+@keyframes concept-core-pulse {
+  0%,
+  48% {
+    transform: translate(-50%, -50%) scale(0.82);
+    opacity: 0.5;
+    box-shadow: 0 0 20px rgba(123, 92, 255, 0.3);
+  }
+  84% {
+    transform: translate(-50%, -50%) scale(1.12);
+    opacity: 1;
+    box-shadow: 0 0 64px rgba(123, 92, 255, 0.6);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(0.95);
+    opacity: 0.82;
+    box-shadow: 0 0 30px rgba(123, 92, 255, 0.35);
+  }
+}
+.concept-core {
+  transform: translate(-50%, -50%);
+  animation: concept-core-pulse 7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .concept-spin,
+  .concept-orb,
+  .concept-core {
+    animation: none;
+  }
+}
+
+/* ── Asset search dropdown — a quick pop-in (real-time CSS animation, ends fully
+   opaque so it never gets stuck translucent if rAF is throttled). ───────────── */
+@keyframes search-pop {
+  from {
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    transform: none;
+  }
+}
+.search-pop {
+  animation: search-pop 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-pop {
+    animation: none;
+  }
+}
+
+/* ── Fee slider (launch builder) — a spectral fill up to the thumb (set
+   `--fill` inline as a percentage), soft rest track, chunky grabbable thumb. */
+.fee-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 9999px;
+  background:
+    linear-gradient(90deg, #35e0ff, #a48bff, #ff4db8) 0 / var(--fill, 50%) 100% no-repeat,
+    rgba(255, 255, 255, 0.08);
+  outline: none;
+  cursor: pointer;
+}
+.fee-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 24px;
+  width: 24px;
+  border-radius: 9999px;
+  background: #f4f0f4;
+  border: 4px solid #0c0a14;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 4px 14px rgba(0, 0, 0, 0.55);
+  cursor: grab;
+  transition: transform 0.12s ease;
+}
+.fee-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+.fee-slider:active::-webkit-slider-thumb {
+  cursor: grabbing;
+  transform: scale(1.15);
+}
+.fee-slider::-moz-range-thumb {
+  height: 24px;
+  width: 24px;
+  border-radius: 9999px;
+  background: #f4f0f4;
+  border: 4px solid #0c0a14;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 4px 14px rgba(0, 0, 0, 0.55);
+  cursor: grab;
+}
+.fee-slider::-moz-range-track {
+  background: transparent;
+}
+.fee-slider:focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 4px;
+}
+
+/* ── Content rise — sections that mount AFTER the token hero's intro settles
+   (chart, swap rail, holdings…) ease up into place. ───────────────────────── */
+@keyframes content-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.content-rise {
+  animation: content-rise 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .content-rise {
+    animation: none;
+  }
+}
+
+/* ── Staggered entrance — opacity + blur + a small rise, run once. Don't animate
+   one big container: tag each semantic chunk `.enter` and set `--enter-i`
+   (0, 1, 2…) for a ~80ms cascade. `both` holds the from-state before the delay so
+   nothing flashes in at full opacity first. Reduced-motion shows everything at
+   rest. ──────────────────────────────────────────────────────────────────────── */
+@keyframes enter-rise {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+.enter {
+  animation: enter-rise 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  animation-delay: calc(var(--enter-i, 0) * 80ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .enter {
+    animation: none;
+  }
+}
+
+/* Horizontal rails (trending tokens) — scrollable without a visible scrollbar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Deploy acknowledgment — a breathing cyan glow until it's ticked, so it reads
+   as a required action the moment the card appears. ─────────────────────────── */
+@keyframes tick-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1.5px rgba(53, 224, 255, 0.4), 0 0 20px rgba(53, 224, 255, 0.14);
+  }
+  50% {
+    box-shadow: 0 0 0 1.5px rgba(53, 224, 255, 0.72), 0 0 30px rgba(53, 224, 255, 0.3);
+  }
+}
+.tick-glow {
+  animation: tick-glow 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tick-glow {
+    animation: none;
+    box-shadow: 0 0 0 1.5px rgba(53, 224, 255, 0.5), 0 0 20px rgba(53, 224, 255, 0.18);
+  }
+}
+
+/* Spotlight auto-advance progress fill (the active dot's track + top bar). */
+@keyframes spotlight-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Animated spectral text — a slow rainbow pan for hero headings. */
+@keyframes spectral-pan {
+  to {
+    background-position: 200% center;
+  }
+}
+.spectral-text {
+  background-image: linear-gradient(90deg, #ff9248, #ff4db8, #7b5cff, #35e0ff, #34d6c4, #ff9248);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: spectral-pan 9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spectral-text {
+    animation: none;
+  }
+}
+
+/* ── Per-design-style structural overrides ──────────────────────────────────────
+   The colour / radii / type tokens do the reskin; these drop the SPECTRAL SIGNATURE
+   so a solid or editorial style reads as its OWN site, not the spectral one recoloured.
+   Keyed on <html data-style> (set by applyBrand) → they toggle live in the /setup studio.
+   spectral (default) + aurora + prism keep the full glass signature. Extend per style. */
+[data-style="umbra"] .spectrum-webgl-bg,
+[data-style="sylvan"] .spectrum-webgl-bg {
+  display: none; /* kill the animated edge-spectrum WebGL canvas → flat, distinct backdrop */
+}
+[data-style="umbra"] body,
+[data-style="sylvan"] body {
+  background-image: none; /* drop the violet vignette + technical grid → a plain canvas */
+}
+[data-style="umbra"] .bento-sheen,
+[data-style="sylvan"] .bento-sheen {
+  animation: none;
+  background-image: none; /* no glass shimmer on solid/editorial tiles */
+}
+[data-style="umbra"] .spectrum-wordmark,
+[data-style="sylvan"] .spectrum-wordmark {
+  animation: none; /* the wordmark stops its spectral pan (static in these styles) */
+}
+/* sylvan = editorial: a hairline structural divider under section mastheads, dark green
+   canvas (its --color-void), serif display already via --font-display. */
+[data-style="sylvan"] .card-surface {
+  backdrop-filter: none;
+}
