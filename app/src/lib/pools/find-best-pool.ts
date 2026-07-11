@@ -266,14 +266,20 @@ async function findV4(
 ): Promise<{ candidates: PoolCandidate[]; partial: boolean }> {
   const { inits, partial } = await scanV4Initialize(client, cfg.chainId, cfg.poolManager, asset)
   const seen = new Set<string>()
-  const out: PoolCandidate[] = []
-  for (const init of inits) {
-    if (seen.has(init.id)) continue
+  // Concurrent depth reads (same rationale as findV4Settlement): the batching
+  // client coalesces them into Multicall3 instead of N sequential round-trips.
+  const eligible = inits.filter((init) => {
+    if (seen.has(init.id)) return false
     seen.add(init.id)
-    if (init.hooks.toLowerCase() !== zeroAddress) continue // only no-hook pools can be routed
-    if (init.fee === DYNAMIC_FEE_FLAG) continue // reject dynamic-fee pools
-    const depthEth = await v4DepthEth(client, cfg.poolManager, init.id)
-    if (depthEth <= 0) continue
+    if (init.hooks.toLowerCase() !== zeroAddress) return false // only no-hook pools can be routed
+    if (init.fee === DYNAMIC_FEE_FLAG) return false // reject dynamic-fee pools
+    return true
+  })
+  const depths = await Promise.all(eligible.map((i) => v4DepthEth(client, cfg.poolManager, i.id)))
+  const out: PoolCandidate[] = []
+  eligible.forEach((init, idx) => {
+    const depthEth = depths[idx]
+    if (depthEth <= 0) return
     out.push({
       venue: Venue.V4,
       label: VENUE_LABEL[Venue.V4],
@@ -291,7 +297,7 @@ async function findV4(
       depthEth,
       depthUsd: null,
     })
-  }
+  })
   return { candidates: out, partial }
 }
 
@@ -334,12 +340,19 @@ async function findV4Settlement(
     inits = cached?.inits ?? []
     partial = true
   }
+  // Depth reads run CONCURRENTLY on purpose: memecoins carry dozens of pools
+  // (CASHCAT: ~60 USDG-paired inits) and a sequential loop meant dozens of
+  // round-trips against the chain's rate-limited public RPC (the visible
+  // "takes a while" on the launch page, owner 2026-07-11). Concurrent extsload
+  // reads coalesce into a couple of Multicall3 calls via the client's batcher.
+  const eligible = inits.filter((i) => i.hooks.toLowerCase() === zeroAddress && i.fee !== DYNAMIC_FEE_FLAG)
+  const depths = await Promise.all(
+    eligible.map((i) => v4DepthSettlement(client, cfg.poolManager, i.id, usdcIs0)),
+  )
   const out: PoolCandidate[] = []
-  for (const init of inits) {
-    if (init.hooks.toLowerCase() !== zeroAddress) continue
-    if (init.fee === DYNAMIC_FEE_FLAG) continue
-    const usd = await v4DepthSettlement(client, cfg.poolManager, init.id, usdcIs0)
-    if (usd <= 0) continue
+  eligible.forEach((init, i) => {
+    const usd = depths[i]
+    if (usd <= 0) return
     out.push({
       venue: Venue.V4,
       label: VENUE_LABEL[Venue.V4],
@@ -351,7 +364,7 @@ async function findV4Settlement(
       depthEth: 0,
       depthUsd: usd, // exact: read off the settlement side ($1 anchor)
     })
-  }
+  })
   return { candidates: out, partial }
 }
 

@@ -110,16 +110,19 @@ async function hubPoolId(chainId: number): Promise<`0x${string}` | null> {
       const eligible = logs
         .map((l) => l.args)
         .filter((a) => a.id && (a.hooks ?? '').toLowerCase() === '0x0000000000000000000000000000000000000000' && a.fee !== DYNAMIC_FEE_FLAG)
+      // Bounded + CONCURRENT: rank the first 24 eligible pools by ETH-side depth
+      // in one batched pass (Multicall3 coalesces) — sequential reads against the
+      // rate-limited public RPC were a visible stall (owner 2026-07-11).
+      const ranked = eligible.slice(0, 24)
+      const depths = await Promise.all(ranked.map((a) => depthEth(chainId, cfg.poolManager!, a.id as `0x${string}`)))
       let best: `0x${string}` | null = null
       let bestDepth = 0
-      // Bounded: rank the first 24 eligible pools by ETH-side depth.
-      for (const a of eligible.slice(0, 24)) {
-        const d = await depthEth(chainId, cfg.poolManager!, a.id as `0x${string}`)
-        if (d > bestDepth) {
-          bestDepth = d
+      ranked.forEach((a, i) => {
+        if (depths[i] > bestDepth) {
+          bestDepth = depths[i]
           best = a.id as `0x${string}`
         }
-      }
+      })
       if (best) cacheSet(cacheKey, { id: best, pickedAt: Date.now() } satisfies HubPoolCache, 0)
       return best ?? cached?.id ?? null
     } catch {
