@@ -26,6 +26,8 @@ const HINTS: Record<string, string> = {
   'NoOutput()': 'the amount is too small — it rounds to zero output',
   'ZeroSupply()': 'the basket has no supply yet — it needs its first regular buy (min 10 USDC) before this action',
   'BadLegMinsLength()': 'internal quote mismatch (leg count) — refresh the page and retry',
+  'CREATE2Failed()':
+    'the basket contract could not be created — either this exact configuration is already deployed (check Explore before retrying) or a leg\u2019s route was rejected; re-add the assets and try again',
   'MissingHookData()': 'the trade was sent without its protection payload — refresh and retry',
   'NothingToBurn()': 'nothing is pending for this crank',
   'BelowBridgeThreshold()': 'the pending amount is below the bridge threshold — let more fees accrue first',
@@ -33,6 +35,7 @@ const HINTS: Record<string, string> = {
 
 const ERROR_SIGS = [
   'BadCreatorShare()',
+  'CREATE2Failed()',
   'BadLegMask()',
   'BadLegMinsLength()',
   'BelowBridgeThreshold()',

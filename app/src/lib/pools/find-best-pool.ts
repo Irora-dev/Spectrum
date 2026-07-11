@@ -266,7 +266,8 @@ async function findV4(
 ): Promise<{ candidates: PoolCandidate[]; partial: boolean }> {
   const { inits, partial } = await scanV4Initialize(client, cfg.chainId, cfg.poolManager, asset)
   const seen = new Set<string>()
-  // Concurrent depth reads (same rationale as findV4Settlement): the batching
+  // Concurrent depth reads: many-pool memecoins meant dozens of sequential
+  // round-trips against rate-limited public RPCs (a visible stall); the batching
   // client coalesces them into Multicall3 instead of N sequential round-trips.
   const eligible = inits.filter((init) => {
     if (seen.has(init.id)) return false
@@ -299,98 +300,6 @@ async function findV4(
     })
   })
   return { candidates: out, partial }
-}
-
-// ── V4, settlement-paired (chains whose hub IS the settlement asset) ─────────
-// Robinhood: tokens pool against USDG, not native ETH — scan asset↔settlement
-// pools (both address orderings), hookless + static-fee only. Depth reads
-// straight off the SETTLEMENT side of the pool → depthUsd is exact ($1 anchor),
-// no ETH price needed.
-async function findV4Settlement(
-  client: Client,
-  cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address; usdc: Address },
-  asset: Address,
-): Promise<{ candidates: PoolCandidate[]; partial: boolean }> {
-  const usdc = cfg.usdc
-  // PoolKey currencies sort numerically — the settlement asset can be either side.
-  const usdcIs0 = BigInt(usdc.toLowerCase()) < BigInt(asset.toLowerCase())
-  const [c0, c1] = usdcIs0 ? [usdc, asset] : [asset, usdc]
-  const cacheKey = `v4scan-settle:v1:${cfg.chainId}:${asset.toLowerCase()}`
-  const cachedRaw = cacheGet<V4ScanCache>(cacheKey)
-  const cached = cachedRaw && isV4ScanCache(cachedRaw) ? cachedRaw : null
-  let inits: V4Init[]
-  let partial = false
-  try {
-    const latest = await client.getBlockNumber()
-    const fromBlock = cached ? BigInt(cached.upToBlock) + 1n : 0n
-    if (cached && fromBlock > latest) {
-      inits = cached.inits
-    } else {
-      const logs = await client.getLogs({
-        address: cfg.poolManager,
-        event: v4InitializeEvent,
-        args: { currency0: c0, currency1: c1 },
-        fromBlock,
-        toBlock: latest,
-      })
-      inits = mergeInits(cached?.inits ?? [], toRecs(logs))
-      cacheSet(cacheKey, { upToBlock: latest.toString(), inits } satisfies V4ScanCache, 0)
-    }
-  } catch {
-    inits = cached?.inits ?? []
-    partial = true
-  }
-  // Depth reads run CONCURRENTLY on purpose: memecoins carry dozens of pools
-  // (CASHCAT: ~60 USDG-paired inits) and a sequential loop meant dozens of
-  // round-trips against the chain's rate-limited public RPC (the visible
-  // "takes a while" on the launch page, owner 2026-07-11). Concurrent extsload
-  // reads coalesce into a couple of Multicall3 calls via the client's batcher.
-  const eligible = inits.filter((i) => i.hooks.toLowerCase() === zeroAddress && i.fee !== DYNAMIC_FEE_FLAG)
-  const depths = await Promise.all(
-    eligible.map((i) => v4DepthSettlement(client, cfg.poolManager, i.id, usdcIs0)),
-  )
-  const out: PoolCandidate[] = []
-  eligible.forEach((init, i) => {
-    const usd = depths[i]
-    if (usd <= 0) return
-    out.push({
-      venue: Venue.V4,
-      label: VENUE_LABEL[Venue.V4],
-      fee: init.fee,
-      tickSpacing: init.tickSpacing,
-      poolAddress: null,
-      poolId: init.id,
-      ethPoolKey: { currency0: c0, currency1: c1, fee: init.fee, tickSpacing: init.tickSpacing, hooks: zeroAddress },
-      depthEth: 0,
-      depthUsd: usd, // exact: read off the settlement side ($1 anchor)
-    })
-  })
-  return { candidates: out, partial }
-}
-
-// Settlement-side virtual reserve of a V4 pool, in USD (settlement = 6dp $1 asset):
-// currency0 side is L*2^96/sqrtP; currency1 side is L*sqrtP/2^96.
-async function v4DepthSettlement(
-  client: Client,
-  poolManager: Address,
-  id: `0x${string}`,
-  settlementIs0: boolean,
-): Promise<number> {
-  try {
-    const base = keccak256(encodePacked(['bytes32', 'uint256'], [id, V4_POOLS_SLOT]))
-    const liquiditySlot = toHex(BigInt(base) + 3n, { size: 32 })
-    const [slot0Word, liqWord] = await Promise.all([
-      client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [base] }),
-      client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [liquiditySlot] }),
-    ])
-    const sqrtP = BigInt(slot0Word) & ((1n << 160n) - 1n)
-    const liquidity = BigInt(liqWord) & ((1n << 128n) - 1n)
-    if (sqrtP === 0n || liquidity === 0n) return 0
-    const raw = settlementIs0 ? (liquidity << 96n) / sqrtP : (liquidity * sqrtP) >> 96n
-    return Number(formatUnits(raw, 6))
-  } catch {
-    return 0
-  }
 }
 
 // ── Aerodrome (Base) — detect so we can warn (can't host hooks) ───────────────
@@ -481,21 +390,22 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   if ((cfg.weth && lower === cfg.weth.toLowerCase()) || lower === NATIVE_ETH) {
     throw new PoolDetectionError('Asset cannot be ETH/WETH.', 'BAD_ASSET')
   }
-  if (!cfg.weth && cfg.usdc && lower === cfg.usdc.toLowerCase()) {
-    throw new PoolDetectionError('The settlement asset itself cannot be a basket leg.', 'BAD_ASSET')
-  }
 
   // Identity screen (contract exists / decimals sane / not 777 / not a nested
   // basket / not denylisted) runs IN PARALLEL with venue discovery — but its
   // verdict is evaluated FIRST: "this token can't be a leg" is the more useful
   // truth than "no pool found", and both cost the same wall-clock this way.
+  // The V4 scan is ALWAYS the native-ETH-paired one: the factory routes every
+  // leg through a native-ETH V4 pool ON EVERY CHAIN — the shared-address deploy
+  // means the same bytecode everywhere, and a leg carrying any other pool shape
+  // fails inside the token constructor as CREATE2Failed() (proven on Robinhood
+  // 2026-07-12: the working basket's legs are ETH-paired; USDG-paired keys from
+  // the removed settlement scan bricked every deploy at simulate).
   const [screen, v2, v3s, v4, aero] = await Promise.all([
     screenTokenIdentity(client, cfg, asset),
     v23Ready ? findV2(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve({ candidate: null, checkFailed: false }),
     v23Ready ? findV3(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve({ candidates: [], checkFailed: false }),
-    cfg.weth
-      ? findV4(client, cfg as Pick<ChainCfg, 'chainId'> & { poolManager: Address }, asset)
-      : findV4Settlement(client, cfg as Pick<ChainCfg, 'chainId'> & { poolManager: Address; usdc: Address }, asset),
+    findV4(client, cfg as Pick<ChainCfg, 'chainId'> & { poolManager: Address }, asset),
     v23Ready ? aerodromeExists(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve(false),
   ])
   if (screen.hardFail) throw new PoolDetectionError(screen.hardFail.message, screen.hardFail.code)
@@ -557,9 +467,10 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
     const key = (c.venue === Venue.V4 ? c.poolId : c.poolAddress)?.toLowerCase()
     const listedUsd = key ? liqByPool.get(key) : undefined
     c.dexListed = listedUsd != null
-    // DexScreener TVL when the pool is indexed; else keep an exact settlement-side
-    // figure (findV4Settlement precomputed it); else an on-chain ETH-side estimate.
-    c.depthUsd = listedUsd != null ? listedUsd : c.depthUsd != null ? c.depthUsd : ethUsd != null ? c.depthEth * ethUsd : null
+    // DexScreener TVL when the pool is indexed; otherwise an on-chain ETH-side
+    // estimate (ethUsd comes from the chain's own settlement pool where no
+    // indexer covers it — see nativeEthUsdOnChain).
+    c.depthUsd = listedUsd != null ? listedUsd : ethUsd != null ? c.depthEth * ethUsd : null
   }
 
   // DexScreener-listed pools (real, comparable TVL) always rank above unlisted dust;
