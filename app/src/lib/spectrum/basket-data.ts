@@ -626,19 +626,19 @@ export async function getBasketData(
   const USDC = cfg.usdc?.toLowerCase()
 
   // On-chain pricing rung — only where DexScreener has no coverage (Robinhood):
-  // each leg priced from its own routing pool, anchored by the settlement pool.
+  // each leg priced from its own routing pool. Settlement-paired legs (the 4663
+  // norm) price directly off their pool ($1 anchor); ETH-paired legs also need
+  // the ETH/settlement hub price — its absence only skips those, never the rung.
   let onchainUsd: (number | null)[] | null = null
   if (!cfg.dexscreenerSlug && meta.ethPools?.length) {
     const ethUsd = await nativeEthUsdOnChain(chainId)
-    if (ethUsd != null) {
-      onchainUsd = await Promise.all(
-        meta.ethPools.map((k, i) => {
-          const low = assets[i].toLowerCase()
-          if (!k || (USDC && low === USDC) || dex.get(low)) return null
-          return v4LegUsd(chainId, k, assetDecimals[i], ethUsd)
-        }),
-      )
-    }
+    onchainUsd = await Promise.all(
+      meta.ethPools.map((k, i) => {
+        const low = assets[i].toLowerCase()
+        if (!k || (USDC && low === USDC) || dex.get(low)) return null
+        return v4LegUsd(chainId, k, assetDecimals[i], ethUsd)
+      }),
+    )
   }
 
   const holdings: Holding[] = assets.map((a, i) => {

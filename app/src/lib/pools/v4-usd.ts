@@ -154,17 +154,34 @@ export async function nativeEthUsdOnChain(chainId: number): Promise<number | nul
   return price
 }
 
-/** USD price of a basket leg from ITS OWN native-ETH V4 pool (the on-chain route). */
+/** USD price of a basket leg from ITS OWN routing V4 pool. Handles both hub
+ *  shapes: native-ETH-paired keys (Base/Ethereum semantics — needs `ethUsd`)
+ *  and settlement-paired keys (Robinhood — the pool IS the USD price, ethUsd
+ *  unused/null). Ordering-aware: the asset can be either currency. */
 export async function v4LegUsd(
   chainId: number,
-  ethPool: PoolKey,
+  pool: PoolKey,
   assetDecimals: number,
-  ethUsd: number,
+  ethUsd: number | null,
 ): Promise<number | null> {
   const cfg = chainCfg(chainId)
   if (!cfg.poolManager) return null
-  const p = await slot0Price1Per0(chainId, cfg.poolManager, v4PoolId(ethPool)) // asset-raw per wei
+  const p = await slot0Price1Per0(chainId, cfg.poolManager, v4PoolId(pool)) // raw1 per raw0
   if (p == null) return null
-  const usd = (ethUsd * 10 ** (assetDecimals - 18)) / p
+  const usdcLow = cfg.usdc?.toLowerCase()
+  let usd: number
+  if (pool.currency0 === NATIVE_ETH) {
+    // ETH is currency0 (0x0 sorts first): p = asset-raw per wei.
+    if (ethUsd == null) return null
+    usd = (ethUsd * 10 ** (assetDecimals - 18)) / p
+  } else if (usdcLow && pool.currency0.toLowerCase() === usdcLow) {
+    // settlement (6dp, $1) is currency0: p = asset-raw per settlement-raw.
+    usd = 10 ** (assetDecimals - 6) / p
+  } else if (usdcLow && pool.currency1.toLowerCase() === usdcLow) {
+    // settlement is currency1: p = settlement-raw per asset-raw.
+    usd = p * 10 ** (assetDecimals - 6)
+  } else {
+    return null // neither hub shape — not a pool this rung can price
+  }
   return Number.isFinite(usd) && usd > 0 ? usd : null
 }

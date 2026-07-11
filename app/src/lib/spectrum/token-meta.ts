@@ -28,6 +28,12 @@ export const TOKEN_META: Record<string, TokenVisual> = {
   WETH: { address: '0x4200000000000000000000000000000000000006', color: '#627EEA', ink: '#F4F0F4' },
   LINK: { address: '0x514910771af9ca656af840dff83e8264ecf986ca', color: '#2152D4', ink: '#F4F0F4' },
   AAVE: { address: '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', color: '#8886F7', ink: '#F4F0F4' },
+  // Robinhood Chain natives (owner 2026-07-11): the RH electric green/yellow
+  // family, one shade apart. Addresses = the DEEPEST USDG pool per symbol
+  // (each has on-chain copycats; the symbol fallback still colours those).
+  CASHCAT: { address: '0x020bfc650a365f8bb26819deaabf3e21291018b4', color: '#CCFF00', ink: '#1C2A00' },
+  HOODRAT: { address: '0x9771fe3a4b392a7dd5bba1ab19b1cc4996e4808a', color: '#AFF229', ink: '#1C2A00' },
+  JUGGERNAUT: { address: '0xc93d3974ff99fdaafa8378a54c3262d1d838dc3c', color: '#8FE04A', ink: '#122000' },
 }
 
 export function readableInk(hex: string): string {
