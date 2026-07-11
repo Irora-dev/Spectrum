@@ -69,6 +69,13 @@ responsible for it — including classifying the basket tokens in your jurisdict
 screening / geofencing, and KYC/AML if you ever add a fiat on-ramp (this kit is non-custodial and
 ships none). **Please read [`DISCLAIMER.md`](DISCLAIMER.md) before you deploy.**
 
+## Builders
+
+For all builders looking to use the open-source Spectrum kit: email
+**[developer@iroracapital.com](mailto:developer@iroracapital.com)** with questions — and to
+announce any live sites you launch with it. We'd love to hear what you build. (Announcing a
+site doesn't make it official or endorsed — every deployment stays its operator's own.)
+
 ## License
 
 Spectrum Mini is free, open-source software — a **tool, not a venue**. Its creators operate,
