@@ -105,7 +105,8 @@ export interface TokenScreen {
 /** Identity screen — cheap deterministic reads, run in parallel with venue discovery. */
 export async function screenTokenIdentity(
   client: Client,
-  cfg: PoolReadyChainCfg,
+  // Only chainId + factory are read — V4-only chains (no WETH/V2/V3 infra) screen too.
+  cfg: Pick<PoolReadyChainCfg, 'chainId' | 'factory'>,
   asset: Address,
 ): Promise<TokenScreen> {
   const lower = asset.toLowerCase()

@@ -64,3 +64,21 @@ describe('anchor verdicts', () => {
     expect(/^0x[0-9a-fA-F]{40}$/.test(DEPLOYER_ANCHOR_ENS)).toBe(false)
   })
 })
+
+describe('v4PoolId (the on-chain pricing rung mapping key)', () => {
+  it('is deterministic, 32 bytes, and sensitive to every PoolKey field', async () => {
+    const { v4PoolId } = await import('../pools/v4-usd')
+    const key = {
+      currency0: '0x0000000000000000000000000000000000000000' as const,
+      currency1: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168' as const,
+      fee: 500,
+      tickSpacing: 10,
+      hooks: '0x0000000000000000000000000000000000000000' as const,
+    }
+    const id = v4PoolId(key)
+    expect(id).toMatch(/^0x[0-9a-f]{64}$/)
+    expect(v4PoolId(key)).toBe(id)
+    expect(v4PoolId({ ...key, fee: 3000 })).not.toBe(id)
+    expect(v4PoolId({ ...key, tickSpacing: 60 })).not.toBe(id)
+  })
+})

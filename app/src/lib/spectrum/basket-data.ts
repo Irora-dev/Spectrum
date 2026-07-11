@@ -1,7 +1,8 @@
-import { formatUnits, isAddress, type Address } from 'viem'
+import { formatUnits, isAddress, parseAbi, type Address } from 'viem'
 import { clientFor, hasAlchemyKey } from '../chain/rpc'
 import { ZERO_ADDRESS } from '../chain/constants'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
+import { nativeEthUsdOnChain, v4LegUsd } from '../pools/v4-usd'
 import { basketAbi, erc20BalanceAbi, factoryAbi, launchedEvent } from './abis-v2'
 import { cacheGet, cacheSet } from './persist-cache'
 import { loadSnapshot, type SpectrumSnapshot } from './snapshot'
@@ -126,6 +127,11 @@ interface CachedDexPair {
   pair: DexPair | null
   ts: number
 }
+// On-chain USD rung for chains no price indexer covers (Robinhood): leg prices
+// from each leg's OWN routing pool (basket(i).ethPool slot0) anchored by the
+// chain's ETH/settlement pool. Display-grade; floors still come from quotes.
+const erc20SymbolAbi = parseAbi(['function symbol() view returns (string)'])
+
 const dexCache = new Map<string, CachedDexPair>()
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -471,6 +477,11 @@ interface ImmutableMeta {
   targetBps: number[]
   assetDecimals: number[]
   deployer: string | null
+  /** Per-leg native-ETH V4 PoolKey from basket(i).ethPool (null = non-V4 leg).
+   *  Optional: snapshot-seeded meta omits it (the live read fills it). */
+  ethPools?: ({ currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address } | null)[]
+  /** Per-leg ERC-20 symbol (on-chain), for chains DexScreener doesn't name. */
+  assetSymbols?: (string | null)[]
 }
 const immutableCache = new Map<string, ImmutableMeta>()
 
@@ -497,7 +508,7 @@ function isImmutableMeta(v: unknown): v is ImmutableMeta {
 function getCachedMeta(key: string): ImmutableMeta | undefined {
   const mem = immutableCache.get(key)
   if (mem) return mem
-  const persisted = cacheGet<ImmutableMeta>(`imm:v1:${key}`)
+  const persisted = cacheGet<ImmutableMeta>(`imm:v2:${key}`) // v2: + ethPools/assetSymbols
   if (persisted && isImmutableMeta(persisted)) {
     immutableCache.set(key, persisted)
     return persisted
@@ -511,7 +522,7 @@ export function seedImmutableMeta(address: string, chainId: number, meta: Immuta
   if (!isImmutableMeta(meta)) return
   const key = `${chainId}:${address.toLowerCase()}`
   immutableCache.set(key, meta)
-  cacheSet(`imm:v1:${key}`, meta, 0)
+  cacheSet(`imm:v2:${key}`, meta, 0)
 }
 
 // `inception` defaults off: list views don't need the lifetime-clamped chart
@@ -549,6 +560,16 @@ export async function getBasketData(
         client.readContract({ address, abi: basketAbi, functionName: 'basket', args: [BigInt(i)] }),
       ),
     )
+    // Leg symbols read once from the chain — DexScreener names legs on indexed
+    // chains, but on unindexed ones (Robinhood) this is the only name source.
+    const legSymbols = await Promise.all(
+      entries.map((e) =>
+        client
+          .readContract({ address: e[0], abi: erc20SymbolAbi, functionName: 'symbol' })
+          .then((v) => (typeof v === 'string' && v ? v.slice(0, 24) : null))
+          .catch(() => null),
+      ),
+    )
     meta = {
       name: name as string,
       symbol: symbol as string,
@@ -558,9 +579,12 @@ export async function getBasketData(
       targetBps: entries.map((e) => Number(e[5])),
       assetDecimals: entries.map((e) => Number(e[6])),
       deployer,
+      // venue 0 = Uniswap V4: the leg's own native-ETH pool, the pricing source.
+      ethPools: entries.map((e) => (Number(e[1]) === 0 ? e[2] : null)),
+      assetSymbols: legSymbols,
     }
     immutableCache.set(key, meta)
-    cacheSet(`imm:v1:${key}`, meta, 0)
+    cacheSet(`imm:v2:${key}`, meta, 0)
   }
   const { name, symbol, decimals, assets, targetBps, assetDecimals, deployer } = meta
 
@@ -601,17 +625,36 @@ export async function getBasketData(
   const dex = await fetchDexPrices(assets.map((a) => a.toLowerCase()), cfg.dexscreenerSlug)
   const USDC = cfg.usdc?.toLowerCase()
 
+  // On-chain pricing rung — only where DexScreener has no coverage (Robinhood):
+  // each leg priced from its own routing pool, anchored by the settlement pool.
+  let onchainUsd: (number | null)[] | null = null
+  if (!cfg.dexscreenerSlug && meta.ethPools?.length) {
+    const ethUsd = await nativeEthUsdOnChain(chainId)
+    if (ethUsd != null) {
+      onchainUsd = await Promise.all(
+        meta.ethPools.map((k, i) => {
+          const low = assets[i].toLowerCase()
+          if (!k || (USDC && low === USDC) || dex.get(low)) return null
+          return v4LegUsd(chainId, k, assetDecimals[i], ethUsd)
+        }),
+      )
+    }
+  }
+
   const holdings: Holding[] = assets.map((a, i) => {
     const low = a.toLowerCase()
     const p = dex.get(low)
     let priceUsd = parsePriceUsd(p?.priceUsd) ?? 0
-    // Canonical USDC is the settlement asset — $1 when no pair is listed.
+    // Canonical USDC/USDG is the settlement asset — $1 when no pair is listed.
     if (USDC && low === USDC && !priceUsd) priceUsd = 1
+    if (!priceUsd && onchainUsd?.[i]) priceUsd = onchainUsd[i]!
     const balance = balances[i]
     const valueUsd = balance * priceUsd
     return {
       asset: a,
-      symbol: p?.baseToken?.symbol ?? (USDC && low === USDC ? 'USDC' : '?'),
+      symbol:
+        p?.baseToken?.symbol ??
+        (USDC && low === USDC ? cfg.usdcSymbol : (meta.assetSymbols?.[i] ?? '?')),
       name: p?.baseToken?.name ?? '',
       decimals: assetDecimals[i],
       targetWeightPct: targetBps[i] / 100,

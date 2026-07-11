@@ -43,6 +43,14 @@ export function hasAlchemyKey(): boolean {
   return !!alchemyKey
 }
 
+// Chains Alchemy can serve at all. On a chain with NO tier (Robinhood), the chain's
+// own RPC is the only option — and its filtered wide getLogs is proven fast (the
+// chain is young), so scanners ATTEMPT full-range there instead of skipping.
+const ALCHEMY_TIER: Record<number, boolean> = { [BASE_CHAIN_ID]: true, [MAINNET_CHAIN_ID]: true }
+export function hasAlchemyTier(chainId: number): boolean {
+  return !!ALCHEMY_TIER[chainId]
+}
+
 export function rpcUrlFor(chainId: number): string {
   if (chainId === MAINNET_CHAIN_ID) return mainnetRpcUrl()
   if (chainId === ROBINHOOD_CHAIN_ID) return robinhoodRpcUrl()

@@ -6,8 +6,9 @@ import {
   zeroAddress,
   type Address,
 } from 'viem'
-import { clientFor, hasAlchemyKey } from '../chain/rpc'
-import { chainCfg, isPoolReady, type PoolReadyChainCfg } from '../chain/chains'
+import { clientFor, hasAlchemyKey, hasAlchemyTier } from '../chain/rpc'
+import { chainCfg, isPoolReady, type ChainCfg, type PoolReadyChainCfg } from '../chain/chains'
+import { nativeEthUsdOnChain } from './v4-usd'
 import { cacheGet, cacheSet } from '../spectrum/persist-cache'
 import { V4_POOLS_SLOT } from '../chain/constants'
 import {
@@ -210,9 +211,11 @@ async function scanV4Initialize(
 ): Promise<{ inits: V4Init[]; partial: boolean }> {
   // V4 has no factory getPool — discovery is by Initialize logs over the full range.
   // Only Alchemy-class endpoints serve a wide filtered getLogs quickly; public RPCs
-  // rate-limit/time out. So without a key we skip V4 and flag partial coverage
-  // rather than hang. (One filtered full-range call is instant on Alchemy.)
-  if (!hasAlchemyKey()) return { inits: [], partial: true }
+  // on Base/Ethereum rate-limit/time out, so keyless there skips V4 and flags
+  // partial. A chain with NO Alchemy tier at all (Robinhood) is different: its own
+  // RPC is the only option and serves the filtered full-range call fast (young
+  // chain) — attempt it; the catch below still degrades to partial on error.
+  if (!hasAlchemyKey() && hasAlchemyTier(chainId)) return { inits: [], partial: true }
   const cacheKey = `v4scan:v1:${chainId}:${asset.toLowerCase()}`
   const cachedRaw = cacheGet<V4ScanCache>(cacheKey)
   const cached = cachedRaw && isV4ScanCache(cachedRaw) ? cachedRaw : null
@@ -258,7 +261,7 @@ async function v4DepthEth(client: Client, poolManager: Address, id: `0x${string}
 
 async function findV4(
   client: Client,
-  cfg: PoolReadyChainCfg,
+  cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address },
   asset: Address,
 ): Promise<{ candidates: PoolCandidate[]; partial: boolean }> {
   const { inits, partial } = await scanV4Initialize(client, cfg.chainId, cfg.poolManager, asset)
@@ -333,6 +336,7 @@ async function wethUsdPrice(slug: string, weth: Address): Promise<number | null>
 // for every DEX version) and matches what users see in the asset search.
 async function fetchPoolLiquidity(slug: string, asset: Address): Promise<Map<string, number>> {
   const map = new Map<string, number>()
+  if (!slug) return map // chain not indexed by DexScreener — on-chain depth ranks instead
   try {
     const r = await fetch(`https://api.dexscreener.com/token-pairs/v1/${slug}/${asset}`, {
       headers: { Accept: 'application/json' },
@@ -363,18 +367,20 @@ function toRoute(c: PoolCandidate): BasketRoute {
  */
 export async function findBestPool(asset: Address, chainId: number): Promise<BestPoolResult> {
   const cfg = chainCfg(chainId)
-  // Honest failure, not silent degradation: a chain with no configured deployment
-  // (nothing in deployments.json and no env override) — say so plainly.
-  if (!isPoolReady(cfg)) {
+  // Honest failure, not silent degradation. The V4 PoolManager is the baseline —
+  // the protocol's own pools ARE V4 — so a chain with one runs V4-only detection;
+  // V2/V3/Aerodrome scans join in only where that infra exists (Base/Ethereum).
+  if (!cfg.poolManager) {
     throw new PoolDetectionError(
       'No deployment is configured for this chain on this build — pool detection is unavailable.',
       'NO_POOL',
     )
   }
+  const v23Ready = isPoolReady(cfg) // weth + V2/V3 factories present
   const client = clientFor(chainId)
 
   const lower = asset.toLowerCase()
-  if (lower === cfg.weth.toLowerCase() || lower === NATIVE_ETH) {
+  if ((cfg.weth && lower === cfg.weth.toLowerCase()) || lower === NATIVE_ETH) {
     throw new PoolDetectionError('Asset cannot be ETH/WETH.', 'BAD_ASSET')
   }
 
@@ -384,10 +390,10 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   // truth than "no pool found", and both cost the same wall-clock this way.
   const [screen, v2, v3s, v4, aero] = await Promise.all([
     screenTokenIdentity(client, cfg, asset),
-    findV2(client, cfg, asset),
-    findV3(client, cfg, asset),
-    findV4(client, cfg, asset),
-    aerodromeExists(client, cfg, asset),
+    v23Ready ? findV2(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve({ candidate: null, checkFailed: false }),
+    v23Ready ? findV3(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve({ candidates: [], checkFailed: false }),
+    findV4(client, cfg as Pick<ChainCfg, 'chainId'> & { poolManager: Address }, asset),
+    v23Ready ? aerodromeExists(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve(false),
   ])
   if (screen.hardFail) throw new PoolDetectionError(screen.hardFail.message, screen.hardFail.code)
   const decimals = screen.decimals
@@ -413,7 +419,12 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
         'ONLY_AERODROME',
       )
     }
-    throw new PoolDetectionError('No Uniswap v2/v3/v4 ETH pool found for this asset.', 'NO_POOL')
+    throw new PoolDetectionError(
+      v23Ready
+        ? 'No Uniswap v2/v3/v4 ETH pool found for this asset.'
+        : 'No Uniswap v4 ETH pool found for this asset on this chain.',
+      'NO_POOL',
+    )
   }
 
   // The token routes — now confirm its transfers are whole. A fee-on-transfer
@@ -434,7 +445,9 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   // let tiny tightly-concentrated V4 pools out-rank genuinely deep pools. Match each
   // candidate to its DexScreener pool (V4 by poolId, V2/V3 by pool address).
   const [ethUsd, liqByPool] = await Promise.all([
-    wethUsdPrice(cfg.dexscreenerSlug, cfg.weth),
+    cfg.dexscreenerSlug && cfg.weth
+      ? wethUsdPrice(cfg.dexscreenerSlug, cfg.weth)
+      : nativeEthUsdOnChain(chainId), // unindexed chain (Robinhood): its own ETH/settlement pool
     fetchPoolLiquidity(cfg.dexscreenerSlug, asset),
   ])
   for (const c of candidates) {
@@ -474,7 +487,9 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   }
   if (v4.partial) {
     warnings.push(
-      'V4 venues were not scanned on this build (keyless RPC) — a deeper V4 pool may exist. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) for complete V4 coverage.',
+      hasAlchemyTier(chainId)
+        ? 'V4 venues were not scanned on this build (keyless RPC) — a deeper V4 pool may exist. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) for complete V4 coverage.'
+        : 'The V4 pool scan was incomplete (RPC error) — a deeper pool may exist. Re-add the token to retry.',
     )
   }
 

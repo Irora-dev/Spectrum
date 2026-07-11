@@ -12,6 +12,10 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
   launch (Dutch auction), USDG-direct buy/sell and referral through the canonical
   router, contract verification, and the config/doctor/chain-smoke checks. USDG
   (Global Dollar) is the settlement asset there; labels follow the chain.
+- V4-native pool detection: the launch page's asset validation now runs on any chain
+  with a Uniswap V4 PoolManager (V2/V3/Aerodrome scans join in where that infra
+  exists), and on chains no price indexer covers, ETH/USD and per-leg prices read
+  straight from the pools on-chain (the settlement pool anchors $1).
 
 ## 2026.07.10
 

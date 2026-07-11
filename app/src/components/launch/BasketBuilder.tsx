@@ -3,7 +3,7 @@ import { getAddress, isAddress, type Address, parseAbi } from 'viem'
 import { useAccount, useBalance, useEnsName } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActiveChainId } from '../../lib/chain/active-chain'
-import { chainCfg, isPoolReady, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
+import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { clientFor } from '../../lib/chain/rpc'
 import { findBestPool, PoolDetectionError, Venue, ZERO_POOL_KEY, type BasketRoute } from '../../lib/pools'
 import {
@@ -134,7 +134,7 @@ async function wrongNetworkNote(
 ): Promise<string | null> {
   for (const other of SUPPORTED_CHAIN_IDS) {
     if (other === chainId) continue
-    if (!isPoolReady(chainCfg(other))) continue
+    if (!chainCfg(other).poolManager) continue // detection = V4 baseline (V2/V3 join where present)
     try {
       const p = await findBestPool(addr as Address, other)
       const d = p.best.depthUsd
@@ -770,7 +770,9 @@ export function BasketBuilder({
     // vestigial: the thesis no longer prefills here (post-deploy popup only).
     if (prefillDone || !predecessor || !predData || predFees === undefined) return
     let cancelled = false
-    const poolReady = isPoolReady(cfg)
+    // Detection availability = the V4 baseline (poolManager); isPoolReady stays
+    // the engine's stricter V2/V3-infra check.
+    const poolReady = !!cfg.poolManager
     void (async () => {
       try {
         const resolved = await Promise.all(
