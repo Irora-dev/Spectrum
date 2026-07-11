@@ -127,17 +127,19 @@ export function DexSwapCard({
   const feeFrac = fees ? fees.basketFeeBps / 10_000 : Number.NaN
 
   const [dir, setDir] = useState<'buy' | 'sell'>('buy')
-  // Chains without ETH-hub infra (Robinhood: no WETH / V3 router / quoter) trade
-  // settlement-asset-direct: the console opens on USDC/USDG and the ETH/WETH hub
-  // options don't render. `hubInfra` is the same gate useDexSwap's hubConfigured
-  // resolves to, computed here so the DEFAULT is right before the hook runs.
+  // Hub availability per chain: full Uniswap infra (Base/Ethereum) = ETH/WETH/
+  // settlement; a LiFi external-hub chain (Robinhood) = ETH + settlement (the
+  // ETH hop rides LiFi's verified diamond, WETH doesn't exist there); neither =
+  // settlement-direct only. Computed here so the DEFAULT is right pre-hook.
   const depHere = deploymentFor(chainId)
   const hubInfra = !!depHere.uniV3SwapRouter && !!depHere.uniV3Quoter && !!depHere.weth
-  const [hub, setHub] = useState<HubToken>(hubInfra ? defaultHub : 'USDC')
+  const lifiHubChain = cfg.externalHubRouter === 'lifi' && !hubInfra
+  const hubChoices: HubToken[] = hubInfra ? HUBS : lifiHubChain ? ['ETH', 'USDC'] : ['USDC']
+  const [hub, setHub] = useState<HubToken>(hubInfra || lifiHubChain ? defaultHub : 'USDC')
   useEffect(() => {
-    if (!hubInfra && hub !== 'USDC') setHub('USDC')
+    if (!hubChoices.includes(hub)) setHub('USDC')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hubInfra, chainId])
+  }, [hubInfra, lifiHubChain, chainId])
   // Display name of the settlement asset: USDC on Base/Ethereum, USDG on
   // Robinhood Chain. Mechanics identical — labels only.
   const usdcSym = cfg.usdcSymbol
@@ -348,7 +350,7 @@ export function DexSwapCard({
   const hubBoxZ = hubMenuOpen ? 'z-30' : 'z-[1]'
 
   const hubChip = (
-    <HubChip hub={hub} chainId={chainId} open={hubMenuOpen} setOpen={setHubMenuOpen} onPick={(h) => { hubPicked.current = true; setHub(h); dex.resetRun() }} disabled={dex.running} hubInfra={hubInfra} usdcSym={usdcSym} />
+    <HubChip hub={hub} chainId={chainId} open={hubMenuOpen} setOpen={setHubMenuOpen} onPick={(h) => { hubPicked.current = true; setHub(h); dex.resetRun() }} disabled={dex.running} choices={hubChoices} usdcSym={usdcSym} />
   )
   const basketChip = (
     <BasketChip ix={ix} onClick={fixedBasket ? undefined : () => setPickerOpen(true)} disabled={dex.running} />
@@ -633,11 +635,11 @@ export function DexSwapCard({
                   {ix
                     ? dir === 'buy'
                       ? hub === 'USDC'
-                        ? `USDC → $${ix.symbol} · self-pool`
-                        : `${hub} → ${usdcSym} → $${ix.symbol} · V3 + self-pool`
+                        ? `${usdcSym} → $${ix.symbol} · self-pool`
+                        : `${hub} → ${usdcSym} → $${ix.symbol} · ${lifiHubChain ? 'LiFi' : 'V3'} + self-pool`
                       : hub === 'USDC'
-                        ? `$${ix.symbol} → USDC · self-pool`
-                        : `$${ix.symbol} → ${usdcSym} → ${hub} · self-pool + V3`
+                        ? `$${ix.symbol} → ${usdcSym} · self-pool`
+                        : `$${ix.symbol} → ${usdcSym} → ${hub} · self-pool + ${lifiHubChain ? 'LiFi' : 'V3'}`
                     : '—'}
                   {dex.quote && dir === 'buy' ? ` · ${dex.quote.legCount} legs, each with its own floor` : ''}
                 </span>
@@ -795,7 +797,7 @@ export function DexSwapCard({
 // ── chips ─────────────────────────────────────────────────────────────────────
 
 function HubChip({
-  hub, chainId, open, setOpen, onPick, disabled, hubInfra = true, usdcSym = 'USDC',
+  hub, chainId, open, setOpen, onPick, disabled, choices = HUBS, usdcSym = 'USDC',
 }: {
   hub: HubToken
   chainId: number
@@ -803,8 +805,9 @@ function HubChip({
   setOpen: (v: boolean) => void
   onPick: (h: HubToken) => void
   disabled?: boolean
-  /** false = no ETH-hub infra on this chain (Robinhood) — only the settlement asset renders. */
-  hubInfra?: boolean
+  /** The hubs THIS CHAIN can execute (full uni infra = all three; LiFi chain =
+   *  ETH + settlement; neither = settlement only). */
+  choices?: HubToken[]
   /** Chain settlement-asset display name (USDC / USDG). */
   usdcSym?: string
 }) {
@@ -834,7 +837,7 @@ function HubChip({
       </button>
       {open && (
         <div className="search-pop absolute right-0 z-40 mt-2 w-44 rounded-2xl border border-white/12 bg-panel/95 p-1.5 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
-          {(hubInfra ? HUBS : HUBS.filter((h) => h === 'USDC')).map((h) => (
+          {choices.map((h) => (
             <button
               key={h}
               type="button"

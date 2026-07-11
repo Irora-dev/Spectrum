@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
+import { useAccount, usePublicClient, useSendTransaction, useWriteContract } from 'wagmi'
 import { encodeFunctionData, formatUnits, parseEventLogs, type Address, type Hex } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
 import { chainCfg } from '../chain/chains'
@@ -9,6 +9,7 @@ import { SWAP_ENABLED } from '../config/features'
 import type { BasketData } from './basket-data'
 import { buildSwapQuote } from './swap-quote'
 import { encodeMintHookData, encodeRedeemHookData, clampSlippageBps } from './hook-data'
+import { fetchLifiQuote, LIFI_NATIVE } from './lifi'
 import { getStoredRef } from './referral'
 import { erc20ApproveAbi, erc20BalanceAbi, swapRouterAbi } from './abis-v2'
 
@@ -96,6 +97,7 @@ export function useDexSwap(
   const { address, isConnected, chainId: walletChainId } = useAccount()
   const publicClient = usePublicClient({ chainId })
   const { writeContractAsync } = useWriteContract()
+  const { sendTransactionAsync } = useSendTransaction()
   const queryClient = useQueryClient()
 
   const [quote, setQuote] = useState<DexQuote | null>(null)
@@ -116,7 +118,11 @@ export function useDexSwap(
   const router02 = dep.uniV3SwapRouter
   const quoter = dep.uniV3Quoter
   const hubConfigured = !!router02 && !!quoter && !!weth
-  const configured = SWAP_ENABLED && !!spectrumRouter && !!usdc && (hub === 'USDC' || hubConfigured)
+  // External hub (LiFi) — chains with NO Uniswap periphery (Robinhood): the
+  // ETH ↔ settlement hop quotes/executes through LiFi's source-verified diamond
+  // (lifi.ts, guards included). Only ever active where uni infra is absent.
+  const lifiHub = cfg.externalHubRouter === 'lifi' && !hubConfigured
+  const configured = SWAP_ENABLED && !!spectrumRouter && !!usdc && (hub === 'USDC' || hubConfigured || lifiHub)
 
   const patchTx = useCallback((key: string, p: Partial<DexTxState>) => {
     setTxs((s) => ({ ...s, [key]: { ...(s[key] ?? TX_IDLE), ...p } }))
@@ -176,15 +182,31 @@ export function useDexSwap(
         const slip = clampSlippageBps(slippageBps)
 
         if (direction === 'buy') {
-          // hub leg first (ETH/WETH → USDC), then the basket leg off its output
+          // hub leg first (ETH/WETH → settlement), then the basket leg off its output
           let usdcLegRaw = amountInRaw
           let hubFee: number | null = null
           if (hub !== 'USDC') {
-            if (!hubConfigured) throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
-            const q = await bestExactInTier(client, quoter!, weth!, usdc!, amountInRaw)
-            if (!q) throw new Error('No WETH/USDC route quoted.')
-            usdcLegRaw = q.amount
-            hubFee = q.fee
+            if (hubConfigured) {
+              const q = await bestExactInTier(client, quoter!, weth!, usdc!, amountInRaw)
+              if (!q) throw new Error('No WETH/USDC route quoted.')
+              usdcLegRaw = q.amount
+              hubFee = q.fee
+            } else if (lifiHub && address) {
+              const lq = await fetchLifiQuote({
+                chainId,
+                fromToken: LIFI_NATIVE,
+                toToken: usdc!,
+                fromAmount: amountInRaw,
+                fromAddress: address,
+                slippageBps: slip,
+              })
+              if (seq !== quoteSeq.current) return
+              usdcLegRaw = lq.toAmount
+            } else if (lifiHub) {
+              throw new Error('Connect a wallet to quote this route.')
+            } else {
+              throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
+            }
           }
           const usdcFloat = Number(formatUnits(usdcLegRaw, USDC_DECIMALS))
           const bq = buildSwapQuote({
@@ -225,11 +247,27 @@ export function useDexSwap(
           let outRaw = bq.minOutRaw
           let hubFee: number | null = null
           if (hub !== 'USDC') {
-            if (!hubConfigured) throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
-            const q = await bestExactInTier(client, quoter!, usdc!, weth!, bq.minOutRaw)
-            if (!q) throw new Error('No USDC/WETH route quoted.')
-            outRaw = minOutFor(q.amount, BigInt(slip))
-            hubFee = q.fee
+            if (hubConfigured) {
+              const q = await bestExactInTier(client, quoter!, usdc!, weth!, bq.minOutRaw)
+              if (!q) throw new Error('No USDC/WETH route quoted.')
+              outRaw = minOutFor(q.amount, BigInt(slip))
+              hubFee = q.fee
+            } else if (lifiHub && address) {
+              const lq = await fetchLifiQuote({
+                chainId,
+                fromToken: usdc!,
+                toToken: LIFI_NATIVE,
+                fromAmount: bq.minOutRaw,
+                fromAddress: address,
+                slippageBps: slip,
+              })
+              if (seq !== quoteSeq.current) return
+              outRaw = lq.toAmountMin // the router-enforced floor
+            } else if (lifiHub) {
+              throw new Error('Connect a wallet to quote this route.')
+            } else {
+              throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
+            }
           }
           if (seq !== quoteSeq.current) return
           setQuote({
@@ -249,7 +287,7 @@ export function useDexSwap(
         if (seq === quoteSeq.current) setQuoting(false)
       }
     },
-    [chainId, direction, hub, hubConfigured, ix, quoter, usdc, weth],
+    [address, chainId, direction, hub, hubConfigured, lifiHub, ix, quoter, usdc, weth],
   )
 
   // ── the executable steps for the CTA/progress display ──────────────────────
@@ -332,42 +370,68 @@ export function useDexSwap(
 
       try {
         if (direction === 'buy') {
-          // ── hub leg: ETH/WETH → USDC ──
+          // ── hub leg: ETH/WETH → settlement (Uniswap where present, LiFi where not) ──
           let usdcIn = amountInRaw
           if (hub !== 'USDC') {
-            if (!hubConfigured) throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
-            const q = await bestExactInTier(client, quoter!, weth!, usdc, amountInRaw)
-            if (!q) throw new Error('No WETH/USDC route.')
-            if (hub === 'WETH') await approveIfNeeded('approve-in', weth!, router02!, amountInRaw)
-            const params = {
-              tokenIn: weth!,
-              tokenOut: usdc,
-              fee: q.fee,
-              recipient: holder,
-              amountIn: amountInRaw,
-              amountOutMinimum: minOutFor(q.amount, BigInt(slip)),
-              sqrtPriceLimitX96: 0n,
-            } as const
-            const value = hub === 'ETH' ? amountInRaw : 0n
-            patchTx('hub-in', { status: 'signing', error: null })
-            await publicClient.simulateContract({
-              account: holder,
-              address: router02!,
-              abi: swapRouter02Abi,
-              functionName: 'exactInputSingle',
-              args: [params],
-              value,
-            })
-            const h = await writeContractAsync({
-              address: router02!,
-              abi: swapRouter02Abi,
-              functionName: 'exactInputSingle',
-              args: [params],
-              value,
-              chainId,
-            })
-            patchTx('hub-in', { status: 'confirming', hash: h })
-            const hubReceipt = await publicClient.waitForTransactionReceipt({ hash: h })
+            if (!hubConfigured && !lifiHub) throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
+            let hubReceipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>
+            if (lifiHub && !hubConfigured) {
+              // LiFi: re-quote at execution (fresh route + floor), approve only for
+              // ERC-20 pay (ETH rides tx.value), send the guarded transactionRequest
+              // verbatim. parseLifiQuote already enforced target==spender, echoed
+              // route match, and exact-value — no unchecked fields reach here.
+              const lq = await fetchLifiQuote({
+                chainId,
+                fromToken: LIFI_NATIVE,
+                toToken: usdc,
+                fromAmount: amountInRaw,
+                fromAddress: holder,
+                slippageBps: slip,
+              })
+              patchTx('hub-in', { status: 'signing', error: null })
+              const h = await sendTransactionAsync({
+                to: lq.tx.to,
+                data: lq.tx.data,
+                value: lq.tx.value,
+                gas: lq.tx.gasLimit ?? undefined,
+                chainId,
+              })
+              patchTx('hub-in', { status: 'confirming', hash: h })
+              hubReceipt = await publicClient.waitForTransactionReceipt({ hash: h })
+            } else {
+              const q = await bestExactInTier(client, quoter!, weth!, usdc, amountInRaw)
+              if (!q) throw new Error('No WETH/USDC route.')
+              if (hub === 'WETH') await approveIfNeeded('approve-in', weth!, router02!, amountInRaw)
+              const params = {
+                tokenIn: weth!,
+                tokenOut: usdc,
+                fee: q.fee,
+                recipient: holder,
+                amountIn: amountInRaw,
+                amountOutMinimum: minOutFor(q.amount, BigInt(slip)),
+                sqrtPriceLimitX96: 0n,
+              } as const
+              const value = hub === 'ETH' ? amountInRaw : 0n
+              patchTx('hub-in', { status: 'signing', error: null })
+              await publicClient.simulateContract({
+                account: holder,
+                address: router02!,
+                abi: swapRouter02Abi,
+                functionName: 'exactInputSingle',
+                args: [params],
+                value,
+              })
+              const h = await writeContractAsync({
+                address: router02!,
+                abi: swapRouter02Abi,
+                functionName: 'exactInputSingle',
+                args: [params],
+                value,
+                chainId,
+              })
+              patchTx('hub-in', { status: 'confirming', hash: h })
+              hubReceipt = await publicClient.waitForTransactionReceipt({ hash: h })
+            }
             // Measure the delivered USDC from the RECEIPT's own Transfer logs — never a
             // before/after balance diff. The old diff read balances through a different
             // RPC client than the receipt wait; a lagging read node returned the pre-swap
@@ -523,6 +587,35 @@ export function useDexSwap(
 
           if (hub === 'USDC' || usdcOut <= 0n) {
             setDone({ hash: h })
+          } else if (lifiHub && !hubConfigured) {
+            // LiFi hub-out: settlement → native ETH through the verified diamond.
+            // A failure here strands nothing — the settlement asset is already in
+            // the holder's wallet; the error says so plainly.
+            const lq = await fetchLifiQuote({
+              chainId,
+              fromToken: usdc,
+              toToken: LIFI_NATIVE,
+              fromAmount: usdcOut,
+              fromAddress: holder,
+              slippageBps: slip,
+            }).catch((e) => {
+              throw new Error(
+                `${e instanceof Error ? e.message : 'No route.'} Your ${cfg.usdcSymbol} is in your wallet; convert it manually.`,
+              )
+            })
+            await approveIfNeeded('approve-usdc', usdc, lq.approvalAddress, usdcOut)
+            patchTx('hub-out', { status: 'signing', error: null })
+            const h3 = await sendTransactionAsync({
+              to: lq.tx.to,
+              data: lq.tx.data,
+              value: lq.tx.value,
+              gas: lq.tx.gasLimit ?? undefined,
+              chainId,
+            })
+            patchTx('hub-out', { status: 'confirming', hash: h3 })
+            await publicClient.waitForTransactionReceipt({ hash: h3 })
+            patchTx('hub-out', { status: 'success' })
+            setDone({ hash: h3 })
           } else {
             if (!hubConfigured) throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
             const q = await bestExactInTier(client, quoter!, usdc, weth!, usdcOut)
@@ -618,12 +711,13 @@ export function useDexSwap(
         setRunning(false)
       }
     },
-    [address, cfg.name, chainId, configured, direction, hub, hubConfigured, ix, patchTx, publicClient, quoter, queryClient, router02, spectrumRouter, usdc, usdcSym, walletReady, weth, writeContractAsync],
+    [address, cfg.name, cfg.usdcSymbol, chainId, configured, direction, hub, hubConfigured, lifiHub, ix, patchTx, publicClient, quoter, queryClient, router02, sendTransactionAsync, spectrumRouter, usdc, usdcSym, walletReady, weth, writeContractAsync],
   )
 
   return {
     configured,
     hubConfigured,
+    lifiHub,
     walletReady,
     payBalance,
     quote,

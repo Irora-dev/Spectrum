@@ -43,6 +43,11 @@ export interface ChainCfg extends ChainDeployment {
    *  immutable): USDC on Base/Ethereum, USDG on Robinhood Chain. Labels only —
    *  decimals are 6 everywhere and the math never branches on it. */
   usdcSymbol: string
+  /** External hub-swap router for chains with NO canonical Uniswap periphery:
+   *  'lifi' routes the any-asset ↔ settlement hop through LiFi's source-verified
+   *  diamond (the only verified router on Robinhood Chain). null = the chain has
+   *  proper Uniswap infra (Base/Ethereum) or no hub path at all. */
+  externalHubRouter: 'lifi' | null
 }
 
 // Chain scaffolds the app knows how to render (viem chain, explorer, pricing
@@ -57,6 +62,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     dexscreenerSlug: 'base',
     explorer: BASESCAN,
     usdcSymbol: 'USDC',
+    externalHubRouter: null,
   },
   [MAINNET_CHAIN_ID]: {
     chainId: MAINNET_CHAIN_ID,
@@ -66,6 +72,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     dexscreenerSlug: 'ethereum',
     explorer: ETHERSCAN,
     usdcSymbol: 'USDC',
+    externalHubRouter: null,
   },
   [ROBINHOOD_CHAIN_ID]: {
     chainId: ROBINHOOD_CHAIN_ID,
@@ -75,6 +82,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     dexscreenerSlug: '', // DexScreener does not index Robinhood Chain (2026-07)
     explorer: ROBINHOOD_EXPLORER,
     usdcSymbol: 'USDG',
+    externalHubRouter: 'lifi',
   },
 }
 
