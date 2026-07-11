@@ -2,7 +2,7 @@
 
 Plain-language notes for anyone who wants to host this Spectrum V2 frontend.
 The kit is **operational by default**: `src/lib/chain/deployments.json` ships the
-**canonical Spectrum address book** (Base + Ethereum), every address overridable to
+**canonical Spectrum address book** (Base, Ethereum + Robinhood Chain), every address overridable to
 serve your own deployment. It ships **no curated lists and no default fee
 recipient** — the two fee-recipient values are empty until you set your own wallet.
 Whoever hosts it makes — and owns — every go-live choice, including **verifying any
@@ -54,13 +54,13 @@ What does NOT work keyless:
   tier your flags express. It also runs automatically as a **prebuild check**, so a
   fatal misconfig can't slip into a build (run `vite build` directly to bypass).
 - `src/lib/chain/deployments.json` ships the **canonical Spectrum addresses** for
-  Base + Ethereum — blank env = the canonical deployment. To serve **your own**
+  Base, Ethereum + Robinhood Chain — blank env = the canonical deployment. To serve **your own**
   deployment, use the `VITE_*` overrides in `.env.example` or edit the JSON.
   **The `VITE_*_ADDRESS` overrides apply to the default chain (Base) only** —
   every other chain reads `deployments.json` and ignores the env vars, so a
   non-Base chain's addresses must go in the JSON (or it stays an empty shell with
   no in-app warning; `check:config` flags this).
-- `VITE_EXTRA_CHAIN_IDS` — **Base and Ethereum are both live by default** (a chain
+- `VITE_EXTRA_CHAIN_IDS` — **Base, Ethereum and Robinhood Chain are all live by default** (a chain
   with a `deployments.json` entry is active, and the canonical book ships both).
   This var exists only to activate a future scaffolded chain that has no
   `deployments.json` entry yet; it ships no addresses, and such a chain is an
@@ -137,7 +137,7 @@ constituent + your interface tag). Two consequences:
 - **A generic DEX aggregator cannot trade these baskets** — it can't build that
   payload, so the swap just reverts. Don't wire one as your buy/sell path.
 - **The canonical Spectrum router ships** in `src/lib/chain/deployments.json`
-  (Base + Ethereum) — with `VITE_ENABLE_SWAP` on and nothing else set, trades
+  (all shipped chains) — with `VITE_ENABLE_SWAP` on and nothing else set, trades
   broadcast through it. Set `VITE_SWAP_ROUTER_ADDRESS` (or edit the JSON) only to
   route through a router **you** deployed. On a chain with no router configured
   anywhere, buy/sell stays preview-only.

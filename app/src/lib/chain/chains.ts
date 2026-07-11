@@ -1,22 +1,48 @@
-import type { Address, Chain } from 'viem'
+import { defineChain, type Address, type Chain } from 'viem'
 import { base, mainnet } from 'viem/chains'
-import { BASE_CHAIN_ID, BASESCAN, ETHERSCAN, MAINNET_CHAIN_ID } from './constants'
+import {
+  BASE_CHAIN_ID,
+  BASESCAN,
+  ETHERSCAN,
+  MAINNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_EXPLORER,
+} from './constants'
 import { configuredChainIds, deploymentFor, type ChainDeployment } from './deployments'
 
+// Robinhood Chain (Arbitrum Orbit L2; docs.robinhood.com/chain) — not bundled in
+// viem/chains yet, defined here. Native gas is ETH; Multicall3 verified deployed
+// at the canonical address (batching works). The settlement asset the factory is
+// wired to there is USDG (Global Dollar, 6 decimals), not USDC — same math,
+// different name (see usdcSymbol below).
+const robinhood = defineChain({
+  id: ROBINHOOD_CHAIN_ID,
+  name: 'Robinhood Chain',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc.mainnet.chain.robinhood.com'] } },
+  blockExplorers: { default: { name: 'Blockscout', url: ROBINHOOD_EXPLORER } },
+  contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
+})
+
 // Per-chain config powering the (auto-hiding) network toggle + reader / pool
-// engine. Base + Ethereum ship LIVE by default (a deployments.json entry
-// activates a chain, and the canonical book carries both; Base leads as the
-// primary). A future chain is one deployments.json entry + one scaffold row
-// below. There are NO seed lists and NO addresses here — addresses come
+// engine. Base + Ethereum + Robinhood ship LIVE by default (a deployments.json
+// entry activates a chain, and the canonical book carries all three; Base leads
+// as the primary). A future chain is one deployments.json entry + one scaffold
+// row below. There are NO seed lists and NO addresses here — addresses come
 // exclusively from deployments.ts (canonical book, every field overridable).
 export interface ChainCfg extends ChainDeployment {
   chainId: number
   key: string
   name: string
   viemChain: Chain
-  /** DexScreener path segment for keyless token pricing. */
+  /** DexScreener path segment for keyless token pricing — '' = not indexed
+   *  there (consumers skip the fetch instead of asking for a 404). */
   dexscreenerSlug: string
   explorer: string
+  /** Display symbol of the chain's settlement asset (the factory's `USDC()`
+   *  immutable): USDC on Base/Ethereum, USDG on Robinhood Chain. Labels only —
+   *  decimals are 6 everywhere and the math never branches on it. */
+  usdcSymbol: string
 }
 
 // Chain scaffolds the app knows how to render (viem chain, explorer, pricing
@@ -30,6 +56,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     viemChain: base,
     dexscreenerSlug: 'base',
     explorer: BASESCAN,
+    usdcSymbol: 'USDC',
   },
   [MAINNET_CHAIN_ID]: {
     chainId: MAINNET_CHAIN_ID,
@@ -38,6 +65,16 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     viemChain: mainnet,
     dexscreenerSlug: 'ethereum',
     explorer: ETHERSCAN,
+    usdcSymbol: 'USDC',
+  },
+  [ROBINHOOD_CHAIN_ID]: {
+    chainId: ROBINHOOD_CHAIN_ID,
+    key: 'robinhood',
+    name: 'Robinhood',
+    viemChain: robinhood,
+    dexscreenerSlug: '', // DexScreener does not index Robinhood Chain (2026-07)
+    explorer: ROBINHOOD_EXPLORER,
+    usdcSymbol: 'USDG',
   },
 }
 

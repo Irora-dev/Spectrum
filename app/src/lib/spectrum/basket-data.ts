@@ -144,7 +144,9 @@ async function fetchDexPrices(
   slug: string,
 ): Promise<Map<string, DexPair>> {
   const out = new Map<string, DexPair>()
-  if (addresses.length === 0) return out
+  // '' = DexScreener doesn't index this chain (Robinhood) — skip the fetch
+  // entirely; legs render honestly unpriced and the USDC/USDG leg keeps its $1.
+  if (!slug || addresses.length === 0) return out
   const now = Date.now()
   const misses: string[] = []
   for (const a of addresses) {

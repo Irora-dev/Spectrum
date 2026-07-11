@@ -1,7 +1,7 @@
 import { useAccount, useSwitchChain } from 'wagmi'
 import { useActiveChain } from '../lib/chain/active-chain'
 
-const LABEL: Record<number, string> = { 1: 'ETH', 8453: 'BASE' }
+const LABEL: Record<number, string> = { 1: 'ETH', 8453: 'BASE', 4663: 'RH' }
 
 // Global launch-network selector. Sets the app's active chain (drives the launch
 // page's assets + deploy contracts) and, when a wallet is connected, switches it too.

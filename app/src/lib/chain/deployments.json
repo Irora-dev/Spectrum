@@ -1,9 +1,9 @@
 {
   "8453": {
-    "factory": "0x05A1e9F7BE4B806Bf3662524E1191467e3b315fc",
+    "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
     "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "poolManager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
-    "swapRouter": "0xE1BA7C498DB6C264c597C2671c75df9519D33DD8",
+    "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA",
     "weth": "0x4200000000000000000000000000000000000006",
     "uniV2Factory": "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
     "uniV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
@@ -14,10 +14,10 @@
     "universalRouter": "0x6fF5693b99212Da76ad316178A184AB56D299b43"
   },
   "1": {
-    "factory": "0xE365a9D5Ef8D71867F4a63043c8520C6bFCF8bA4",
+    "factory": "0xEf520C7f354d03253149388F6338189Bc1A0Ba01",
     "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
-    "swapRouter": "0x96A16D418021722689072687e31d5e070148dbb4",
+    "swapRouter": "0x15D9C385dC3d3f4fB50321F6e224b25A391F0025",
     "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
     "uniV2Factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
     "uniV3Factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
@@ -26,5 +26,19 @@
     "aerodromeFactory": "",
     "v4Quoter": "0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203",
     "universalRouter": "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"
+  },
+  "4663": {
+    "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
+    "usdc": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+    "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA",
+    "weth": "",
+    "uniV2Factory": "",
+    "uniV3Factory": "",
+    "uniV3SwapRouter": "",
+    "uniV3Quoter": "",
+    "aerodromeFactory": "",
+    "v4Quoter": "",
+    "universalRouter": ""
   }
 }

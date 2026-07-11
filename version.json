@@ -1,5 +1,5 @@
 {
-  "version": "2026.07.10",
-  "note": "First public release: the full operator front end, the /setup studio, the agent runbook, canonical contracts wired by default.",
+  "version": "2026.07.11",
+  "note": "New canonical contracts on Base + Ethereum, and Robinhood Chain (4663) live as a third chain (USDG settlement).",
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }

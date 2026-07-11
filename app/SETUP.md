@@ -7,7 +7,7 @@ with the config model in [`handover/02-TECHNICAL.md`](handover/02-TECHNICAL.md)
 and the plain-language hosting note in [`OPERATORS.md`](OPERATORS.md).
 
 This package is **operational by default**: `src/lib/chain/deployments.json` ships the
-**canonical Spectrum address book** (Base + Ethereum), so a zero-config build is a working
+**canonical Spectrum address book** (Base, Ethereum + Robinhood Chain), so a zero-config build is a working
 site on the canonical deployment. Every address is an **override point** for serving your
 own deployment instead. The only values with **no default, ever**, are the two fee
 recipients (`VITE_INTERFACE_TAG_ADDRESS` / `VITE_LAUNCHER_ADDRESS`) — unset, that fee

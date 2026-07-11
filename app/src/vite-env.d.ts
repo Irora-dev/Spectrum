@@ -4,6 +4,8 @@ interface ImportMetaEnv {
   readonly VITE_ALCHEMY_API_KEY?: string
   readonly VITE_BASE_RPC_URL?: string
   readonly VITE_MAINNET_RPC_URL?: string
+  // Robinhood Chain has no Alchemy tier — this explicit URL or its public endpoint.
+  readonly VITE_ROBINHOOD_RPC_URL?: string
   readonly VITE_WALLETCONNECT_PROJECT_ID?: string
   // feature flags (default off)
   readonly VITE_ENABLE_WALLET?: string

@@ -104,7 +104,7 @@ export function deploymentFor(chainId: number): ChainDeployment {
   return out
 }
 
-/** Chain ids present in deployments.json (the shipped canonical book: Base + Ethereum). */
+/** Chain ids present in deployments.json (the shipped canonical book: Base, Ethereum + Robinhood). */
 export function configuredChainIds(): number[] {
   return Object.keys(raw as Record<string, unknown>)
     .map(Number)

@@ -26,7 +26,7 @@ describe('envConfigToText', () => {
     for (const v of ['VITE_FACTORY_ADDRESS', 'VITE_SWAP_ROUTER_ADDRESS', 'VITE_WALLETCONNECT_PROJECT_ID', 'VITE_INTERFACE_TAG_ADDRESS', 'VITE_LAUNCHER_ADDRESS', 'VITE_SITE_URL', 'VITE_EXTRA_CHAIN_IDS']) {
       expect(env).not.toMatch(new RegExp(`^${v}=`, 'm'))
     }
-    expect(env).toMatch(/canonical Spectrum deployment \(Base \+ Ethereum, both live\)/)
+    expect(env).toMatch(/canonical Spectrum deployment \(Base, Ethereum \+ Robinhood Chain\)/)
   })
   it('siteConfigToJson carries the committed identity (RPC key excluded)', () => {
     const json = JSON.parse(siteConfigToJson({ ...base, siteUrl: 'https://acme.xyz' }))

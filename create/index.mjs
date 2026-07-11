@@ -48,7 +48,7 @@ Flags: --name --tagline --style(${STYLES.join('|')})
        --tier(${TIERS.join('|')})  default: all — the full site
        --host(${HOSTS.join('|')})  prints tailored deploy steps for that host
        --no-<page> (${PAGE_KEYS.join(',')})  --yes  --force
-Contracts are the shipped canonical Spectrum deployment (Base + Ethereum, both live).
+Contracts are the shipped canonical Spectrum deployment (Base, Ethereum + Robinhood Chain).
 Writes app/src/brand.config.ts + app/src/site.config.json + app/.env.local.`
 
 async function main() {

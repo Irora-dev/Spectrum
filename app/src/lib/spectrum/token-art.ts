@@ -18,16 +18,22 @@ import { cacheGet, cacheSet, DAY_MS } from './persist-cache'
 // fail, and every lookup — including misses — is cached for the session.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Chains with no DexScreener / TrustWallet coverage (Robinhood 4663) are absent
+// here — their rungs return null and the ladder falls to the generated visual.
 const CHAIN_SLUG: Record<number, string> = { 1: 'ethereum', 8453: 'base' }
 
-export function dexscreenerLogoUrl(address: string, chainId: number): string {
-  return `https://dd.dexscreener.com/ds-data/tokens/${CHAIN_SLUG[chainId] ?? 'ethereum'}/${address.toLowerCase()}.png?size=lg`
+export function dexscreenerLogoUrl(address: string, chainId: number): string | null {
+  const slug = CHAIN_SLUG[chainId]
+  if (!slug) return null
+  return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${address.toLowerCase()}.png?size=lg`
 }
 
 // TrustWallet's assets repo uses the same chain slugs, but CHECKSUMMED addresses.
 export function trustwalletLogoUrl(address: string, chainId: number): string | null {
+  const slug = CHAIN_SLUG[chainId]
+  if (!slug) return null
   try {
-    return `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${CHAIN_SLUG[chainId] ?? 'ethereum'}/assets/${getAddress(address)}/logo.png`
+    return `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${slug}/assets/${getAddress(address)}/logo.png`
   } catch {
     return null // unparseable address — skip the TrustWallet rung
   }
@@ -36,14 +42,16 @@ export function trustwalletLogoUrl(address: string, chainId: number): string | n
 /** Static display ladder, fastest-first. The Coingecko rung is async — append
  *  `await coingeckoLogoUrl(…)` once these are exhausted. */
 export function logoSources(address: string, chainId: number): string[] {
+  const dex = dexscreenerLogoUrl(address, chainId)
   const tw = trustwalletLogoUrl(address, chainId)
-  return [dexscreenerLogoUrl(address, chainId), ...(tw ? [tw] : [])]
+  return [...(dex ? [dex] : []), ...(tw ? [tw] : [])]
 }
 
 /** Static extraction ladder, CORS-readable-first. */
 export function colorSources(address: string, chainId: number): string[] {
   const tw = trustwalletLogoUrl(address, chainId)
-  return [...(tw ? [tw] : []), dexscreenerLogoUrl(address, chainId)]
+  const dex = dexscreenerLogoUrl(address, chainId)
+  return [...(tw ? [tw] : []), ...(dex ? [dex] : [])]
 }
 
 export interface CoingeckoInfo {

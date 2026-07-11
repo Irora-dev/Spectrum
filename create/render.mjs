@@ -116,7 +116,7 @@ export function renderEnv(plan) {
     L.push('# WalletConnect project id — adds mobile / QR wallets (injected wallets work without it).')
     L.push(`VITE_WALLETCONNECT_PROJECT_ID=${plan.walletConnectId}`, '')
   }
-  L.push('# Contracts are the shipped canonical Spectrum deployment (Base + Ethereum, both live).')
+  L.push('# Contracts are the shipped canonical Spectrum deployment (Base, Ethereum + Robinhood Chain).')
   L.push('# Serving your OWN deployment instead is a hand-edit power path — every override')
   L.push('# (factory, swap router, public infra) is documented in .env.example.')
   L.push('# Database intentionally omitted — the Spectrum Mini kit ships DB-less. Discovery,')

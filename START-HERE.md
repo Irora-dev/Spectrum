@@ -2,7 +2,7 @@
 
 This kit turns the full Spectrum operator site into **your** themed front end — every page,
 your colors, your name — deployed in minutes, with **no database** to run. It is
-**operational by default**: the canonical Spectrum contracts (Base + Ethereum) ship in
+**operational by default**: the canonical Spectrum contracts (Base, Ethereum + Robinhood Chain) ship in
 `app/src/lib/chain/deployments.json`, so a fresh clone's dev server is already a working
 site. You bring a name, a look, your own RPC key + site URL (a build requires both), and
 a host; your fee wallet is optional — and **no fee recipient ever ships as a default**.

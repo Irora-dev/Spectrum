@@ -53,7 +53,10 @@ function HubIcon({ hub, chainId, size = 22 }: { hub: HubToken; chainId: number; 
   if (hub === 'ETH') return <EthGlyph size={size} />
   const addr = hub === 'WETH' ? dep.weth : dep.usdc
   if (!addr) return <EthGlyph size={size} />
-  return <AssetLogo address={addr} symbol={hub} chainId={chainId} size={size} />
+  // The letters fallback should spell the chain's settlement asset (USDG on
+  // Robinhood) — logo sources have no coverage there, so the letters ARE the icon.
+  const sym = hub === 'USDC' ? chainCfg(chainId).usdcSymbol : hub
+  return <AssetLogo address={addr} symbol={sym} chainId={chainId} size={size} />
 }
 
 const hubDecimals = (hub: HubToken) => (hub === 'USDC' ? 6 : 18)
@@ -124,7 +127,21 @@ export function DexSwapCard({
   const feeFrac = fees ? fees.basketFeeBps / 10_000 : Number.NaN
 
   const [dir, setDir] = useState<'buy' | 'sell'>('buy')
-  const [hub, setHub] = useState<HubToken>(defaultHub)
+  // Chains without ETH-hub infra (Robinhood: no WETH / V3 router / quoter) trade
+  // settlement-asset-direct: the console opens on USDC/USDG and the ETH/WETH hub
+  // options don't render. `hubInfra` is the same gate useDexSwap's hubConfigured
+  // resolves to, computed here so the DEFAULT is right before the hook runs.
+  const depHere = deploymentFor(chainId)
+  const hubInfra = !!depHere.uniV3SwapRouter && !!depHere.uniV3Quoter && !!depHere.weth
+  const [hub, setHub] = useState<HubToken>(hubInfra ? defaultHub : 'USDC')
+  useEffect(() => {
+    if (!hubInfra && hub !== 'USDC') setHub('USDC')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubInfra, chainId])
+  // Display name of the settlement asset: USDC on Base/Ethereum, USDG on
+  // Robinhood Chain. Mechanics identical — labels only.
+  const usdcSym = cfg.usdcSymbol
+  const hubLabel = (h: HubToken) => (h === 'USDC' ? usdcSym : h)
   const [amount, setAmount] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [customSlip, setCustomSlip] = useState('')
@@ -290,8 +307,8 @@ export function DexSwapCard({
   else if (dex.running) cta = { label: 'Swapping…', disabled: true }
   else if (dex.done) cta = { label: 'Swap again', onClick: () => { setAmount(''); dex.resetRun() }, disabled: false }
   else if (amountRaw === 0n) cta = { label: 'Enter an amount', disabled: true }
-  else if (insufficient) cta = { label: `Insufficient ${dir === 'buy' ? hub : `$${ix.symbol}`} balance`, disabled: true }
-  else if (seedShort) cta = { label: 'First buy needs ≥ 10 USDC on the basket leg', disabled: true }
+  else if (insufficient) cta = { label: `Insufficient ${dir === 'buy' ? hubLabel(hub) : `$${ix.symbol}`} balance`, disabled: true }
+  else if (seedShort) cta = { label: `First buy needs ≥ 10 ${usdcSym} on the basket leg`, disabled: true }
   else if (dex.quoting) cta = { label: 'Quoting…', disabled: true }
   else if (!dex.quote) cta = { label: 'Quote unavailable', disabled: true }
   else if (dex.error) cta = { label: 'Retry swap', onClick: () => runSwap(), disabled: false }
@@ -316,7 +333,7 @@ export function DexSwapCard({
       out && ix
         ? dir === 'buy'
           ? `≈ ${out} $${ix.symbol} received`
-          : `≈ ${out} ${hub} received`
+          : `≈ ${out} ${hubLabel(hub)} received`
         : 'Swap confirmed'
     setLastSwap(null)
     setPending(true)
@@ -331,7 +348,7 @@ export function DexSwapCard({
   const hubBoxZ = hubMenuOpen ? 'z-30' : 'z-[1]'
 
   const hubChip = (
-    <HubChip hub={hub} chainId={chainId} open={hubMenuOpen} setOpen={setHubMenuOpen} onPick={(h) => { hubPicked.current = true; setHub(h); dex.resetRun() }} disabled={dex.running} />
+    <HubChip hub={hub} chainId={chainId} open={hubMenuOpen} setOpen={setHubMenuOpen} onPick={(h) => { hubPicked.current = true; setHub(h); dex.resetRun() }} disabled={dex.running} hubInfra={hubInfra} usdcSym={usdcSym} />
   )
   const basketChip = (
     <BasketChip ix={ix} onClick={fixedBasket ? undefined : () => setPickerOpen(true)} disabled={dex.running} />
@@ -575,8 +592,8 @@ export function DexSwapCard({
                 <span className="animate-pulse text-ink-faint">Quoting…</span>
               ) : rate && ix ? (
                 dir === 'buy'
-                  ? `1 ${hub} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 4 })} $${ix.symbol}`
-                  : `1 $${ix.symbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${hub}`
+                  ? `1 ${hubLabel(hub)} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 4 })} $${ix.symbol}`
+                  : `1 $${ix.symbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${hubLabel(hub)}`
               ) : (
                 <span className="text-ink-faint">Trade details</span>
               )}
@@ -607,7 +624,7 @@ export function DexSwapCard({
               <div className="flex items-center justify-between gap-3">
                 <span className="text-ink-faint">Minimum received</span>
                 <span className="tabular-nums">
-                  {dex.quote ? `${fmtAmt(dex.quote.minOutRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : hub}` : '—'}
+                  {dex.quote ? `${fmtAmt(dex.quote.minOutRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : hubLabel(hub)}` : '—'}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -617,10 +634,10 @@ export function DexSwapCard({
                     ? dir === 'buy'
                       ? hub === 'USDC'
                         ? `USDC → $${ix.symbol} · self-pool`
-                        : `${hub} → USDC → $${ix.symbol} · V3 + self-pool`
+                        : `${hub} → ${usdcSym} → $${ix.symbol} · V3 + self-pool`
                       : hub === 'USDC'
                         ? `$${ix.symbol} → USDC · self-pool`
-                        : `$${ix.symbol} → USDC → ${hub} · self-pool + V3`
+                        : `$${ix.symbol} → ${usdcSym} → ${hub} · self-pool + V3`
                     : '—'}
                   {dex.quote && dir === 'buy' ? ` · ${dex.quote.legCount} legs, each with its own floor` : ''}
                 </span>
@@ -778,7 +795,7 @@ export function DexSwapCard({
 // ── chips ─────────────────────────────────────────────────────────────────────
 
 function HubChip({
-  hub, chainId, open, setOpen, onPick, disabled,
+  hub, chainId, open, setOpen, onPick, disabled, hubInfra = true, usdcSym = 'USDC',
 }: {
   hub: HubToken
   chainId: number
@@ -786,6 +803,10 @@ function HubChip({
   setOpen: (v: boolean) => void
   onPick: (h: HubToken) => void
   disabled?: boolean
+  /** false = no ETH-hub infra on this chain (Robinhood) — only the settlement asset renders. */
+  hubInfra?: boolean
+  /** Chain settlement-asset display name (USDC / USDG). */
+  usdcSym?: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -806,14 +827,14 @@ function HubChip({
         className="press flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] py-1.5 pl-2 pr-3 hover:border-white/30 disabled:opacity-60"
       >
         <HubIcon hub={hub} chainId={chainId} />
-        <span className="font-display text-sm font-bold text-ink">{hub}</span>
+        <span className="font-display text-sm font-bold text-ink">{hub === 'USDC' ? usdcSym : hub}</span>
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-ink-faint">
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
       {open && (
         <div className="search-pop absolute right-0 z-40 mt-2 w-44 rounded-2xl border border-white/12 bg-panel/95 p-1.5 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
-          {HUBS.map((h) => (
+          {(hubInfra ? HUBS : HUBS.filter((h) => h === 'USDC')).map((h) => (
             <button
               key={h}
               type="button"
@@ -825,7 +846,7 @@ function HubChip({
             >
               <HubIcon hub={h} chainId={chainId} />
               <span className="flex-1">
-                <span className="block font-display text-sm font-bold text-ink">{h}</span>
+                <span className="block font-display text-sm font-bold text-ink">{h === 'USDC' ? usdcSym : h}</span>
                 <span className="block font-mono text-[9px] uppercase tracking-wider text-ink-faint">
                   {h === 'ETH' ? 'native' : h === 'WETH' ? 'wrapped ether' : 'settlement asset'}
                 </span>

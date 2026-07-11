@@ -1,7 +1,7 @@
 // Serialize the setup studio's Deployment section to the .env.local text (mirrors what the
 // create/ CLI writes) — so /setup exports the WHOLE config, not just the look. The studio
 // collects ONLY the operator's own values (fee wallet, RPC key, site URL); contracts are the
-// shipped canonical deployment (Base + Ethereum, both live) — own-deployment overrides are a
+// shipped canonical deployment (Base, Ethereum + Robinhood Chain, all live) — own-deployment overrides are a
 // hand-edit power path (.env.example), never a studio field. DB omitted by design.
 
 import { isAddress } from 'viem'
@@ -134,7 +134,7 @@ export function envConfigToText(d: DeployConfig): string {
   L.push('# On a git-connected CI build this file is invisible (gitignored) — set')
   L.push('# VITE_ALCHEMY_API_KEY in the host dashboard/CLI; everything else travels committed.')
   L.push('# The VITE_* vars in .env.example remain as overrides of the committed values.', '')
-  L.push('# Contracts are the shipped canonical Spectrum deployment (Base + Ethereum, both live).')
+  L.push('# Contracts are the shipped canonical Spectrum deployment (Base, Ethereum + Robinhood Chain).')
   L.push('# Serving your OWN deployment instead is a hand-edit power path — every override')
   L.push('# (factory, swap router, public infra) is documented in .env.example.')
   L.push('# Database intentionally omitted — the kit ships DB-less. Discovery, charts, leaderboards,')

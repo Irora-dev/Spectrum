@@ -12,6 +12,7 @@ import type { Address } from 'viem'
 
 export const BASE_CHAIN_ID = 8453
 export const MAINNET_CHAIN_ID = 1
+export const ROBINHOOD_CHAIN_ID = 4663
 
 // Pool-state read: the Uniswap V4 PoolManager keeps pools in a mapping at
 // storage slot 6; pool Slot0 lives at keccak(poolId . slot). A Uniswap constant,
@@ -24,3 +25,4 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Addr
 // Explorers
 export const BASESCAN = 'https://basescan.org'
 export const ETHERSCAN = 'https://etherscan.io'
+export const ROBINHOOD_EXPLORER = 'https://robinhoodchain.blockscout.com'

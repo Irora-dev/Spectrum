@@ -54,7 +54,7 @@ test('no tier given -> ALL features in the committed json; env has no address li
   assert.doesNotMatch(env, /VITE_SWAP_ROUTER_ADDRESS=/)
   assert.doesNotMatch(env, /VITE_WALLETCONNECT_PROJECT_ID=/)
   assert.doesNotMatch(env, /VITE_EXTRA_CHAIN_IDS/)
-  assert.match(env, /canonical Spectrum deployment \(Base \+ Ethereum, both live\)/)
+  assert.match(env, /canonical Spectrum deployment \(Base, Ethereum \+ Robinhood Chain\)/)
 })
 
 test('scoped tiers land in the json; explicit router override still emits in env', () => {

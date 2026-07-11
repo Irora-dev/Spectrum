@@ -37,8 +37,8 @@ describe('addressFingerprint', () => {
 })
 
 describe('anchor verdicts', () => {
-  it('the shipped canonical book verifies as canonical on both chains', () => {
-    for (const chainId of [8453, 1]) {
+  it('the shipped canonical book verifies as canonical on every shipped chain', () => {
+    for (const chainId of [8453, 1, 4663]) {
       const entry = (canonicalBook as Record<string, Record<string, string>>)[String(chainId)]
       const fields = verifyChainConfig(chainId, {
         factory: entry.factory as Address,

@@ -253,28 +253,31 @@ export function useDexSwap(
   )
 
   // ── the executable steps for the CTA/progress display ──────────────────────
+  // Labels use the chain's settlement symbol (USDC on Base/Ethereum, USDG on
+  // Robinhood Chain) — the mechanics are identical, only the name differs.
+  const usdcSym = cfg.usdcSymbol
   const steps = useCallback(
     (sym: string): DexStep[] => {
       if (direction === 'buy') {
         const list: DexStep[] = []
-        if (hub === 'ETH') list.push({ key: 'hub-in', label: 'Swap ETH → USDC' })
+        if (hub === 'ETH') list.push({ key: 'hub-in', label: `Swap ETH → ${usdcSym}` })
         if (hub === 'WETH')
-          list.push({ key: 'approve-in', label: 'Approve WETH' }, { key: 'hub-in', label: 'Swap WETH → USDC' })
-        list.push({ key: 'approve-usdc', label: 'Approve USDC' }, { key: 'spectrum', label: `Buy $${sym}` })
+          list.push({ key: 'approve-in', label: 'Approve WETH' }, { key: 'hub-in', label: `Swap WETH → ${usdcSym}` })
+        list.push({ key: 'approve-usdc', label: `Approve ${usdcSym}` }, { key: 'spectrum', label: `Buy $${sym}` })
         return list
       }
       const list: DexStep[] = [
         { key: 'approve-in', label: `Approve $${sym}` },
-        { key: 'spectrum', label: `Sell $${sym} → USDC` },
+        { key: 'spectrum', label: `Sell $${sym} → ${usdcSym}` },
       ]
       if (hub !== 'USDC')
         list.push(
-          { key: 'approve-usdc', label: 'Approve USDC' },
-          { key: 'hub-out', label: hub === 'ETH' ? 'Swap USDC → ETH' : 'Swap USDC → WETH' },
+          { key: 'approve-usdc', label: `Approve ${usdcSym}` },
+          { key: 'hub-out', label: hub === 'ETH' ? `Swap ${usdcSym} → ETH` : `Swap ${usdcSym} → WETH` },
         )
       return list
     },
-    [direction, hub],
+    [direction, hub, usdcSym],
   )
 
   // ── execution ───────────────────────────────────────────────────────────────
@@ -378,8 +381,8 @@ export function useDexSwap(
               )
               .reduce((sum, l) => sum + (l.args as { value: bigint }).value, 0n)
             if (usdcIn <= 0n) {
-              patchTx('hub-in', { status: 'error', error: 'No USDC reached your wallet in this transaction.' })
-              throw new Error('Hub swap delivered no USDC — aborting before the basket leg.')
+              patchTx('hub-in', { status: 'error', error: `No ${usdcSym} reached your wallet in this transaction.` })
+              throw new Error(`Hub swap delivered no ${usdcSym} — aborting before the basket leg.`)
             }
             patchTx('hub-in', { status: 'success' })
           }
@@ -387,7 +390,7 @@ export function useDexSwap(
           // Fresh basket seed rule (C-1): the FIRST mint must be ≥ 10 USDC.
           if ((ix.effectiveSupply ?? 1) === 0 && usdcIn < 10_000_000n) {
             throw new Error(
-              `This is $${ix.symbol}'s first buy — it seeds the basket and needs at least 10 USDC on the basket leg (got ${formatUnits(usdcIn, 6)}).`,
+              `This is $${ix.symbol}'s first buy — it seeds the basket and needs at least 10 ${usdcSym} on the basket leg (got ${formatUnits(usdcIn, 6)}).`,
             )
           }
 
@@ -615,7 +618,7 @@ export function useDexSwap(
         setRunning(false)
       }
     },
-    [address, cfg.name, chainId, configured, direction, hub, hubConfigured, ix, patchTx, publicClient, quoter, queryClient, router02, spectrumRouter, usdc, walletReady, weth, writeContractAsync],
+    [address, cfg.name, chainId, configured, direction, hub, hubConfigured, ix, patchTx, publicClient, quoter, queryClient, router02, spectrumRouter, usdc, usdcSym, walletReady, weth, writeContractAsync],
   )
 
   return {

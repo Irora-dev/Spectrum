@@ -1,10 +1,13 @@
 import { createPublicClient, http, type PublicClient } from 'viem'
 import { CHAINS } from './chains'
-import { BASE_CHAIN_ID, MAINNET_CHAIN_ID } from './constants'
+import { BASE_CHAIN_ID, MAINNET_CHAIN_ID, ROBINHOOD_CHAIN_ID } from './constants'
 
 // Public fallbacks (no key). Match the existing dashboard's reference.
 const PUBLIC_BASE = 'https://base-rpc.publicnode.com'
 const PUBLIC_MAINNET = 'https://ethereum-rpc.publicnode.com'
+// Robinhood Chain's own public endpoint (docs.robinhood.com/chain/connecting) —
+// rate-limited; for production set VITE_ROBINHOOD_RPC_URL to a provider endpoint.
+const PUBLIC_ROBINHOOD = 'https://rpc.mainnet.chain.robinhood.com'
 
 const alchemyKey = import.meta.env.VITE_ALCHEMY_API_KEY
 
@@ -27,6 +30,13 @@ export function mainnetRpcUrl(): string {
   )
 }
 
+// No Alchemy tier: Alchemy does not serve Robinhood Chain (verified 2026-07),
+// so the key never forms a URL here — explicit override else the chain's public
+// endpoint. Revisit when a provider adds 4663.
+export function robinhoodRpcUrl(): string {
+  return import.meta.env.VITE_ROBINHOOD_RPC_URL || PUBLIC_ROBINHOOD
+}
+
 // Whether an Alchemy key is configured — enables wide (full-range) filtered getLogs,
 // which public RPCs choke on. The pool engine uses this for complete V4 discovery.
 export function hasAlchemyKey(): boolean {
@@ -34,7 +44,9 @@ export function hasAlchemyKey(): boolean {
 }
 
 export function rpcUrlFor(chainId: number): string {
-  return chainId === MAINNET_CHAIN_ID ? mainnetRpcUrl() : baseRpcUrl()
+  if (chainId === MAINNET_CHAIN_ID) return mainnetRpcUrl()
+  if (chainId === ROBINHOOD_CHAIN_ID) return robinhoodRpcUrl()
+  return baseRpcUrl()
 }
 
 // Per-chain singleton read clients. `batch.multicall` coalesces concurrent

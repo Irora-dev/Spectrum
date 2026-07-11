@@ -1,6 +1,7 @@
 const META: Record<number, { short: string; color: string }> = {
   1: { short: 'ETH', color: '#a48bff' },
   8453: { short: 'BASE', color: '#4d8bff' },
+  4663: { short: 'RH', color: '#5ac53a' },
 }
 
 export function ChainBadge({ chainId, className = '' }: { chainId: number; className?: string }) {

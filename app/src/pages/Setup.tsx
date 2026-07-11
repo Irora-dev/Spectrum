@@ -349,7 +349,7 @@ export function Setup() {
             Choose a tier that sets what a connected visitor can do.
             <InfoDot>
               Every tier connects a wallet (Rabby, MetaMask, Coinbase). The default ships the full site on
-              the canonical Spectrum contracts, Base and Ethereum both live. Your fee wallet has no default,
+              the canonical Spectrum contracts, live on Base, Ethereum and Robinhood Chain. Your fee wallet has no default,
               and the kit runs with no database.
             </InfoDot>
           </p>

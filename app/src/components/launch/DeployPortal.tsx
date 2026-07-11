@@ -26,6 +26,8 @@ import { BasketBento, type BentoItem } from '../BasketBento'
 // so the flow always completes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Chains DexScreener doesn't index (Robinhood 4663) have no slug — the orb
+// skips the art fetch and renders its letters fallback instead of wrong-chain art.
 const SLUG: Record<number, string> = { 1: 'ethereum', 8453: 'base' }
 
 // One orb = one basket asset (brand-color sphere + the token's logo).
@@ -52,9 +54,9 @@ const Orb = forwardRef<HTMLDivElement, { address: string; symbol: string; chainI
           className="pointer-events-none absolute inset-0 rounded-full"
           style={{ background: 'linear-gradient(160deg, rgba(255,255,255,0.5), rgba(255,255,255,0) 46%)' }}
         />
-        {ok ? (
+        {ok && SLUG[chainId] ? (
           <img
-            src={`https://dd.dexscreener.com/ds-data/tokens/${SLUG[chainId] ?? 'base'}/${address.toLowerCase()}.png?size=lg`}
+            src={`https://dd.dexscreener.com/ds-data/tokens/${SLUG[chainId]}/${address.toLowerCase()}.png?size=lg`}
             alt={symbol}
             onError={() => setOk(false)}
             className="relative rounded-full object-cover ring-1 ring-white/10"

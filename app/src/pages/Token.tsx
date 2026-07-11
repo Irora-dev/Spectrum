@@ -194,7 +194,7 @@ export function Token() {
           .map((h) => tokenVisual(h.symbol, h.asset).color),
       ]
     : [sig, 'var(--color-violet)', 'var(--color-magenta)']
-  const explorerName = chainId === 1 ? 'Etherscan' : 'Basescan'
+  const explorerName = chainId === 1 ? 'Etherscan' : chainId === 4663 ? 'Blockscout' : 'Basescan'
   const justDeployed = params.get('deployed') === '1'
   const partnerUrl = partnerAppUrl(addr)
   const diverged = ix != null && ix.navDivergencePct != null && ix.navDivergencePct > 2

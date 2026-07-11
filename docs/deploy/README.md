@@ -24,7 +24,7 @@ You'll be done in about 15 minutes.
 4. *(Optional)* your **fee wallet address** — the wallet where your share of fees lands.
 
 No contract addresses needed: the kit ships pointing at the canonical Spectrum deployment
-(Base + Ethereum, both live); the setup studio/wizard already wrote your choices into the repo.
+(Base, Ethereum + Robinhood Chain, all live); the setup studio/wizard already wrote your choices into the repo.
 
 You do **not** set a fee percentage anywhere — fees are fixed by the contracts. You configure
 only your fee *wallet*.
@@ -88,7 +88,7 @@ Notes that save you a support ticket:
 - **You never paste a fee percentage.** It isn't a setting — the contracts fix it.
 
 You don't need your own factory / router to launch — the kit ships pointing at the canonical
-Spectrum deployment for Base and Ethereum. Set these only to run the site on your OWN deployment,
+Spectrum deployment for Base, Ethereum and Robinhood Chain. Set these only to run the site on your OWN deployment,
 and verify any address you set against a canonical source before routing value through it.
 
 ### Optional extras

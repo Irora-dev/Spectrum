@@ -6,7 +6,7 @@
 // served at <site>/tokenlist.json. Freshness model matches the site's other
 // baked assets: regenerate per deploy (`npm run build:tokenlist`).
 //
-//   RPC: public endpoints by default; override with RPC_8453 / RPC_1 env vars.
+//   RPC: public endpoints by default; override with RPC_8453 / RPC_1 / RPC_4663 env vars.
 //   Version: the patch number bumps only when the token set actually changes
 //   (token-list consumers cache by version).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ const OUT = join(ROOT, 'public/tokenlist.json')
 const RPC = {
   8453: process.env.RPC_8453 ?? 'https://mainnet.base.org',
   1: process.env.RPC_1 ?? 'https://ethereum-rpc.publicnode.com',
+  4663: process.env.RPC_4663 ?? 'https://rpc.mainnet.chain.robinhood.com',
 }
 
 const factoryAbi = parseAbi([

@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { isAddress } from 'viem'
+import { chainCfg } from '../../lib/chain/chains'
 import { AssetLogo } from '../AssetLogo'
 import { searchTokens, type TokenHit } from '../../lib/spectrum/token-search'
 import { coingeckoInfo } from '../../lib/spectrum/token-art'
@@ -51,7 +52,7 @@ export function AssetSearch({
   )
   const trimmed = query.trim()
   const looksLikeAddress = isAddress(trimmed)
-  const chainLabel = chainId === 1 ? 'Ethereum' : 'Base'
+  const chainLabel = chainCfg(chainId).name
   const canAdd = !busy && trimmed.length > 0
 
   // Debounced search; aborts stale requests so fast typing never races.

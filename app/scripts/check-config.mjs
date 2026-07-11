@@ -82,8 +82,8 @@ try {
 const siteCfg = { siteUrl: '', feeWallet: '', ...(siteCfgRaw && typeof siteCfgRaw === 'object' ? siteCfgRaw : {}) }
 
 const BASE = 8453
-const SCAFFOLDED = new Set([8453, 1]) // chains.ts SCAFFOLDS
-const CHAIN_NAME = { 8453: 'Base', 1: 'Ethereum' }
+const SCAFFOLDED = new Set([8453, 1, 4663]) // chains.ts SCAFFOLDS
+const CHAIN_NAME = { 8453: 'Base', 1: 'Ethereum', 4663: 'Robinhood' }
 
 const errors = []
 const warns = []

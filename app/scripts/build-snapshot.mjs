@@ -40,6 +40,8 @@ const OUT = (() => {
 const CHAIN_META = {
   8453: { viem: base, slug: 'base', publicRpc: 'https://base-rpc.publicnode.com', alchemy: 'base-mainnet' },
   1: { viem: mainnet, slug: 'ethereum', publicRpc: 'https://ethereum-rpc.publicnode.com', alchemy: 'eth-mainnet' },
+  // Robinhood Chain: no DexScreener slug, no Alchemy tier — own RPC or SNAPSHOT_RPC_URL_4663.
+  4663: { viem: null, slug: '', publicRpc: 'https://rpc.mainnet.chain.robinhood.com', alchemy: '' },
 }
 
 const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY || ''
@@ -47,7 +49,7 @@ function rpcUrlFor(chainId) {
   const explicit = process.env[`SNAPSHOT_RPC_URL_${chainId}`]
   if (explicit) return { url: explicit, keyed: true }
   const meta = CHAIN_META[chainId]
-  if (ALCHEMY_KEY) return { url: `https://${meta.alchemy}.g.alchemy.com/v2/${ALCHEMY_KEY}`, keyed: true }
+  if (ALCHEMY_KEY && meta.alchemy) return { url: `https://${meta.alchemy}.g.alchemy.com/v2/${ALCHEMY_KEY}`, keyed: true }
   return { url: meta.publicRpc, keyed: false }
 }
 

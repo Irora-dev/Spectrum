@@ -24,8 +24,15 @@ function Row({ h, chainId }: { h: Holding; chainId: number }) {
   const vis = tokenVisual(h.symbol, h.asset)
   const weight = h.priced && h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct
   const drift = h.priced && h.liveWeightPct > 0 ? h.liveWeightPct - h.targetWeightPct : 0
+  // No DexScreener page to open on unindexed chains (Robinhood) — open the
+  // chain's own explorer for the asset instead.
+  const slug = chainCfg(chainId).dexscreenerSlug
   const open = () =>
-    window.open(`https://dexscreener.com/${chainCfg(chainId).dexscreenerSlug}/${h.asset}`, '_blank', 'noreferrer')
+    window.open(
+      slug ? `https://dexscreener.com/${slug}/${h.asset}` : `${chainCfg(chainId).explorer}/address/${h.asset}`,
+      '_blank',
+      'noreferrer',
+    )
 
   return (
     <tr

@@ -7,7 +7,7 @@
 //   • the factory address holds code AND enumerates (allBasketsLength answers)
 //   • the other canonical addresses the app transacts through hold code
 // …for every chain configured in app/src/lib/chain/deployments.json (the kit
-// ships Base + Ethereum canonical). Run it after setup, before the build:
+// ships Base, Ethereum + Robinhood canonical). Run it after setup, before the build:
 //
 //   node create/verify.mjs            # from the repo root
 //   npm run verify:chain              # the same, from app/
@@ -31,10 +31,15 @@ const APP = resolve(ROOT, 'app')
 const SEL_ALL_BASKETS_LENGTH = '0xd63c961d'
 
 const BASE = 8453
-const CHAIN_NAME = { 8453: 'Base', 1: 'Ethereum' }
-const PUBLIC_RPC = { 8453: 'https://base-rpc.publicnode.com', 1: 'https://ethereum-rpc.publicnode.com' }
+const CHAIN_NAME = { 8453: 'Base', 1: 'Ethereum', 4663: 'Robinhood' }
+const PUBLIC_RPC = {
+  8453: 'https://base-rpc.publicnode.com',
+  1: 'https://ethereum-rpc.publicnode.com',
+  4663: 'https://rpc.mainnet.chain.robinhood.com',
+}
+// No 4663 entry: Alchemy does not serve Robinhood Chain — a set key falls through to public.
 const ALCHEMY_HOST = { 8453: 'base-mainnet', 1: 'eth-mainnet' }
-const RPC_URL_VAR = { 8453: 'VITE_BASE_RPC_URL', 1: 'VITE_MAINNET_RPC_URL' }
+const RPC_URL_VAR = { 8453: 'VITE_BASE_RPC_URL', 1: 'VITE_MAINNET_RPC_URL', 4663: 'VITE_ROBINHOOD_RPC_URL' }
 
 // ── env (same precedence as the app: .env.local, real shell vars win) ──
 function parseEnvFile(path) {
@@ -76,7 +81,7 @@ function rpcUrlFor(chainId) {
   const explicit = val(RPC_URL_VAR[chainId])
   if (explicit) return { url: explicit, kind: 'explicit URL' }
   const key = val('VITE_ALCHEMY_API_KEY')
-  if (key) return { url: `https://${ALCHEMY_HOST[chainId]}.g.alchemy.com/v2/${key}`, kind: 'your RPC key' }
+  if (key && ALCHEMY_HOST[chainId]) return { url: `https://${ALCHEMY_HOST[chainId]}.g.alchemy.com/v2/${key}`, kind: 'your RPC key' }
   return { url: PUBLIC_RPC[chainId], kind: 'public fallback' }
 }
 
