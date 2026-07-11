@@ -75,7 +75,11 @@ export function validateDeploy(d: DeployConfig): { errors: DeployIssues; warning
 
   if (malformed(d.feeWallet)) errors.feeWallet = 'Not a valid 0x address'
   if (!d.rpcKey.trim()) errors.rpcKey = 'Required. Bring your own key, restricted to your domain (it ships in the public bundle)'
-  if (!d.siteUrl.trim()) errors.siteUrl = 'Required. The public address your site will live at'
+  // Optional BY DESIGN (owner 2026-07-11, supersedes the 07-09 fatal): hosts like
+  // Cloudflare Pages / Netlify assign the URL on the FIRST deploy — requiring it
+  // up front is a chicken-and-egg. Missing = warn; set it after deploy + rebuild.
+  if (!d.siteUrl.trim())
+    warnings.siteUrl = 'Optional for now. Your host assigns a URL on the first deploy, set it here after and redeploy (it brands link previews + the sitemap)'
   else if (!isHttpsUrl(d.siteUrl.trim())) warnings.siteUrl = 'Should be a full https:// URL (used for social cards)'
 
   return { errors, warnings }

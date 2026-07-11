@@ -425,7 +425,9 @@ export function Setup() {
             {fieldMsg('rpcKey')}
           </div>
           <div className="space-y-1">
-            <label className={label}>Site URL</label>
+            <label className={label}>
+              Site URL <span className="normal-case tracking-normal opacity-60">(optional, your host assigns one on the first deploy)</span>
+            </label>
             <input className={addrInput('siteUrl')} aria-invalid={!!errors.siteUrl} value={deploy.siteUrl} onChange={(e) => setDeployField('siteUrl', e.target.value)} placeholder="https://your-site.xyz" />
             {fieldMsg('siteUrl')}
           </div>

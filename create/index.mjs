@@ -104,8 +104,7 @@ async function main() {
     plan.feeWallet = plan.feeWallet || (await ask('Fee wallet (your own; blank = no fee carve)'))
     plan.rpcKey = plan.rpcKey || (await ask('RPC key (required; ships public, use a domain-restricted key)'))
     if (!plan.rpcKey) plan.rpcKey = await ask('RPC key is required. Your own provider key, restricted to your domain')
-    plan.siteUrl = plan.siteUrl || (await ask('Site URL (required; https://your-site.xyz)'))
-    if (!plan.siteUrl) plan.siteUrl = await ask('Site URL is required. The public address your site will live at')
+    plan.siteUrl = plan.siteUrl || (await ask('Site URL (optional; your host assigns one on the first deploy — set it later)'))
     // Hosting pick drives the tailored walkthrough printed at the end — guidance
     // only, it writes nothing (owner 2026-07-10).
     plan.host = plan.host || (await ask('Where will you host it? zip = drag-and-drop / cloudflare / netlify / vercel / vps / later', 'zip'))
@@ -137,7 +136,7 @@ async function main() {
   // The studio blocks on these two; the CLI warns loudly instead of refusing, so
   // scripted (--yes) runs still complete and the operator fixes .env.local before deploy.
   if (!plan.rpcKey) console.error('⚠ No RPC key set (VITE_ALCHEMY_API_KEY) — required before you deploy; it ships public, use a domain-restricted key.')
-  if (!plan.siteUrl) console.error('⚠ No site URL set (VITE_SITE_URL) — required before you deploy (social cards + sitemap).')
+  if (!plan.siteUrl) console.error('· No site URL yet — fine: your host assigns one on the first deploy. Set it after (setup studio or src/site.config.json) and rebuild for branded link previews + the sitemap.')
 
   mkdirSync(dirname(brandPath), { recursive: true })
   writeFileSync(brandPath, renderBrandConfig(plan))

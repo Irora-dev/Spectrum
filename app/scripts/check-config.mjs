@@ -224,7 +224,10 @@ if (extra) {
 //       og:image tags and generates the sitemap. Committed home = site.config.json;
 //       VITE_SITE_URL overrides. (Escape hatch: raw `vite build` skips this check.) ──
 if (!(val('VITE_SITE_URL') || String(siteCfg.siteUrl ?? '').trim())) {
-  errors.push('A site URL is required to build: the setup studio/wizard write it into src/site.config.json (or override with VITE_SITE_URL). It brands the social cards + sitemap.')
+  // Warn, never block (owner 2026-07-11 — supersedes the 07-09 fatal): drop-hosting
+  // (Cloudflare Pages / Netlify) assigns the URL on the FIRST deploy, so a first
+  // build legitimately has none. Set it after deploy and rebuild.
+  warns.push('No site URL yet — fine for a first deploy (your host assigns one). Social cards + the sitemap stay unbranded until you set it (setup studio or src/site.config.json) and rebuild.')
 }
 
 // ── 6b. the committed fee wallet must be well-formed when set ──

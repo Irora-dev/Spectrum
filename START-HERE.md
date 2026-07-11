@@ -4,8 +4,9 @@ This kit turns the full Spectrum operator site into **your** themed front end �
 your colors, your name — deployed in minutes, with **no database** to run. It is
 **operational by default**: the canonical Spectrum contracts (Base, Ethereum + Robinhood Chain) ship in
 `app/src/lib/chain/deployments.json`, so a fresh clone's dev server is already a working
-site. You bring a name, a look, your own RPC key + site URL (a build requires both), and
-a host; your fee wallet is optional — and **no fee recipient ever ships as a default**.
+site. You bring a name, a look, and your own RPC key (a build requires it); a host assigns
+your URL on the first deploy — set it after and rebuild for branded link previews. Your
+fee wallet is optional — and **no fee recipient ever ships as a default**.
 
 > **Three ways in — all end at the same three files** (`app/src/brand.config.ts` = your
 > look + name + pages; `app/src/site.config.json` = your tier, site URL + fee wallet,
@@ -83,8 +84,8 @@ open http://localhost:5173/setup     # macOS · Linux: xdg-open · else print th
 
 Tell the user: *"Design your site here — name, style, colors, pages — and fill the
 Deployment section — the default tier is the full site; it needs your own RPC key
-(domain-restricted, it ships public) and your site URL, and takes your fee wallet if you
-want the fee share (the ⓘ explains it). The whole site re-skins
+(domain-restricted, it ships public); the site URL can wait until your host assigns one,
+and it takes your fee wallet if you want the fee share (the ⓘ explains it). The whole site re-skins
 live as you click. When it's right, press **Apply to this project**."*
 
 **Apply writes both config files straight into the checkout** (a dev-only endpoint; it
@@ -112,7 +113,7 @@ live site (launch + buy/sell + fees on the canonical contracts).
 **Fallback — no browser / headless / user prefers Q&A:** ask the ten setup questions in
 one batch (name · tagline · style · gradient or three hexes · pages to drop · tier,
 default `all` = the full site · fee wallet, optional · RPC key, required · site URL,
-required) and run the wizard yourself:
+optional — the host assigns one on the first deploy) and run the wizard yourself:
 
 ```sh
 node create/index.mjs --yes --name "<name>" --style <style> \
@@ -173,8 +174,9 @@ click, then drive:
   or print it ready to paste.
 - **Custom domain**: the host dashboard walks the DNS (on Cloudflare-managed domains
   `npx wrangler pages domain add` works too; a domain elsewhere means one registrar
-  visit). If the final URL differs from the site URL setup collected, update
-  `VITE_SITE_URL=` in `app/.env.local`, rebuild, redeploy.
+  visit). **The set-the-URL loop (every host):** the first deploy gives you the real
+  URL — put it in `src/site.config.json` (or re-run the studio and Apply), rebuild,
+  redeploy. Link previews + the sitemap brand from it; until then they're unbranded.
 
 **Deployed ≠ done — verify the LIVE site before you say "deployed":**
 

@@ -106,9 +106,10 @@ npm run preview        # load it and confirm no module-load error in the console
 
 ## 5 · Deploy
 
-- [ ] Your site URL (collected at setup, `src/site.config.json`) brands the OG/social
-      tags and the `prebuild` hook **auto-generates** `public/sitemap.xml` from it — a
-      build without one fails the config check.
+- [ ] Your site URL (`src/site.config.json`) brands the OG/social tags and the
+      `prebuild` hook **auto-generates** `public/sitemap.xml` from it. Optional on the
+      FIRST build — your host assigns the URL on the first deploy; set it then,
+      rebuild, redeploy (the config check reminds you).
 - [ ] Host `dist/` anywhere static — `public/_redirects` (Cloudflare Pages / Netlify) and
       `vercel.json` ship the SPA fallback; on other hosts add a catch-all rewrite to
       `index.html`.

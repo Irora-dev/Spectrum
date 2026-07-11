@@ -41,12 +41,13 @@ const VALID = '0x1234567890abcdef1234567890abcdef12345678'
 const FILLED: DeployConfig = { ...DEFAULT_DEPLOY, rpcKey: 'key1', siteUrl: 'https://example.xyz' }
 
 describe('validateDeploy', () => {
-  it('RPC key + site URL are REQUIRED: a fresh config has exactly those two errors', () => {
-    const { errors } = validateDeploy(DEFAULT_DEPLOY)
+  it('only the RPC key is REQUIRED; the site URL warns (hosts assign it on the first deploy)', () => {
+    const { errors, warnings } = validateDeploy(DEFAULT_DEPLOY)
     expect(errors.rpcKey).toBeDefined()
-    expect(errors.siteUrl).toBeDefined()
+    expect(errors.siteUrl).toBeUndefined() // owner 2026-07-11: never block on it
+    expect(warnings.siteUrl).toBeDefined() // …but say what it costs until set
     expect(errors.feeWallet).toBeUndefined() // fee wallet stays optional
-    expect(hasDeployErrors(errors)).toBe(true)
+    expect(hasDeployErrors(errors)).toBe(true) // the RPC key alone still blocks
   })
   it('with RPC key + site URL filled the config is clean (fee wallet blank is fine)', () => {
     const { errors, warnings } = validateDeploy(FILLED)
