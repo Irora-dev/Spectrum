@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { encodeAbiParameters, keccak256, toHex, zeroAddress, type Address } from 'viem'
+import { BaseError, ContractFunctionRevertedError, encodeAbiParameters, keccak256, toHex, zeroAddress, type Address } from 'viem'
 import { probeTransferFee, screenTokenIdentity } from './token-screen'
+
+// What viem throws when the CONTRACT reverted the call (walkable cause chain) —
+// vs a bare Error, which is what a transport/rate-limit failure surfaces as.
+const revertError = () =>
+  new BaseError('execution reverted', {
+    cause: new ContractFunctionRevertedError({ abi: [], functionName: 'decimals' }),
+  })
 
 // The screen runs against a viem PublicClient but only touches four methods —
 // a hand-rolled stub keeps these tests pure-logic (no network, no chain).
@@ -55,9 +62,15 @@ describe('screenTokenIdentity — deterministic disqualifiers', () => {
     expect(s.hardFail?.code).toBe('NOT_A_CONTRACT')
   })
 
-  it('rejects when decimals() reverts (the deploy would revert too)', async () => {
-    const s = await screenTokenIdentity(stubClient({ decimals: new Error('boom') }), cfg(FACTORY), ASSET)
+  it('rejects when decimals() genuinely reverts (the deploy would revert too)', async () => {
+    const s = await screenTokenIdentity(stubClient({ decimals: revertError() }), cfg(FACTORY), ASSET)
     expect(s.hardFail?.code).toBe('NON_STANDARD')
+  })
+
+  it('an RPC failure on decimals() is NOT a verdict — retryable, never NON_STANDARD (the BNKR false-fail)', async () => {
+    const s = await screenTokenIdentity(stubClient({ decimals: new Error('429 rate limited') }), cfg(FACTORY), ASSET)
+    expect(s.hardFail?.code).toBe('VENUE_CHECK_FAILED')
+    expect(s.hardFail?.message).toMatch(/retry/i)
   })
 
   it('rejects out-of-range decimals', async () => {

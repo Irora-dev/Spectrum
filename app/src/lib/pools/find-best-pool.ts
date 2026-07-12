@@ -8,7 +8,7 @@ import {
 } from 'viem'
 import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
 import { chainCfg, isPoolReady, type ChainCfg, type PoolReadyChainCfg } from '../chain/chains'
-import { nativeEthUsdOnChain } from './v4-usd'
+import { nativeEthUsdOnChain, v4PoolId } from './v4-usd'
 import { cacheGet, cacheSet } from '../spectrum/persist-cache'
 import { V4_POOLS_SLOT } from '../chain/constants'
 import {
@@ -199,23 +199,31 @@ function mergeInits(prev: V4Init[], next: V4Init[]): V4Init[] {
   return [...prev, ...next.filter((i) => !seen.has(i.id))]
 }
 
+// Why the full scan didn't fully run: 'skipped' = never attempted (no private RPC
+// on an Alchemy-tier chain) · 'rpc-error' = attempted and the provider refused
+// (log-range caps — QuickNode et al limit getLogs spans — or a rate-limit burst).
+// The distinction drives the WARNING TEXT: before it existed, a failed scan on a
+// QuickNode-configured site printed "no private RPC" — flatly wrong (the
+// spectrumbaskets.xyz report, 2026-07-12). false = complete.
+export type V4ScanGap = false | 'skipped' | 'rpc-error'
+
 // V4 ETH pools are native-ETH (currency0 = address(0), currency1 = asset). Discovery
-// is by Initialize logs. With an Alchemy key, one filtered full-range call is instant;
-// public RPCs choke on wide ranges, so fall back to a bounded, PARALLEL recent scan
-// (and flag partial coverage so the caller can warn).
+// is by Initialize logs. Alchemy serves one filtered FULL-RANGE call; most other
+// providers cap getLogs spans and public RPCs choke — those paths degrade to the
+// direct standard-tier probe in findV4 (real coverage, minus exotic tick spacings).
 async function scanV4Initialize(
   client: Client,
   chainId: number,
   poolManager: Address,
   asset: Address,
-): Promise<{ inits: V4Init[]; partial: boolean }> {
+): Promise<{ inits: V4Init[]; partial: V4ScanGap }> {
   // V4 has no factory getPool — discovery is by Initialize logs over the full range.
   // Only Alchemy-class endpoints serve a wide filtered getLogs quickly; public RPCs
-  // on Base/Ethereum rate-limit/time out, so keyless there skips V4 and flags
-  // partial. A chain with NO Alchemy tier at all (Robinhood) is different: its own
-  // RPC is the only option and serves the filtered full-range call fast (young
-  // chain) — attempt it; the catch below still degrades to partial on error.
-  if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return { inits: [], partial: true }
+  // on Base/Ethereum rate-limit/time out, so keyless there skips the scan (the
+  // probe fallback still runs). A chain with NO Alchemy tier at all (Robinhood) is
+  // different: its own RPC serves the filtered full-range call fast (young chain)
+  // — attempt it; the catch below still degrades on error.
+  if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return { inits: [], partial: 'skipped' }
   const cacheKey = `v4scan:v1:${chainId}:${asset.toLowerCase()}`
   const cachedRaw = cacheGet<V4ScanCache>(cacheKey)
   const cached = cachedRaw && isV4ScanCache(cachedRaw) ? cachedRaw : null
@@ -235,9 +243,30 @@ async function scanV4Initialize(
     return { inits, partial: false }
   } catch {
     // A cached prior full scan is still complete UP TO its block — usable, but
-    // flagged partial so the caller's "may be missing a venue" warning shows.
-    return cached ? { inits: cached.inits, partial: true } : { inits: [], partial: true }
+    // flagged so the caller's coverage warning shows.
+    return cached ? { inits: cached.inits, partial: 'rpc-error' } : { inits: [], partial: 'rpc-error' }
   }
+}
+
+// The canonical V4 fee/tick-spacing tiers. When the log scan can't run (or fails),
+// pools at these tiers are still discoverable DIRECTLY: the pool id is a pure hash
+// of the PoolKey, and depth reads by id (extsload) are cheap single calls every
+// endpoint serves — including public ones. Real coverage for the overwhelmingly
+// common case; only exotic custom tick spacings stay invisible without a scan.
+const V4_STANDARD_TIERS: { fee: number; tickSpacing: number }[] = [
+  { fee: 100, tickSpacing: 1 },
+  { fee: 500, tickSpacing: 10 },
+  { fee: 3000, tickSpacing: 60 },
+  { fee: 10000, tickSpacing: 200 },
+]
+
+function probeStandardV4(asset: Address): V4Init[] {
+  return V4_STANDARD_TIERS.map(({ fee, tickSpacing }) => ({
+    id: v4PoolId({ currency0: NATIVE_ETH, currency1: asset, fee, tickSpacing, hooks: zeroAddress }),
+    fee,
+    tickSpacing,
+    hooks: zeroAddress,
+  }))
 }
 
 // Virtual ETH-side reserve from PoolManager storage: amount0 ≈ L · 2^96 / sqrtPriceX96.
@@ -263,8 +292,14 @@ async function findV4(
   client: Client,
   cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address },
   asset: Address,
-): Promise<{ candidates: PoolCandidate[]; partial: boolean }> {
-  const { inits, partial } = await scanV4Initialize(client, cfg.chainId, cfg.poolManager, asset)
+): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap }> {
+  const scan = await scanV4Initialize(client, cfg.chainId, cfg.poolManager, asset)
+  // Scan incomplete (skipped or refused)? Probe the standard tiers directly —
+  // depth reads by computed pool id work on ANY endpoint, so builds without a
+  // full-scan-capable RPC still see the standard-tier V4 pools instead of none.
+  // Nonexistent probed pools read zero depth and drop out below.
+  const inits = scan.partial === false ? scan.inits : [...scan.inits, ...probeStandardV4(asset)]
+  const partial = scan.partial
   const seen = new Set<string>()
   // Concurrent depth reads: many-pool memecoins meant dozens of sequential
   // round-trips against rate-limited public RPCs (a visible stall); the batching
@@ -504,10 +539,14 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
     }
   }
   if (v4.partial) {
+    // The text states the CAUSE, not the chain tier (a failed scan on a
+    // QuickNode-configured site used to print "no private RPC" — wrong). Either
+    // way the standard V4 tiers WERE probed directly; only exotic tick
+    // spacings are invisible without the full log scan.
     warnings.push(
-      hasAlchemyTier(chainId)
-        ? 'V4 venues were not scanned on this build (no private RPC) — a deeper V4 pool may exist. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) or your own provider URL (VITE_BASE_RPC_URL / VITE_MAINNET_RPC_URL) for complete V4 coverage.'
-        : 'The V4 pool scan was incomplete (RPC error) — a deeper pool may exist. Re-add the token to retry.',
+      v4.partial === 'skipped'
+        ? 'V4 coverage is partial: standard fee tiers were checked directly, but a full V4 scan needs a private RPC this build does not have — an exotic-tier V4 pool may be missed. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) or your own provider URL (VITE_BASE_RPC_URL / VITE_MAINNET_RPC_URL).'
+        : 'V4 coverage is partial: the full V4 scan failed on this RPC (provider log-range caps are the usual cause), so standard fee tiers were checked directly — an exotic-tier V4 pool may be missed. Re-add the token to retry the full scan.',
     )
   }
 

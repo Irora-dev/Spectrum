@@ -1,4 +1,7 @@
 import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
   encodeAbiParameters,
   keccak256,
   parseAbi,
@@ -94,12 +97,25 @@ const DENYLIST: Record<number, Record<string, { kind: 'REBASING' | 'FEE_ON_TRANS
 }
 
 export interface TokenScreen {
-  /** Deterministic disqualifier — the deploy would revert or the leg can't account. */
-  hardFail: { code: 'NOT_A_CONTRACT' | 'NON_STANDARD' | 'ERC777' | 'SPECTRUM_BASKET' | 'FEE_ON_TRANSFER' | 'REBASING'; message: string } | null
+  /** Deterministic disqualifier — the deploy would revert or the leg can't account.
+   *  VENUE_CHECK_FAILED is the one non-verdict: the RPC dropped the check (rate
+   *  limit / transport) — retry, never a statement about the token. */
+  hardFail: { code: 'NOT_A_CONTRACT' | 'NON_STANDARD' | 'ERC777' | 'SPECTRUM_BASKET' | 'FEE_ON_TRANSFER' | 'REBASING' | 'VENUE_CHECK_FAILED'; message: string } | null
   /** Non-fatal findings, appended to the pool result's warnings. */
   warnings: string[]
   /** decimals() as the chain reports it (only meaningful when hardFail is null). */
   decimals: number
+}
+
+/** The CONTRACT refused the call (reverted, or answered with no data) — as opposed
+ *  to the RPC failing to deliver it (rate limit, timeout, transport). Only the
+ *  former is evidence about the token; a real BNKR on Base was hard-failed as
+ *  "non-standard" by a rate-limited public RPC before this split (2026-07-12). */
+function isContractRefusal(e: unknown): boolean {
+  return (
+    e instanceof BaseError &&
+    !!e.walk((x) => x instanceof ContractFunctionRevertedError || x instanceof ContractFunctionZeroDataError)
+  )
 }
 
 /** Identity screen — cheap deterministic reads, run in parallel with venue discovery. */
@@ -132,8 +148,8 @@ export async function screenTokenIdentity(
     client.getCode({ address: asset }).then((c) => c ?? '0x').catch(() => 'RPC_FAILED' as const),
     client
       .readContract({ address: asset, abi: erc20MetaAbi, functionName: 'decimals' })
-      .then((d) => ({ ok: true as const, value: Number(d) }))
-      .catch(() => ({ ok: false as const, value: 18 })),
+      .then((d) => ({ ok: true as const, value: Number(d), refusal: false }))
+      .catch((e) => ({ ok: false as const, value: 18, refusal: isContractRefusal(e) })),
     client
       .readContract({
         address: ERC1820_REGISTRY,
@@ -182,6 +198,20 @@ export async function screenTokenIdentity(
   }
 
   if (!decimalsRead.ok) {
+    // Only a refusal FROM THE CONTRACT is a verdict on the token. An RPC that
+    // dropped the call (rate limit / transport — public endpoints burst-fail
+    // under the add-token read storm) must read as "couldn't check, retry":
+    // hard-failing a real token here blocks a legitimate launch (BNKR, 2026-07-12).
+    if (!decimalsRead.refusal) {
+      return {
+        hardFail: {
+          code: 'VENUE_CHECK_FAILED',
+          message: 'Could not verify this token (the RPC dropped the check) — add it again to retry. A rate-limited public endpoint is the usual cause; your own RPC key or URL avoids it.',
+        },
+        warnings: [],
+        decimals: 18,
+      }
+    }
     return {
       hardFail: {
         code: 'NON_STANDARD',

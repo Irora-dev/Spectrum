@@ -9,7 +9,11 @@ const PUBLIC_MAINNET = 'https://ethereum-rpc.publicnode.com'
 // rate-limited; for production set VITE_ROBINHOOD_RPC_URL to a provider endpoint.
 const PUBLIC_ROBINHOOD = 'https://rpc.mainnet.chain.robinhood.com'
 
-const alchemyKey = import.meta.env.VITE_ALCHEMY_API_KEY
+// All four RPC vars are trimmed at the read: a hand-edited value with stray
+// whitespace would otherwise be truthy — forming a broken provider URL and
+// arming the wide V4 scan on a dead endpoint. ''/absent stays cleanly falsy.
+const envTrim = (v: string | undefined): string => (v ?? '').trim()
+const alchemyKey = envTrim(import.meta.env.VITE_ALCHEMY_API_KEY)
 
 // Precedence (mirrors the existing app): explicit VITE_*_RPC_URL → Alchemy key → public.
 //
@@ -18,14 +22,14 @@ const alchemyKey = import.meta.env.VITE_ALCHEMY_API_KEY
 // public fallback, a key restricted by allowed-origins, or a read proxy you control.
 export function baseRpcUrl(): string {
   return (
-    import.meta.env.VITE_BASE_RPC_URL ||
+    envTrim(import.meta.env.VITE_BASE_RPC_URL) ||
     (alchemyKey ? `https://base-mainnet.g.alchemy.com/v2/${alchemyKey}` : PUBLIC_BASE)
   )
 }
 
 export function mainnetRpcUrl(): string {
   return (
-    import.meta.env.VITE_MAINNET_RPC_URL ||
+    envTrim(import.meta.env.VITE_MAINNET_RPC_URL) ||
     (alchemyKey ? `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}` : PUBLIC_MAINNET)
   )
 }
@@ -34,7 +38,7 @@ export function mainnetRpcUrl(): string {
 // so the key never forms a URL here — explicit override else the chain's public
 // endpoint. Revisit when a provider adds 4663.
 export function robinhoodRpcUrl(): string {
-  return import.meta.env.VITE_ROBINHOOD_RPC_URL || PUBLIC_ROBINHOOD
+  return envTrim(import.meta.env.VITE_ROBINHOOD_RPC_URL) || PUBLIC_ROBINHOOD
 }
 
 // Whether an Alchemy key is configured — enables wide (full-range) filtered getLogs,
@@ -49,9 +53,9 @@ export function hasAlchemyKey(): boolean {
 // on: an operator on a non-Alchemy provider gets the full scan too (the old
 // key-only check skipped their perfectly capable endpoint, owner 2026-07-12).
 export function hasPrivateRpc(chainId: number): boolean {
-  if (chainId === BASE_CHAIN_ID && import.meta.env.VITE_BASE_RPC_URL) return true
-  if (chainId === MAINNET_CHAIN_ID && import.meta.env.VITE_MAINNET_RPC_URL) return true
-  if (chainId === ROBINHOOD_CHAIN_ID && import.meta.env.VITE_ROBINHOOD_RPC_URL) return true
+  if (chainId === BASE_CHAIN_ID && envTrim(import.meta.env.VITE_BASE_RPC_URL)) return true
+  if (chainId === MAINNET_CHAIN_ID && envTrim(import.meta.env.VITE_MAINNET_RPC_URL)) return true
+  if (chainId === ROBINHOOD_CHAIN_ID && envTrim(import.meta.env.VITE_ROBINHOOD_RPC_URL)) return true
   return hasAlchemyKey() && hasAlchemyTier(chainId)
 }
 

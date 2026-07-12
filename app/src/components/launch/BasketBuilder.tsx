@@ -4,7 +4,7 @@ import { useAccount, useBalance, useEnsName } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActiveChainId } from '../../lib/chain/active-chain'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
-import { clientFor } from '../../lib/chain/rpc'
+import { clientFor, hasPrivateRpc } from '../../lib/chain/rpc'
 import { findBestPool, PoolDetectionError, Venue, ZERO_POOL_KEY, type BasketRoute } from '../../lib/pools'
 import {
   addAsset,
@@ -722,7 +722,20 @@ export function BasketBuilder({
     setDeploying(false)
     setAcknowledged(false)
     if (d) {
-      setAssets(d.assets)
+      // Warnings ride the persisted draft, so an env-dependent one can be a
+      // FOSSIL: a V4-coverage warning stamped by an old/keyless build survives
+      // kit updates and RPC fixes until the token is re-added (a 2026-07-12
+      // community site showed it on a build that scans fine). On restore, drop
+      // coverage warnings when THIS build has a private RPC for the chain —
+      // point-in-time scan verdicts, re-earned by any re-check/re-add.
+      setAssets(
+        hasPrivateRpc(chainId)
+          ? d.assets.map((a) => ({
+              ...a,
+              warnings: a.warnings.filter((w) => !w.includes('V4 venues were not scanned') && !w.includes('V4 coverage is partial')),
+            }))
+          : d.assets,
+      )
       setWeights(d.weights)
       setName(d.name)
       setSymbol(d.symbol)
@@ -1402,14 +1415,18 @@ export function BasketBuilder({
 
           {/* Honest degradation, made prominent: the creator must see this
               BEFORE weighting, depth ranking may be missing whole V4 venues. */}
-          {assets.some((a) => a.warnings.some((w) => w.includes('V4 venues were not scanned'))) && (
+          {/* Belt-and-braces vs fossil warnings (see the draft-restore strip):
+              never claim partial coverage on a build that provably CAN scan.
+              Matches the legacy string too — persisted drafts carry it. */}
+          {!hasPrivateRpc(chainId) && assets.some((a) => a.warnings.some((w) => w.includes('V4 venues were not scanned') || w.includes('V4 coverage is partial'))) && (
             <div
               role="alert"
               className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 font-mono text-[12px] leading-relaxed text-amber-200"
             >
-              ⚠ V4 venues were not scanned on this build (no private RPC), the pool depths above may be
-              incomplete and a deeper V4 pool may exist for some assets. Weight accordingly, or rebuild
-              with an origin-restricted key or your own provider's RPC URL for complete V4 coverage.
+              ⚠ V4 coverage is partial on this build: standard fee tiers were checked directly, but a
+              full V4 scan needs a private RPC, so an exotic-tier V4 pool may be missed for some assets.
+              Weight accordingly, or rebuild with an origin-restricted key or your own provider's RPC
+              URL for complete V4 coverage.
             </div>
           )}
 

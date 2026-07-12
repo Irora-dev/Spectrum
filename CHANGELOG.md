@@ -7,6 +7,31 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.07.13
+
+Sacred: launch — the launch page's pool discovery and token screening changed (coverage and
+honesty fixes; the route convention itself is untouched). No action needed on your site
+beyond the normal update; `impact: config` is the sacred-release floor, not a config change.
+
+- **V4 pools are now discovered on ANY endpoint**: when the full V4 log scan can't run
+  (no private RPC) or a provider refuses it (log-range caps — common outside Alchemy),
+  the standard fee tiers are probed directly by computed pool id, which every endpoint
+  serves. Builds that previously saw zero V4 venues now see the standard-tier pools with
+  real depth; only exotic tick spacings still need the full scan.
+- **Coverage warnings now state the actual cause**: a failed scan on your own provider no
+  longer prints "no private RPC" (it says the scan failed and standard tiers were probed);
+  the launch page's coverage banner only renders when the build truly lacks a private RPC.
+- **Stale coverage banners are gone**: warnings persisted in a saved launch draft from an
+  older/keyless build are dropped on restore when the current build can scan — the banner
+  can no longer quote a scan from a previous configuration (reported live by a builder).
+- **Token screening no longer mislabels real tokens on RPC blips**: a dropped/rate-limited
+  `decimals()` read was hard-failing tokens as "not a standard ERC-20" (a real Base token
+  hit it). Only a genuine contract revert is a verdict now; transport failures read as
+  "couldn't check — add again to retry".
+- The launch-block index and the portfolio's error hint now recognize any private RPC
+  (provider URLs), not just an Alchemy key; all four RPC env values are trimmed at the
+  read so stray whitespace can't arm a broken endpoint.
+
 ## 2026.07.12
 
 Sacred: launch — the pool-route detection's V4-coverage gate changed (see the RPC bullet

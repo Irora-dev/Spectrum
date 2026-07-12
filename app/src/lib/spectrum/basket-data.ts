@@ -1,5 +1,5 @@
 import { formatUnits, isAddress, parseAbi, type Address } from 'viem'
-import { clientFor, hasAlchemyKey } from '../chain/rpc'
+import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
 import { ZERO_ADDRESS } from '../chain/constants'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
 import { nativeEthUsdOnChain, v4LegUsd } from '../pools/v4-usd'
@@ -258,8 +258,9 @@ function buildNavSeries(
 // ── Launch index (inception timestamps) ─────────────────────────────────────
 // One factory-wide filtered getLogs (Launched, full range) yields EVERY
 // basket's launch block in a single call — the same wide-filtered pattern the
-// pool engine uses, and like there it needs an Alchemy-class endpoint
-// (hasAlchemyKey). Replaces the old per-basket 9-window walk, which burned up
+// pool engine uses, and like there it needs a private endpoint
+// (hasPrivateRpc: an Alchemy key or the operator's own provider URL).
+// Replaces the old per-basket 9-window walk, which burned up
 // to 9 getLogs per basket per session and was guaranteed to find nothing for
 // baskets older than its 80k-block lookback. The index is persisted
 // (localStorage) and topped up incrementally from the last scanned block, so
@@ -301,9 +302,15 @@ async function timestampsForBlocks(
 
 // Build or top up the per-chain index. Serialized per chain (inflight map) and
 // rate-limited so a burst of misses (e.g. a non-factory token page) can't spam
-// rescans. Returns null when unavailable (no key / no factory / RPC failure).
+// rescans. Returns null when unavailable (no private RPC / no factory / RPC failure).
 async function loadLaunchIndex(chainId: number, forceTopUp = false): Promise<LaunchIndex | null> {
-  if (!hasAlchemyKey()) return null // wide filtered getLogs — keyed endpoints only
+  // Wide filtered getLogs — any PRIVATE endpoint serves it (Alchemy key OR the
+  // operator's own provider URL: QuickNode/Infura/self-hosted). Public endpoints
+  // choke on it EXCEPT chains with no Alchemy tier (Robinhood), whose own RPC
+  // handles full-range fine — the same convention as the V4 sweep
+  // (find-best-pool.ts). Was hasAlchemyKey()-only: URL-configured sites
+  // silently lost this index (owner report, 2026-07-12).
+  if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return null
   const factory = chainCfg(chainId).factory
   if (!factory) return null
 

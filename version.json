@@ -1,6 +1,6 @@
 {
-  "version": "2026.07.12",
-  "note": "One-command safe updates (create/update.mjs), versioned + tagged releases with CI proof, sacred-path guarding on the launch/trading systems, and a wallet-connect fix.",
+  "version": "2026.07.13",
+  "note": "V4 pool coverage on any RPC (standard-tier direct probe + honest cause-tracked warnings), the stale coverage-banner fix, and a token-screen fix (RPC blips no longer mislabel real tokens).",
   "impact": "config",
   "sacred": [
     "launch"

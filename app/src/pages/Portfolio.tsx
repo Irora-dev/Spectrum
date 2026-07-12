@@ -389,7 +389,7 @@ export function Portfolio() {
   if (!WALLET_ENABLED) return <Navigate to="/" replace />
 
   if (!effectiveAddress) return <ConnectGate />
-  if (isError) return <div className="py-10"><Notice>Couldn’t load your portfolio, the public RPC may be rate-limiting. With an Alchemy key it’s reliable.</Notice></div>
+  if (isError) return <div className="py-10"><Notice>Couldn’t load your portfolio, the public RPC may be rate-limiting. With your own RPC (a key or your provider’s URL) it’s reliable.</Notice></div>
   if (isLoading || !p) return <PortfolioSkeleton />
 
   return <PortfolioView p={p} />
