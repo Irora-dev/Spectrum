@@ -1,5 +1,8 @@
 # Spectrum Mini
 
+[![release proof](https://github.com/Irora-dev/Spectrum/actions/workflows/release-proof.yml/badge.svg)](https://github.com/Irora-dev/Spectrum/actions/workflows/release-proof.yml)
+[![daily canary](https://github.com/Irora-dev/Spectrum/actions/workflows/canary.yml/badge.svg)](https://github.com/Irora-dev/Spectrum/actions/workflows/canary.yml)
+
 **Stand up your own front end for Spectrum basket tokens — in about 15 minutes, no code required.**
 
 Spectrum Mini is a free, open-source kit. It takes anyone — including non-developers — from
@@ -26,6 +29,13 @@ on your chain, ready to deploy to free hosting.
 
 > Some packaging conveniences (a one-click deploy button, a standalone template repo) are still
 > landing — where a step isn't turnkey yet, the guides say so and give you the manual path.
+
+## Releases you can trust
+
+Every commit on `main` is a complete, versioned, tagged release, re-proven by CI in a fresh clone
+(the badges above), with the basket **launch** and **trading** code paths under a declared-and-
+checked guard and a daily live-chain canary. What that means for your site — updating, pinning,
+rolling back, recall notices — is one page: **[`docs/RELEASES.md`](docs/RELEASES.md)**.
 
 ## What you configure
 

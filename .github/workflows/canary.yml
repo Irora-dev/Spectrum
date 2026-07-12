@@ -1,0 +1,66 @@
+# Daily canary — the kit's behavior depends on live state that moves with ZERO code
+# change (the canonical contracts, public RPCs, the LiFi routing API). This re-runs
+# the chain smoke + the live sacred smoke every day so a chain-side drift surfaces
+# here, publicly, before a builder hits it mid-deploy. Failures open ONE issue
+# (labelled `canary`); while it stays open, later failures comment instead.
+#
+# RPC: public endpoints by default. Adding a dedicated low-tier key as the
+# CANARY_ALCHEMY_KEY repo secret upgrades Base/Ethereum automatically (Robinhood
+# Chain always uses its own public RPC). Never a private/production key.
+name: canary
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  chain-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VITE_ALCHEMY_API_KEY: ${{ secrets.CANARY_ALCHEMY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install (exact locked tree)
+        working-directory: app
+        run: npm ci
+      - name: Chain smoke (RPC + factory + canonicals, every configured chain)
+        run: node create/verify.mjs
+      - name: Sacred smoke (live, read-only — launch simulation + swap surfaces)
+        working-directory: app
+        run: npm run smoke:sacred
+      - name: Open/refresh the canary issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'canary',
+            })
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const body = `The daily canary failed on ${new Date().toISOString().slice(0, 10)}: ${runUrl}\n\n` +
+              'This usually means live chain-side state moved (RPC, contracts, routing API) — ' +
+              'not necessarily a kit bug. Deployed sites keep serving; investigate before updating anything.'
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open[0].number, body,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title: 'Canary failing: live chain smoke no longer green',
+                labels: ['canary'], body,
+              })
+            }

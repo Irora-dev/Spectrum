@@ -106,10 +106,14 @@ export function renderEnv(plan) {
     L.push('# Swap router override — routes buy/sell through your OWN router (blank/absent = canonical).')
     L.push(`VITE_SWAP_ROUTER_ADDRESS=${plan.swapRouter}`, '')
   }
-  L.push('# RPC key (required before deploy) — ships in the public bundle; use a domain-restricted key.')
-  L.push('# The ONE value kept out of git: on a git-connected CI build, set VITE_ALCHEMY_API_KEY')
-  L.push('# in the host dashboard/CLI.')
-  L.push(`VITE_ALCHEMY_API_KEY=${plan.rpcKey || ''}`, '')
+  L.push('# RPC (required before deploy, either rail) — ships in the public bundle; restrict to your domain.')
+  L.push('# Rail 1: an Alchemy key. Rail 2: full per-chain endpoint URLs from ANY provider')
+  L.push('# (QuickNode, Infura, a node you run) — a URL beats the key when both are set.')
+  L.push('# These stay out of git: on a git-connected CI build, set the same vars in the host dashboard/CLI.')
+  L.push(`VITE_ALCHEMY_API_KEY=${plan.rpcKey || ''}`)
+  L.push(`VITE_BASE_RPC_URL=${plan.rpcUrlBase || ''}`)
+  L.push(`VITE_MAINNET_RPC_URL=${plan.rpcUrlMainnet || ''}`)
+  L.push(`VITE_ROBINHOOD_RPC_URL=${plan.rpcUrlRobinhood || ''}`, '')
   L.push('# Your site URL + fee wallet live in the COMMITTED src/site.config.json (written by')
   L.push('# this wizard); the VITE_* vars in .env.example remain as overrides.', '')
   if (plan.walletConnectId) {

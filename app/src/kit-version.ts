@@ -12,5 +12,20 @@
 // dormant (no request is ever made).
 import manifest from '../../version.json'
 
+// The published manifest's full shape (docs/RELEASES.md). Older manifests carry only
+// version/note/updateManifestUrl; every newer field is optional so builds and the
+// published manifest can move independently in either order.
+export interface KitUpdateManifest {
+  version?: string
+  note?: string
+  /** 'safe' = pull+rebuild, nothing else · 'config' = read the changelog first · 'breaking' = manual work. */
+  impact?: string
+  /** Money-path systems the release touched ('launch' / 'swap'); [] almost always. */
+  sacred?: string[]
+  /** Recalled versions. A build whose KIT_VERSION appears here should update now. */
+  yanked?: string[]
+  updateManifestUrl?: string
+}
+
 export const KIT_VERSION: string = manifest.version
 export const KIT_UPDATE_MANIFEST_URL: string = manifest.updateManifestUrl ?? ''

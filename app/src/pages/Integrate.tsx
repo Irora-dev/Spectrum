@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom'
 import { Callout, Checklist, CodeBlock, CopyChip, IC, InfoPop, Table } from '../components/DocKit'
 import { AddrChips } from '../components/AddrChips'
 import { BasketAvatar } from '../components/BasketAvatar'
+import { IndexingReference } from '../components/IndexingReference'
 import { BasketBento } from '../components/BasketBento'
 import { CHAINS, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { useAllBaskets } from '../lib/spectrum/hooks'
@@ -318,6 +319,12 @@ export function Integrate() {
           at launch.
         </p>
         <CodeBlock code={EARN} title="tagged fill: fee attribution" />
+        <p className="mx-auto max-w-2xl text-center text-[13px] leading-relaxed text-ink-faint">
+          Your accruals live inside each basket (<IC>pendingFrontendFees(you)</IC>) and pay out in
+          the settlement asset. Claim them any time on <Link className="text-cyan press" to="/flush">the
+          flush console</Link>: your rows appear per basket, the flush is permissionless and pays the
+          caller a bounty, and the funds go to your tagged address no matter who cranks it.
+        </p>
       </section>
 
       {/* ── PER PLATFORM ── */}
@@ -336,6 +343,19 @@ export function Integrate() {
             [<b key="scr">Screeners</b>, 'Pairs surface from swap events; liquidity fields read 0 by design.', 'Show totalReserve() as depth instead.'],
           ]}
         />
+      </section>
+
+      {/* ── INDEXING ── */}
+      <section className="mx-auto mt-20 max-w-4xl space-y-4">
+        <h2 className="text-center font-display text-4xl font-bold uppercase tracking-tight text-ink sm:text-5xl">
+          For your <span className="spectral-text">indexer</span>
+        </h2>
+        <p className="mx-auto max-w-2xl text-center text-[15px] leading-relaxed text-ink-dim">
+          The canonical events with their topic0 hashes, computed from this build's shipped ABI,
+          plus the edge cases that break standard heuristics. Full signatures matter: a shortened
+          signature hashes to a different topic0.
+        </p>
+        <IndexingReference />
       </section>
 
       {/* ── SAFETY ── */}

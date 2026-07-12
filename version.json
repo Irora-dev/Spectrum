@@ -1,5 +1,10 @@
 {
-  "version": "2026.07.11",
-  "note": "New canonical contracts on Base + Ethereum, and Robinhood Chain (4663) live as a third chain (USDG settlement).",
+  "version": "2026.07.12",
+  "note": "One-command safe updates (create/update.mjs), versioned + tagged releases with CI proof, sacred-path guarding on the launch/trading systems, and a wallet-connect fix.",
+  "impact": "config",
+  "sacred": [
+    "launch"
+  ],
+  "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }

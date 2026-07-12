@@ -4,13 +4,14 @@ This kit turns the full Spectrum operator site into **your** themed front end �
 your colors, your name — deployed in minutes, with **no database** to run. It is
 **operational by default**: the canonical Spectrum contracts (Base, Ethereum + Robinhood Chain) ship in
 `app/src/lib/chain/deployments.json`, so a fresh clone's dev server is already a working
-site. You bring a name, a look, and your own RPC key (a build requires it); a host assigns
+site. You bring a name, a look, and your own RPC (a build requires it — an Alchemy key, or
+full endpoint URLs from any provider: QuickNode, Infura, a node you run); a host assigns
 your URL on the first deploy — set it after and rebuild for branded link previews. Your
 fee wallet is optional — and **no fee recipient ever ships as a default**.
 
 > **Three ways in — all end at the same three files** (`app/src/brand.config.ts` = your
 > look + name + pages; `app/src/site.config.json` = your tier, site URL + fee wallet,
-> committed; `app/.env.local` = your RPC key, the one value kept out of git):
+> committed; `app/.env.local` = your RPC key or provider URLs, the values kept out of git):
 >
 > 1. **One prompt (Claude Code / Codex / any AI coding agent):** paste this file in and say
 >    *"set up my Spectrum Mini site."* The agent launches the visual studio for you and
@@ -206,7 +207,20 @@ Typical run: **under 10 minutes** of agent work; the user's dashboard steps add 
 
 ### Updating — when the user says "update my site" (you run all of it)
 
-The kit ships improvements over time; the user's identity lives in exactly three files the
+**The one-command path (preferred — macOS, Windows, and Linux alike):**
+
+```sh
+node create/update.mjs          # or: cd app && npm run update:site
+```
+
+It does the whole ladder below itself: says what's coming (version, impact, whether the
+current version was recalled), snapshot-commits the user's identity, merges with
+theirs-wins on the identity files, installs, runs the doctor, builds, and prints the
+exact redeploy command for their host. It stops before anything irreversible and prints
+the undo at every step. Run it with `--yes --host <their host>` when the user already
+said go. Everything it protects and why: `docs/RELEASES.md`.
+
+**The same update by hand** — the user's identity lives in exactly three files the
 kit never needs back (`app/src/brand.config.ts`, `app/src/site.config.json`,
 `app/metadata/**`) plus the gitignored `app/.env.local` — so updates are a merge where
 **theirs wins on those files, the kit's wins everywhere else**:

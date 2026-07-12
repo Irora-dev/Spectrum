@@ -64,10 +64,28 @@ if (!local?.version) {
       clearTimeout(t)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const remote = await res.json()
-      if (remote?.version && remote.version !== local.version) {
+      if (Array.isArray(remote?.yanked) && remote.yanked.includes(local.version)) {
+        // The one version state that fails the doctor: this exact version was
+        // recalled after shipping (docs/RELEASES.md). The site keeps serving,
+        // but the operator should update before doing anything else.
+        console.log(
+          c('red', '  ✗ ') +
+            `Kit version ${local.version} was RECALLED (a known issue shipped and was rolled back)` +
+            `${remote.version && remote.version !== local.version ? ` — fixed in ${remote.version}` : ''}. ` +
+            'Update now: node create/update.mjs (or the runbook\'s Updating section).',
+        )
+        versionOk = false
+      } else if (remote?.version && remote.version !== local.version) {
+        const care = []
+        if (remote.impact === 'config') care.push('changes configuration — read the changelog first')
+        if (remote.impact === 'breaking') care.push('needs manual steps — read the changelog first')
+        if (Array.isArray(remote.sacred) && remote.sacred.length) {
+          care.push(`touches the ${remote.sacred.map((s) => (s === 'swap' ? 'trading' : s)).join(' + ')} path`)
+        }
         console.log(
           c('yellow', '  ⚠ ') +
-            `Kit update available: ${local.version} → ${remote.version}${remote.note ? ` (${remote.note})` : ''}. The runbook's Updating section walks the merge.`,
+            `Kit update available: ${local.version} → ${remote.version}${remote.note ? ` (${remote.note})` : ''}.` +
+            `${care.length ? ` It ${care.join('; ')}.` : ''} Run node create/update.mjs, or the runbook's Updating section walks the merge.`,
         )
       } else {
         console.log(c('green', '  ✓ ') + `Kit version ${local.version} — up to date.`)
@@ -85,6 +103,6 @@ if (configOk && chainOk && versionOk) {
   console.log('')
   process.exit(0)
 }
-console.log(c('red', `  Doctor: ${[!configOk && 'config', !chainOk && 'chain'].filter(Boolean).join(' + ')} failed — fix the sections above.`))
+console.log(c('red', `  Doctor: ${[!configOk && 'config', !chainOk && 'chain', !versionOk && 'version'].filter(Boolean).join(' + ')} failed — fix the sections above.`))
 console.log('')
 process.exit(1)

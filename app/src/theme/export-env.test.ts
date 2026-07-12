@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_DEPLOY, envConfigToText, FEE_TIERS, hasDeployErrors, pageTierWarnings, siteConfigToJson, validateDeploy, type DeployConfig } from './export-env'
 
-const base: DeployConfig = { feeWallet: '0xFEE', rpcKey: 'key1', siteUrl: 'https://acme.xyz', tier: 'all' }
+const base: DeployConfig = { ...DEFAULT_DEPLOY, feeWallet: '0xFEE', rpcKey: 'key1', siteUrl: 'https://acme.xyz', tier: 'all' }
 
 describe('envConfigToText', () => {
   it('the committed json carries the ALL-features default; the env carries only the RPC key', () => {
@@ -65,6 +65,30 @@ describe('validateDeploy', () => {
     expect(warnings.siteUrl).toBeDefined()
     expect(errors.siteUrl).toBeUndefined()
     expect(hasDeployErrors(errors)).toBe(false)
+  })
+  it('a custom provider URL satisfies the RPC requirement without a key (any-provider rail)', () => {
+    const { errors } = validateDeploy({ ...DEFAULT_DEPLOY, rpcUrlBase: 'https://acme.quiknode.pro/abc', siteUrl: 'https://x.xyz' })
+    expect(errors.rpcKey).toBeUndefined()
+    expect(hasDeployErrors(errors)).toBe(false)
+  })
+  it('a URL pasted into the KEY field is a blocking error pointing at the URL fields', () => {
+    const { errors } = validateDeploy({ ...FILLED, rpcKey: 'https://acme.quiknode.pro/abc' })
+    expect(errors.rpcKey).toMatch(/URL/)
+    expect(hasDeployErrors(errors)).toBe(true)
+  })
+  it('a non-https custom URL warns without blocking', () => {
+    const { errors, warnings } = validateDeploy({ ...FILLED, rpcUrlMainnet: 'ws://nope' })
+    expect(warnings.rpcUrlMainnet).toBeDefined()
+    expect(hasDeployErrors(errors)).toBe(false)
+  })
+})
+
+describe('envConfigToText — the any-provider rail', () => {
+  it('emits the three per-chain URL lines alongside the key', () => {
+    const env = envConfigToText({ ...base, rpcUrlBase: 'https://acme.quiknode.pro/abc' })
+    expect(env).toMatch(/^VITE_BASE_RPC_URL=https:\/\/acme\.quiknode\.pro\/abc$/m)
+    expect(env).toMatch(/^VITE_MAINNET_RPC_URL=$/m)
+    expect(env).toMatch(/^VITE_ROBINHOOD_RPC_URL=$/m)
   })
 })
 

@@ -1,0 +1,52 @@
+{
+  "$comment": "The sacred-systems registry. These are the code paths that move or could strand user money: the basket LAUNCH system and the basket SWAP/trading system. Any release whose diff touches a path here is a SACRED release: it must name the touched system(s) in its CHANGELOG section (a 'Sacred:' line), declare them in version.json's 'sacred' field, carry an impact of at least 'config' (never 'safe'), and pass the live sacred smoke (npm run smoke:sacred) before it ships. CI re-checks this on every release commit (scripts/sacred-diff.mjs). Editing THIS file is itself a changelog-visible change.",
+  "systems": {
+    "launch": {
+      "why": "Basket creation. A regression here bricks deploys for every visitor of every site built from this kit (failure class: a bad leg route sails through salt-mining, then every deploy reverts on-chain with CREATE2Failed).",
+      "paths": [
+        "app/src/pages/Launch.tsx",
+        "app/src/pages/Composer.tsx",
+        "app/src/components/launch/**",
+        "app/src/lib/spectrum/use-deploy.ts",
+        "app/src/lib/spectrum/deploy.ts",
+        "app/src/lib/spectrum/salt-mining.ts",
+        "app/src/lib/pools/**"
+      ]
+    },
+    "swap": {
+      "why": "Basket trading (buy/sell). A regression here breaks or misroutes user money on live sites.",
+      "paths": [
+        "app/src/pages/Swap.tsx",
+        "app/src/pages/Token.tsx",
+        "app/src/components/TradePanel.tsx",
+        "app/src/components/DexSwapCard.tsx",
+        "app/src/components/SwapPendingOverlay.tsx",
+        "app/src/lib/spectrum/use-basket-swap.ts",
+        "app/src/lib/spectrum/use-dex-swap.ts",
+        "app/src/lib/spectrum/swap-quote.ts",
+        "app/src/lib/spectrum/delta-trade.ts",
+        "app/src/lib/spectrum/lifi.ts",
+        "app/src/lib/spectrum/referral.ts"
+      ]
+    },
+    "shared": {
+      "why": "Sacred to BOTH systems: hook-data encoding + slippage defaults, contract ABIs, the canonical address book, per-chain routing config, fee math, and the build-time config that ARMS the money paths.",
+      "flags": ["launch", "swap"],
+      "paths": [
+        "app/src/lib/spectrum/hook-data.ts",
+        "app/src/lib/spectrum/abis-v2.ts",
+        "app/src/lib/chain/deployments.json",
+        "app/src/lib/chain/deployments.ts",
+        "app/src/lib/chain/chains.ts",
+        "app/src/lib/spectrum/gas.ts",
+        "app/src/lib/spectrum/fee-model.ts",
+        "app/src/lib/config/features.ts",
+        "app/scripts/check-config.mjs"
+      ]
+    }
+  },
+  "dependencyReminder": {
+    "paths": ["app/package.json"],
+    "note": "Dependency changes ship as their own releases, never mixed with sacred code changes. A bump of the money-path libraries (viem, wagmi) is treated as sacred even with zero first-party diff: run the sacred smoke and declare it."
+  }
+}

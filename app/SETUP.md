@@ -120,6 +120,11 @@ npm run preview        # load it and confirm no module-load error in the console
       files — no Node, no process manager. Upload the *contents* of `dist/` to your
       web root (`rsync -av --delete app/dist/ user@server:/var/www/your-site/` —
       `--delete` clears old hashed bundles on redeploys), then configure below.
+      **Rollback insurance:** before a redeploy, keep the live build
+      (`cp -r /var/www/your-site /var/www/your-site.prev`) — restoring it is one
+      `mv` back, no rebuild. Managed hosts (Pages/Netlify/Vercel) keep deploy
+      history with one-click restore; updating itself is `node create/update.mjs`
+      (see `docs/RELEASES.md`).
       Two rules are load-bearing everywhere: the SPA catch-all, and an asset remap
       so a hard refresh of a nested route (`/creator/0x…`, `/docs/valuation`)
       doesn't resolve its script relative to the path and get index.html back as JS.

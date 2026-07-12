@@ -6,7 +6,7 @@ import {
   zeroAddress,
   type Address,
 } from 'viem'
-import { clientFor, hasAlchemyKey, hasAlchemyTier } from '../chain/rpc'
+import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
 import { chainCfg, isPoolReady, type ChainCfg, type PoolReadyChainCfg } from '../chain/chains'
 import { nativeEthUsdOnChain } from './v4-usd'
 import { cacheGet, cacheSet } from '../spectrum/persist-cache'
@@ -215,7 +215,7 @@ async function scanV4Initialize(
   // partial. A chain with NO Alchemy tier at all (Robinhood) is different: its own
   // RPC is the only option and serves the filtered full-range call fast (young
   // chain) — attempt it; the catch below still degrades to partial on error.
-  if (!hasAlchemyKey() && hasAlchemyTier(chainId)) return { inits: [], partial: true }
+  if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return { inits: [], partial: true }
   const cacheKey = `v4scan:v1:${chainId}:${asset.toLowerCase()}`
   const cachedRaw = cacheGet<V4ScanCache>(cacheKey)
   const cached = cachedRaw && isV4ScanCache(cachedRaw) ? cachedRaw : null
@@ -506,7 +506,7 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   if (v4.partial) {
     warnings.push(
       hasAlchemyTier(chainId)
-        ? 'V4 venues were not scanned on this build (keyless RPC) — a deeper V4 pool may exist. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) for complete V4 coverage.'
+        ? 'V4 venues were not scanned on this build (no private RPC) — a deeper V4 pool may exist. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) or your own provider URL (VITE_BASE_RPC_URL / VITE_MAINNET_RPC_URL) for complete V4 coverage.'
         : 'The V4 pool scan was incomplete (RPC error) — a deeper pool may exist. Re-add the token to retry.',
     )
   }

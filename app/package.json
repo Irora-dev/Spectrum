@@ -15,6 +15,8 @@
     "build:tokenlist": "node scripts/build-tokenlist.mjs",
     "check:config": "node scripts/check-config.mjs",
     "verify:chain": "node ../create/verify.mjs",
+    "smoke:sacred": "vitest run --mode sacred src/sacred-smoke.live.test.ts",
+    "update:site": "node ../create/update.mjs",
     "doctor": "node scripts/doctor.mjs",
     "build:sitemap": "node scripts/build-sitemap.mjs",
     "prebuild": "node scripts/check-config.mjs && node scripts/build-sitemap.mjs",

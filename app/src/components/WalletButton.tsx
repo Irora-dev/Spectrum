@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
 import { useActiveChain } from '../lib/chain/active-chain'
+import { hasInjectedProvider, isMobileUA, walletAppLinks } from '../lib/wallet/mobile'
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
@@ -108,11 +109,19 @@ export function WalletButton() {
     return <ConnectedMenu address={address} />
   }
 
+  // Phone browser with NO provider: the bare injected connector is a dead row
+  // (nothing to inject) — the real rails are the wallet apps' own dapp browsers
+  // (deep links below) plus Coinbase/WalletConnect, which carry their own
+  // mobile transports. Inside a wallet's in-app browser a provider exists and
+  // the normal list works. (Owner 2026-07-12: "injected does nothing" on mobile.)
+  const mobileNoProvider = isMobileUA() && !hasInjectedProvider()
+
   // De-dupe by name — EIP-6963 discovery can surface the same wallet twice.
   const seen = new Set<string>()
   const deduped = connectors.filter((c) => {
     const k = c.name.toLowerCase()
     if (seen.has(k)) return false
+    if (mobileNoProvider && c.type === 'injected' && k === 'injected') return false
     seen.add(k)
     return true
   })
@@ -165,7 +174,24 @@ export function WalletButton() {
               </button>
             </div>
             <div className="flex flex-col gap-2">
-              {list.length === 0 && (
+              {mobileNoProvider && (
+                <>
+                  <p className="text-[13px] leading-relaxed text-ink-dim">
+                    On a phone, connect by opening this site inside your wallet's app:
+                  </p>
+                  {walletAppLinks(window.location.href).map((l) => (
+                    <a
+                      key={l.name}
+                      href={l.href}
+                      className="press flex items-center justify-between border border-white/10 px-4 py-3 text-left hover:border-cyan/50 hover:bg-white/[0.04]"
+                    >
+                      <span className="text-sm text-ink">{l.name}</span>
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-ink-faint">Open in app</span>
+                    </a>
+                  ))}
+                </>
+              )}
+              {!mobileNoProvider && list.length === 0 && (
                 <p className="py-4 text-center text-sm text-ink-faint">
                   No wallet detected. Install Rabby, MetaMask, or Coinbase Wallet.
                 </p>
@@ -183,6 +209,12 @@ export function WalletButton() {
                   </span>
                 </button>
               ))}
+              {mobileNoProvider && (
+                <p className="border-t border-white/10 pt-2.5 text-[11px] leading-relaxed text-ink-faint">
+                  Rainbow, Uniswap, Rabby and other wallet apps: open this site in the wallet's
+                  built-in browser{list.some((c) => c.type !== 'injected') ? ', or use a Connect option above' : ''}.
+                </p>
+              )}
             </div>
           </div>
         </div>

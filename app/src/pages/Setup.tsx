@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import brand from '../brand.config'
 import siteConfig from '../site.config.json'
-import { KIT_VERSION, KIT_UPDATE_MANIFEST_URL } from '../kit-version'
+import { KIT_VERSION, KIT_UPDATE_MANIFEST_URL, type KitUpdateManifest } from '../kit-version'
 import type { BrandConfig, DesignStyle, PageKey } from '../theme/brand'
 import { PAGE_KEYS, validateSiteName } from '../theme/brand'
 import { applyBrand } from '../theme/theme'
@@ -23,16 +23,34 @@ const APPLIED_FLAG = 'setup-applied:v1'
 // committed config), or on any dev build (the operator's own machine). Relevance gating,
 // not security — everything involved is public; visitors just never see operator chrome.
 // Dormant until KIT_UPDATE_MANIFEST_URL is set (the public repo home).
-function useKitUpdate(isOperator: boolean): { version: string; note?: string } | null {
-  const [latest, setLatest] = useState<{ version: string; note?: string } | null>(null)
+//
+// Two independent signals from the manifest (docs/RELEASES.md):
+//   latest    — a newer version exists (with its impact / sacred framing)
+//   recalled  — THIS build's version is in the manifest's `yanked` list: a known
+//               issue shipped and was rolled back — the one notice that matters.
+// The fetch always runs (a dismissed ordinary update must never mute a recall).
+function useKitUpdate(isOperator: boolean): {
+  latest: { version: string; note?: string; impact?: string; sacred?: string[] } | null
+  recalled: boolean
+} {
+  const [state, setState] = useState<{
+    latest: { version: string; note?: string; impact?: string; sacred?: string[] } | null
+    recalled: boolean
+  }>({ latest: null, recalled: false })
   useEffect(() => {
     if (!KIT_UPDATE_MANIFEST_URL || !isOperator) return
-    if (sessionStorage.getItem('kit-update-dismissed') === KIT_VERSION) return
     let stale = false
     fetch(KIT_UPDATE_MANIFEST_URL, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((m: { version?: string; note?: string } | null) => {
-        if (!stale && m?.version && m.version !== KIT_VERSION) setLatest({ version: m.version, note: m.note })
+      .then((m: KitUpdateManifest | null) => {
+        if (stale || !m) return
+        setState({
+          latest:
+            m.version && m.version !== KIT_VERSION
+              ? { version: m.version, note: m.note, impact: m.impact, sacred: m.sacred }
+              : null,
+          recalled: Array.isArray(m.yanked) && m.yanked.includes(KIT_VERSION),
+        })
       })
       .catch(() => {
         /* offline / blocked — the notice is best-effort only */
@@ -41,7 +59,17 @@ function useKitUpdate(isOperator: boolean): { version: string; note?: string } |
       stale = true
     }
   }, [isOperator])
-  return latest
+  return state
+}
+
+/** Human line for an update's impact + sacred flags — '' when there's nothing to say. */
+function updateCareLine(impact?: string, sacred?: string[]): string {
+  const parts: string[] = []
+  if (impact === 'config') parts.push('This update changes configuration, read the changelog first.')
+  if (impact === 'breaking') parts.push('This update needs manual steps, read the changelog first.')
+  const systems = (sacred ?? []).map((s) => (s === 'swap' ? 'trading' : s)).join(' and ')
+  if (systems) parts.push(`It touches the ${systems} path.`)
+  return parts.join(' ')
 }
 
 // ⓘ disclosure (the /docs InfoDot pattern) — detail lives behind the dot, the label
@@ -118,8 +146,9 @@ export function Setup() {
   const committedFeeWallet = ((siteConfig as { feeWallet?: string }).feeWallet ?? '').toLowerCase()
   const isOperator =
     import.meta.env.DEV || (!!committedFeeWallet && connected?.toLowerCase() === committedFeeWallet)
-  const kitUpdate = useKitUpdate(isOperator)
-  const [updateDismissed, setUpdateDismissed] = useState(false)
+  const { latest: kitUpdate, recalled: kitRecalled } = useKitUpdate(isOperator)
+  const [updateDismissed, setUpdateDismissed] = useState(() => sessionStorage.getItem('kit-update-dismissed') === KIT_VERSION)
+  const [recallDismissed, setRecallDismissed] = useState(() => sessionStorage.getItem('kit-recall-dismissed') === KIT_VERSION)
   // Dev server only: the setup-apply middleware (vite.config.ts) can write the config files
   // straight into the checkout. A deployed static site has no such endpoint — download/copy.
   const canWriteBack = import.meta.env.DEV
@@ -258,12 +287,36 @@ export function Setup() {
         </p>
       </header>
 
-      {kitUpdate && !updateDismissed && (
+      {kitRecalled && !recallDismissed && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-magenta/50 bg-magenta/[0.08] p-4">
+          <p className="text-sm text-ink-dim">
+            <b className="text-magenta">This version was recalled</b>: your site was built from kit
+            version {KIT_VERSION}, which shipped with a known issue and was rolled back
+            {kitUpdate ? <> (fixed in {kitUpdate.version})</> : null}. Update now: ask your AI agent
+            to <b className="text-ink">"update my site"</b>, or run{' '}
+            <b className="text-ink">node create/update.mjs</b>. Details are in the changelog.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              sessionStorage.setItem('kit-recall-dismissed', KIT_VERSION)
+              setRecallDismissed(true)
+            }}
+            className="press ml-auto rounded-full border border-line px-3 py-1.5 text-xs text-ink-faint hover:text-ink-dim"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {!kitRecalled && kitUpdate && !updateDismissed && (
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-cyan/40 bg-cyan/[0.07] p-4">
           <p className="text-sm text-ink-dim">
-            <b className="text-ink">Kit update available</b> — {KIT_VERSION} → {kitUpdate.version}
-            {kitUpdate.note ? <>: {kitUpdate.note}</> : null}. Ask your AI agent to{' '}
-            <b className="text-ink">"update my site"</b>, or pull upstream per START-HERE.
+            <b className="text-ink">Kit update available</b>: {KIT_VERSION} → {kitUpdate.version}
+            {kitUpdate.note ? <>: {kitUpdate.note}</> : null}.{' '}
+            {updateCareLine(kitUpdate.impact, kitUpdate.sacred)} Ask your AI agent to{' '}
+            <b className="text-ink">"update my site"</b>, run <b className="text-ink">node create/update.mjs</b>,
+            or pull upstream per START-HERE.
           </p>
           <button
             type="button"
@@ -418,11 +471,31 @@ export function Setup() {
           </div>
           <div className="space-y-1">
             <label className={label}>RPC key</label>
-            <input className={addrInput('rpcKey')} aria-invalid={!!errors.rpcKey} value={deploy.rpcKey} onChange={(e) => setDeployField('rpcKey', e.target.value)} placeholder="your provider key (Alchemy, Infura, any)" />
+            <input className={addrInput('rpcKey')} aria-invalid={!!errors.rpcKey} value={deploy.rpcKey} onChange={(e) => setDeployField('rpcKey', e.target.value)} placeholder="your Alchemy key (or use provider URLs below)" />
             <p className="text-xs text-ink-faint">
               Ships in the public bundle. Use your own key, restricted to your site's domain, never a secret.
             </p>
             {fieldMsg('rpcKey')}
+            <details className="pt-1">
+              <summary className="press cursor-pointer font-mono text-[10px] uppercase tracking-[0.15em] text-ink-faint transition-colors hover:text-ink-dim">
+                Using another provider? (QuickNode, Infura, your own node)
+              </summary>
+              <div className="mt-2 space-y-2">
+                <p className="text-xs text-ink-faint">
+                  Paste full https endpoint URLs per chain instead of a key. A URL beats the key
+                  when both are set, and either rail unlocks complete V4 pool coverage.
+                </p>
+                <label className={label}>Base RPC URL</label>
+                <input className={addrInput('rpcUrlBase')} aria-invalid={!!errors.rpcUrlBase} value={deploy.rpcUrlBase} onChange={(e) => setDeployField('rpcUrlBase', e.target.value)} placeholder="https://…your Base endpoint" />
+                {fieldMsg('rpcUrlBase')}
+                <label className={label}>Ethereum RPC URL</label>
+                <input className={addrInput('rpcUrlMainnet')} aria-invalid={!!errors.rpcUrlMainnet} value={deploy.rpcUrlMainnet} onChange={(e) => setDeployField('rpcUrlMainnet', e.target.value)} placeholder="https://…your Ethereum endpoint" />
+                {fieldMsg('rpcUrlMainnet')}
+                <label className={label}>Robinhood Chain RPC URL</label>
+                <input className={addrInput('rpcUrlRobinhood')} aria-invalid={!!errors.rpcUrlRobinhood} value={deploy.rpcUrlRobinhood} onChange={(e) => setDeployField('rpcUrlRobinhood', e.target.value)} placeholder="https://…your Robinhood Chain endpoint" />
+                {fieldMsg('rpcUrlRobinhood')}
+              </div>
+            </details>
           </div>
           <div className="space-y-1">
             <label className={label}>

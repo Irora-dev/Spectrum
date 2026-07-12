@@ -3,14 +3,19 @@ import type { Chain, Transport } from 'viem'
 import { coinbaseWallet, injected, walletConnect } from 'wagmi/connectors'
 import { CHAINS, SUPPORTED_CHAIN_IDS } from './lib/chain/chains'
 import { rpcUrlFor } from './lib/chain/rpc'
+import { WALLET_ENABLED } from './lib/config/features'
 import brand from './brand.config'
 
 const wcProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID
-// Wallet UI is gated (VITE_ENABLE_WALLET). Until it's on, ship ONLY the lightweight
-// `injected` connector — the Coinbase Wallet SDK + WalletConnect pull in hundreds of
-// KB that's pure dead weight (the connect button isn't even rendered). The flag is a
-// build-time constant, so the heavy connector SDKs tree-shake out of the gated build.
-const walletEnabled = import.meta.env.VITE_ENABLE_WALLET === 'true'
+// Wallet UI is gated by the RESOLVED flag (env-when-set > the committed
+// site.config.json — the same features.ts source the Nav's button uses). This
+// used to read the raw env var, which went undefined once flags moved into the
+// json: every json-flagged build silently shipped ONLY the injected connector,
+// so a browser without a wallet extension had no usable connect option at all
+// (owner hit it live, 2026-07-12). Until the flag is on, ship ONLY the
+// lightweight `injected` connector — the Coinbase Wallet SDK + WalletConnect
+// pull in hundreds of KB that's pure dead weight when the button never renders.
+const walletEnabled = WALLET_ENABLED
 
 // Chains come from the configured registry (shipped default: Base only).
 const chains = SUPPORTED_CHAIN_IDS.map((id) => CHAINS[id].viemChain) as [Chain, ...Chain[]]

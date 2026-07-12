@@ -43,6 +43,18 @@ export function hasAlchemyKey(): boolean {
   return !!alchemyKey
 }
 
+// A PRIVATE endpoint serves this chain: an explicit URL override (any provider —
+// QuickNode, Infura, self-hosted…) or the Alchemy key on a chain Alchemy serves.
+// This — not hasAlchemyKey alone — is what the pool engine gates wide V4 discovery
+// on: an operator on a non-Alchemy provider gets the full scan too (the old
+// key-only check skipped their perfectly capable endpoint, owner 2026-07-12).
+export function hasPrivateRpc(chainId: number): boolean {
+  if (chainId === BASE_CHAIN_ID && import.meta.env.VITE_BASE_RPC_URL) return true
+  if (chainId === MAINNET_CHAIN_ID && import.meta.env.VITE_MAINNET_RPC_URL) return true
+  if (chainId === ROBINHOOD_CHAIN_ID && import.meta.env.VITE_ROBINHOOD_RPC_URL) return true
+  return hasAlchemyKey() && hasAlchemyTier(chainId)
+}
+
 // Chains Alchemy can serve at all. On a chain with NO tier (Robinhood), the chain's
 // own RPC is the only option — and its filtered wide getLogs is proven fast (the
 // chain is young), so scanners ATTEMPT full-range there instead of skipping.

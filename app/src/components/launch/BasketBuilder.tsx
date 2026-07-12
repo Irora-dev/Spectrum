@@ -1407,9 +1407,9 @@ export function BasketBuilder({
               role="alert"
               className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 font-mono text-[12px] leading-relaxed text-amber-200"
             >
-              ⚠ V4 venues were not scanned on this build (keyless RPC), the pool depths above may be
+              ⚠ V4 venues were not scanned on this build (no private RPC), the pool depths above may be
               incomplete and a deeper V4 pool may exist for some assets. Weight accordingly, or rebuild
-              with an origin-restricted key for complete V4 coverage.
+              with an origin-restricted key or your own provider's RPC URL for complete V4 coverage.
             </div>
           )}
 

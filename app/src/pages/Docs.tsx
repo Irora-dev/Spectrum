@@ -13,6 +13,7 @@ import {
   Toc,
 } from '../components/DocKit'
 import { AddrChips } from '../components/AddrChips'
+import { IndexingReference } from '../components/IndexingReference'
 import { SpectralSearch } from '../components/SpectralSearch'
 
 // ── copyable snippets (kept verbatim so copy/paste is exact) ──────────────────
@@ -84,6 +85,7 @@ const TOC = [
   { id: 'direct', label: '8 · Direct contract access' },
   { id: 'gotchas', label: '9 · Gotchas' },
   { id: 'addresses', label: '10 · Addresses' },
+  { id: 'indexing', label: '11 · Indexing / events' },
 ]
 
 export function Docs() {
@@ -318,6 +320,16 @@ export function Docs() {
                 not know (<IC>tokens(basket) == 0</IC>) is not a Spectrum basket.
               </p>
             </Callout>
+          </DocSection>
+
+          {/* 11 */}
+          <DocSection id="indexing" className={hide('indexing')} n="11" title="Indexing: events and topic0s">
+            <p>
+              Everything an indexer subscribes to, with the topic0 hashes computed from the shipped
+              ABI at render (they cannot drift from what this app transacts through). Full event
+              signatures matter: a shortened signature hashes to a different topic0.
+            </p>
+            <IndexingReference />
             <p className="border-t border-white/10 pt-5 text-[12px] leading-relaxed text-ink-faint">
               △ <span className="text-ink-dim">SPECTRUM</span> · onchain baskets. This page defines the
               integration surface against the shipped V2 ABI (<IC>src/lib/spectrum/abis-v2.ts</IC>);

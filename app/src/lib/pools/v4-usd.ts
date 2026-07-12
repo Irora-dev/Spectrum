@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { encodeAbiParameters, formatUnits, keccak256, toHex, type Address } from 'viem'
-import { clientFor, hasAlchemyKey, hasAlchemyTier } from '../chain/rpc'
+import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
 import { chainCfg } from '../chain/chains'
 import { V4_POOLS_SLOT } from '../chain/constants'
 import { cacheGet, cacheSet } from '../spectrum/persist-cache'
@@ -96,7 +96,7 @@ async function hubPoolId(chainId: number): Promise<`0x${string}` | null> {
   const inflight = hubInflight.get(chainId)
   if (inflight) return inflight
   const run = (async (): Promise<`0x${string}` | null> => {
-    if (!hasAlchemyKey() && hasAlchemyTier(chainId)) return cached?.id ?? null
+    if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return cached?.id ?? null
     try {
       const client = clientFor(chainId)
       const latest = await client.getBlockNumber()

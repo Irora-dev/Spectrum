@@ -1,5 +1,5 @@
 import type { BrandConfig } from './brand'
-import type { DeployConfig } from './export-env'
+import { DEFAULT_DEPLOY, type DeployConfig } from './export-env'
 
 // The setup studio's draft lives in localStorage so the operator's in-browser preview
 // survives navigation + reload — per-browser only, so real visitors always see the
@@ -40,7 +40,11 @@ export function clearDraft(): void {
 export function loadDeployDraft(): DeployConfig | null {
   try {
     const raw = localStorage.getItem(DEPLOY_KEY)
-    return raw ? (JSON.parse(raw) as DeployConfig) : null
+    if (!raw) return null
+    // Merge over the defaults so a draft saved before a field existed (e.g. the
+    // custom RPC URLs, 2026-07-12) loads with '' instead of undefined — additive
+    // fields never need a key bump; only removed/reshaped fields do (see v2 note).
+    return { ...DEFAULT_DEPLOY, ...(JSON.parse(raw) as Partial<DeployConfig>) }
   } catch {
     return null
   }

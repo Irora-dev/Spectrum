@@ -45,6 +45,8 @@ const HELP = `create-spectrum-mini — generate your Spectrum front end's brand 
 Flags: --name --tagline --style(${STYLES.join('|')})
        --gradient(${GRADIENT_CATALOG.map((g) => g.id).join('|')}) or --from --via --to --accent
        --fee-wallet 0x.. --rpc <alchemy-key> --site-url <origin>
+       --rpc-url-base / --rpc-url-mainnet / --rpc-url-robinhood <https-endpoint>
+           (any provider — QuickNode, Infura, your own node; beats the key when set)
        --tier(${TIERS.join('|')})  default: all — the full site
        --host(${HOSTS.join('|')})  prints tailored deploy steps for that host
        --no-<page> (${PAGE_KEYS.join(',')})  --yes  --force
@@ -77,6 +79,11 @@ async function main() {
     feeWallet: f['fee-wallet'],
     swapRouter: f['swap-router'],
     rpcKey: f.rpc,
+    // Any-provider rail: full per-chain endpoint URLs (QuickNode / Infura / own node).
+    // A URL beats the key when both are set; either satisfies the RPC requirement.
+    rpcUrlBase: f['rpc-url-base'],
+    rpcUrlMainnet: f['rpc-url-mainnet'],
+    rpcUrlRobinhood: f['rpc-url-robinhood'],
     siteUrl: f['site-url'],
     walletConnectId: f['wallet-connect-id'],
     tier: f.tier || 'all',
@@ -102,8 +109,21 @@ async function main() {
     plan.palette.to = plan.palette.to || (await ask('Gradient to', SPECTRUM_DNA.to))
     plan.tier = f.tier || (await ask(`Feature tier ${TIERS.join('/')} (all = the full site)`, 'all'))
     plan.feeWallet = plan.feeWallet || (await ask('Fee wallet (your own; blank = no fee carve)'))
-    plan.rpcKey = plan.rpcKey || (await ask('RPC key (required; ships public, use a domain-restricted key)'))
-    if (!plan.rpcKey) plan.rpcKey = await ask('RPC key is required. Your own provider key, restricted to your domain')
+    if (!plan.rpcKey && !plan.rpcUrlBase && !plan.rpcUrlMainnet && !plan.rpcUrlRobinhood) {
+      let rpc = await ask('RPC (required; ships public, restrict to your domain): Alchemy key, or a full https URL from any provider')
+      if (!rpc) rpc = await ask('RPC is required. Paste an Alchemy key, or your provider\'s full https endpoint URL')
+      if (/^https?:\/\//i.test(rpc)) {
+        // A URL is chain-specific — ask where it points, then offer the other chains.
+        const chain = (await ask('That is a provider URL. Which chain is it for? base/ethereum/robinhood', 'base')).toLowerCase()
+        if (chain.startsWith('e')) plan.rpcUrlMainnet = rpc
+        else if (chain.startsWith('r')) plan.rpcUrlRobinhood = rpc
+        else plan.rpcUrlBase = rpc
+        if (!plan.rpcUrlBase) plan.rpcUrlBase = await ask('Base endpoint URL from the same provider (blank = public fallback there)')
+        if (!plan.rpcUrlMainnet) plan.rpcUrlMainnet = await ask('Ethereum endpoint URL (blank = public fallback there)')
+      } else {
+        plan.rpcKey = rpc
+      }
+    }
     plan.siteUrl = plan.siteUrl || (await ask('Site URL (optional; your host assigns one on the first deploy — set it later)'))
     // Hosting pick drives the tailored walkthrough printed at the end — guidance
     // only, it writes nothing (owner 2026-07-10).
@@ -135,7 +155,8 @@ async function main() {
 
   // The studio blocks on these two; the CLI warns loudly instead of refusing, so
   // scripted (--yes) runs still complete and the operator fixes .env.local before deploy.
-  if (!plan.rpcKey) console.error('⚠ No RPC key set (VITE_ALCHEMY_API_KEY) — required before you deploy; it ships public, use a domain-restricted key.')
+  if (!plan.rpcKey && !plan.rpcUrlBase && !plan.rpcUrlMainnet && !plan.rpcUrlRobinhood)
+    console.error('⚠ No RPC set — required before you deploy: an Alchemy key (VITE_ALCHEMY_API_KEY) or your provider\'s URLs (VITE_BASE_RPC_URL / VITE_MAINNET_RPC_URL); it ships public, restrict it to your domain.')
   if (!plan.siteUrl) console.error('· No site URL yet — fine: your host assigns one on the first deploy. Set it after (setup studio or src/site.config.json) and rebuild for branded link previews + the sitemap.')
 
   mkdirSync(dirname(brandPath), { recursive: true })

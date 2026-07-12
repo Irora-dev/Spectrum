@@ -70,9 +70,11 @@ What does NOT work keyless:
 - Your **site URL + fee wallet** live in the committed `src/site.config.json` (the
   setup studio/wizard write it; public by construction — every `VITE_` value ships in
   the bundle anyway). `VITE_SITE_URL` / the two fee vars override it. A build REQUIRES
-  a site URL; point it at your own property only. The **RPC key is the one value kept
-  out of git** (gitignored `.env.local`; on git-connected CI set it in the host
-  dashboard/CLI).
+  a site URL; point it at your own property only. The **RPC values are the ones kept
+  out of git** (gitignored `.env.local`; on git-connected CI set them in the host
+  dashboard/CLI): an Alchemy key (`VITE_ALCHEMY_API_KEY`) or full per-chain endpoint
+  URLs from any provider (`VITE_BASE_RPC_URL` / `VITE_MAINNET_RPC_URL` /
+  `VITE_ROBINHOOD_RPC_URL` — QuickNode, Infura, your own node; a URL beats the key).
 - `VITE_PARTNER_APP_URL` — optional "Visit $SYMBOL" link target. Unset, the CTA
   simply doesn't render; this package does not anoint a trading venue.
 

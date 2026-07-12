@@ -1,0 +1,84 @@
+# Release proof — every commit on main is a release; this re-proves it in a fresh
+# clone, publicly. Three jobs:
+#   build-and-tests    exactly the maintainer's local gate, on a clean machine (node 20 + 22)
+#   builder-simulation what a new builder's first hour does: wizard → branded build
+#   sacred-diff        did this release touch the launch/swap money paths, and does
+#                      version.json declare it? (see sacred-paths.json / docs/RELEASES.md)
+name: release-proof
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        node: [20, 22]
+    name: build-and-tests (node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install (exact locked tree)
+        working-directory: app
+        run: npm ci
+      - name: Typecheck
+        working-directory: app
+        run: npx tsc -b
+      - name: Unit tests
+        working-directory: app
+        run: npx vitest run
+      - name: Wizard tests
+        run: node --test create/*.test.mjs
+      - name: Production build
+        working-directory: app
+        run: VITE_SITE_URL=https://example.com npm run build
+
+  builder-simulation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install (exact locked tree)
+        working-directory: app
+        run: npm ci
+      - name: Wizard, exactly as a new builder runs it
+        run: node create/index.mjs --yes --name "CI Proof" --style aurora --site-url https://ci-proof.example
+      - name: Build the wizard's output
+        working-directory: app
+        run: npm run build
+      - name: The dist is branded and deep-link ready
+        working-directory: app
+        run: |
+          grep -q "CI Proof" dist/index.html
+          test -f dist/_redirects
+          echo "branded dist confirmed"
+
+  sacred-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sacred systems check (launch / swap)
+        shell: bash # -e -o pipefail: the check's exit survives the tee
+        run: node scripts/sacred-diff.mjs --auto-base | tee -a "$GITHUB_STEP_SUMMARY"
