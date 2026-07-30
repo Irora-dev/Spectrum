@@ -368,15 +368,17 @@ export function ShareModal({
     }
   }
 
+  // scrollable overlay + m-auto card: tall share cards clipped both ends when
+  // flex-centred on short phones (mobile audit L)
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-void/85 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-[90] flex overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={onClose}>
+      <div className="fixed inset-0 bg-void/85 backdrop-blur-sm" />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Share $${symbol}`}
         onClick={(e) => e.stopPropagation()}
-        className="search-pop relative w-full max-w-2xl overflow-hidden rounded-2xl border p-6 sm:p-8"
+        className="search-pop relative m-auto w-full max-w-2xl overflow-hidden rounded-2xl border p-6 sm:p-8"
         style={{ borderColor: `${sig}55`, background: `linear-gradient(135deg, ${sig}1f, #0c0a14 55%)` }}
       >
         <span
@@ -450,7 +452,7 @@ export function ShareModal({
           </div>
           {viewer && (
             <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-teal">
-              Your link earns you ~5% of the fee on buys through it · <a href="/refer" className="underline underline-offset-2 hover:text-cyan">refer &amp; earn</a>
+              Your link earns you ~5% of the fee on buys through it · <a href="/earn" className="underline underline-offset-2 hover:text-cyan">refer &amp; earn</a>
             </p>
           )}
         </div>

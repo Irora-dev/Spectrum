@@ -6,6 +6,12 @@ set up their site, **follow the agent runbook in [`START-HERE.md`](START-HERE.md
 it scripts the whole flow: launch the visual studio for them, wait for their Apply,
 validate, build, and drive the hosting hookup.
 
+> This file is agent-agnostic despite the name — it is the full guide whichever tool you
+> are. The per-tool entry points are thin pointers to it and to `START-HERE.md`, so that
+> dropping this repo into an AI IDE is enough on its own: `.trae/rules/project_rules.md`
+> (Trae), `AGENTS.md` (Codex and other agents), this file (Claude Code). If you change a
+> red line below, change it in all three.
+
 ## The red lines (load-bearing — never cross them)
 
 - **Never fabricate, guess, or autofill a contract or wallet address.** Blank is always
@@ -13,8 +19,9 @@ validate, build, and drive the hosting hookup.
   `app/src/lib/chain/deployments.json`; a blank fee wallet means that fee share simply
   isn't taken. **No default fee recipient may ever be introduced.**
 - The **fee wallet** comes only from the user, verbatim. It routes real value.
-- The site **name must not contain "Spectrum"** — the wizard, studio, and dev server all
-  enforce this; don't work around it.
+- The site **name is the operator's own wordmark** (≤32 chars, text only, no logo).
+  "Spectrum" is allowed and is the shipped default — a site on this kit IS a Spectrum
+  interface. Take whatever name the user gives you, verbatim.
 - Every `VITE_*` value and everything in `app/src/site.config.json` ships **publicly** in
   the client bundle. The RPC key belongs only in the gitignored `app/.env.local` (or a
   host dashboard) and should be restricted to the user's domain — never a secret key.

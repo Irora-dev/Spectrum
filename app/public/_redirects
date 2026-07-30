@@ -4,4 +4,7 @@
 # Add a matching line whenever a new nested (multi-segment) route ships.
 /creator/assets/*  /assets/:splat  200
 /docs/assets/*     /assets/:splat  200
+# /bundle/:creator/:slug is TWO segments deep: the document dir is /bundle/<creator>/,
+# so a refresh requests /bundle/<creator>/assets/* (bundles are default-ON and shared).
+/bundle/:creator/assets/*  /assets/:splat  200
 /*    /index.html   200

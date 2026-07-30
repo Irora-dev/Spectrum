@@ -21,8 +21,10 @@ jurisdiction you operate in or serve. In particular, it is on you to —
 - handle **sanctions screening and any geofencing** your jurisdiction requires;
 - handle **KYC / AML** if you ever add a fiat on-ramp (this kit is **non-custodial and ships no fiat
   ramp** — keeping it that way is the simpler posture);
-- **verify every contract address yourself** — the contracts are third-party and immutable, and the
-  kit ships no addresses.
+- **verify every contract address yourself** — the contracts are third-party and immutable. The kit
+  ships the canonical Spectrum addresses as working defaults (`app/src/lib/chain/deployments.json`),
+  which you can override; confirm every address against a canonical source before you route value
+  through it.
 
 These are reminders, not a compliance manual: *how* you meet them is your call and your responsibility.
 If you choose to deploy without reading this, that is on you.

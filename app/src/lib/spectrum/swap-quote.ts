@@ -86,6 +86,16 @@ export interface SwapQuoteInput {
   priceAgeMs?: number
   /** staleness bound (ms); defaults to DEFAULT_MAX_PRICE_AGE_MS */
   maxPriceAgeMs?: number
+  /** BOTH SIDES — the REALISED tokenOut (raw: shares on a buy, settlement on a sell)
+   *  from simulating the actual trade on-chain (swap-sim.ts). When present this REPLACES
+   *  the frictionless estimate as the basis for `minOutRaw`, and on a BUY it also
+   *  deflates the per-leg floors by the measured survival ratio. Spot/NAV charge nothing
+   *  for the hub swap, each leg's swap, or the mint min-rule's discarded cross-leg
+   *  imbalance. Measured live 2026-07-14: sells landed ~1.8% under NAV at 1 share and
+   *  −43.6% at 500/5452; buys landed 10–18% under expectation at $1 and −68% at $1000 —
+   *  so frictionless floors reverted sells above ~5 shares and buys at EVERY size.
+   *  Absent (simulation unsupported/failed) ⇒ degrade to the frictionless estimate. */
+  realisedOutRaw?: bigint
 }
 
 /** The broadcast-grade swap inputs — the SAME values previewed and signed. */
@@ -101,6 +111,12 @@ export interface SwapQuote {
   legCount: number
   /** BUY: per-leg minimums for the review UI. SELL: empty (no per-leg floors). */
   legs: { symbol: string; decimals: number; min: bigint }[]
+  /** The expected (pre-slippage) output the floor was derived from, raw. Show THIS in the
+   *  preview: when simulated it is achievable, unlike the frictionless estimate. */
+  expectedOutRaw: bigint
+  /** Where `expectedOutRaw` came from. 'simulated' = the real trade was priced on-chain
+   *  (accurate). 'nav' = degraded frictionless estimate (may overstate). */
+  basis: 'simulated' | 'nav'
 }
 
 /**
@@ -119,11 +135,32 @@ export function buildSwapQuote(input: SwapQuoteInput): SwapQuote | null {
   if (input.priceAgeMs != null && input.priceAgeMs > maxAge) return null
 
   const out = side === 'buy' ? (amount * (1 - feeFrac)) / navPerToken : amount * navPerToken * (1 - feeFrac)
-  const minOut = out * (1 - clampForFloor(slippageBps) / 10_000)
   const shareDecimals = Math.min(basketDecimals, 18)
   const amountRaw = side === 'buy' ? toRaw(amount, USDC_DECIMALS) : toRaw(amount, shareDecimals)
-  const minOutRaw = side === 'buy' ? toRaw(minOut, shareDecimals) : toRaw(minOut, USDC_DECIMALS)
-  if (amountRaw <= 0n || minOutRaw <= 0n) return null
+  const bps = BigInt(10_000 - clampForFloor(slippageBps))
+
+  // BASIS (both sides): the SIMULATED realised output when we have it, else the
+  // frictionless spot/NAV estimate (degraded). Slippage is applied in raw bigint units
+  // so the floor is exactly a haircut on the simulated number — no float round-trip to
+  // drift it above what the chain will actually pay.
+  const outDecimals = side === 'buy' ? shareDecimals : USDC_DECIMALS
+  const frictionlessOutRaw = toRaw(out, outDecimals)
+  const useSim = input.realisedOutRaw != null && input.realisedOutRaw > 0n
+  const expectedOutRaw = useSim ? (input.realisedOutRaw as bigint) : frictionlessOutRaw
+  const minOutRaw = (expectedOutRaw * bps) / 10_000n
+  if (amountRaw <= 0n || minOutRaw <= 0n || expectedOutRaw <= 0n) return null
+  const basis: 'simulated' | 'nav' = useSim ? 'simulated' : 'nav'
+
+  // How much of the frictionless expectation actually survives execution. On a BUY this
+  // captures BOTH the two-hop swap friction AND the mint min-rule's discarded
+  // cross-leg imbalance, so it is the honest factor to deflate the per-leg floors by:
+  // floors derived from raw spot were 10–68% above what the legs really acquire, which
+  // reverted LegMinNotMet on every buy. Capped at 1× — a better-than-expected fill must
+  // never TIGHTEN the floors above the quote the user was shown.
+  const survivalNum = useSim && frictionlessOutRaw > 0n
+    ? (expectedOutRaw < frictionlessOutRaw ? expectedOutRaw : frictionlessOutRaw)
+    : 0n
+  const survivalDen = survivalNum > 0n ? frictionlessOutRaw : 0n
 
   const legCount = holdings.length
 
@@ -133,7 +170,7 @@ export function buildSwapQuote(input: SwapQuoteInput): SwapQuote | null {
     // floors (in _unwindToUsdc) are ETH/USDC-denominated and OPTIONAL; the FE does not
     // reconstruct those units, so the redeem encoder ships length-correct ZERO per-leg floors.
     // No per-leg preview on a sell.
-    return { quotedLegAmounts: [], amountRaw, minOutRaw, legCount, legs: [] }
+    return { quotedLegAmounts: [], amountRaw, minOutRaw, legCount, legs: [], expectedOutRaw, basis }
   }
 
   // BUY: per-leg floors in constituent-token units, priced off NET (post-fee) USDC. The
@@ -148,16 +185,31 @@ export function buildSwapQuote(input: SwapQuoteInput): SwapQuote | null {
   })
   if (quotedLegAmounts.some((q) => q <= 0n)) return null
 
-  const legMins = deriveLegMins(quotedLegAmounts, slippageBps)
+  // Deflate the per-leg expectations by the MEASURED survival ratio before applying
+  // slippage, so the floors bind to what the acquisition really delivers. Without this
+  // they are raw-spot amounts the two-hop route + min-rule can never reach. The
+  // aggregate `minOutRaw` (simulated) remains the binding sandwich protection — shares
+  // are minted from MEASURED balance deltas via the min-rule, so a starved leg shows up
+  // there — and these stay non-zero so the never-a-zero-floor invariant holds.
+  const adjustedLegAmounts = survivalDen > 0n
+    ? quotedLegAmounts.map((q) => (q * survivalNum) / survivalDen)
+    : quotedLegAmounts
+  if (adjustedLegAmounts.some((q) => q <= 0n)) return null
+
+  const legMins = deriveLegMins(adjustedLegAmounts, slippageBps)
   // A rounded-zero floor would silently disable the per-leg protection — abort.
   if (legMins.some((m) => m <= 0n)) return null
 
   return {
-    quotedLegAmounts,
+    // ADJUSTED, not raw-spot: encodeMintHookData re-derives the legMins from this
+    // field, so the survival-deflated amounts must be what leaves here.
+    quotedLegAmounts: adjustedLegAmounts,
     amountRaw,
     minOutRaw,
     legCount,
     legs: holdings.map((h, i) => ({ symbol: h.symbol, decimals: h.decimals, min: legMins[i] })),
+    expectedOutRaw,
+    basis,
   }
 }
 

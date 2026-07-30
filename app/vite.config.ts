@@ -32,6 +32,7 @@ function brandHtml(): Plugin {
   const title = esc(`${brand.name} · ${tagline}`)
   const desc = esc(`${brand.name}: onchain basket tokens. Each basket is a single token that holds a whole basket of assets.`)
   const siteName = esc(brand.name)
+  let outDir = ''
   return {
     name: 'brand-html',
     transformIndexHtml(html) {
@@ -44,6 +45,34 @@ function brandHtml(): Plugin {
         .replace(/(<meta property="og:image:alt" content=")[^"]*(")/, `$1${siteName}$2`)
         .replace(/(<meta name="twitter:title" content=")[^"]*(")/, `$1${title}$2`)
         .replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${desc}$2`)
+    },
+    // The PWA manifest is part of the brand surface too (mobile systems audit):
+    // hardcoded "Baskets" named every operator's Android install prompt, and
+    // absolute URLs broke installability under IPFS/ENS gateway paths (the
+    // build's base is './' for exactly that case). public/ files bypass rollup
+    // (plain copy), so patch the COPIED file after the bundle closes: branded
+    // name, relative start_url + icon srcs.
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    closeBundle() {
+      const p = resolve(outDir, 'site.webmanifest')
+      if (!existsSync(p)) return
+      try {
+        const m = JSON.parse(readFileSync(p, 'utf8')) as {
+          name: string
+          short_name: string
+          start_url: string
+          icons?: { src: string }[]
+        }
+        m.name = brand.name
+        m.short_name = brand.name
+        m.start_url = './'
+        for (const icon of m.icons ?? []) icon.src = icon.src.replace(/^\//, './')
+        writeFileSync(p, JSON.stringify(m, null, 2))
+      } catch {
+        /* malformed manifest: ship it untouched rather than fail the build */
+      }
     },
   }
 }
@@ -142,10 +171,15 @@ function setupApply(): Plugin {
               return reject(400, 'siteConfig.features malformed')
             if ((feats.deploy || feats.trading || feats.swap) && !feats.wallet)
               return reject(400, 'siteConfig.features: transactional flags require wallet')
-            // Same name red line the wizard + studio enforce, re-checked at the write.
+            // Same name rule the wizard + studio enforce, re-checked at the write.
+            // The /spectrum/i REJECTION IS GONE (it outlived the guard): "Spectrum"
+            // is the shipped recommended default (brand.config.ts) and validateSiteName
+            // accepts it, so this middleware was 400-ing the studio's own Apply button
+            // for anyone who kept the default name — the primary onboarding path in
+            // START-HERE Stage 1. Length now mirrors MAX_SITE_NAME (32), not 64.
             const m = brandConfig.match(/name:\s*("(?:[^"\\]|\\.)*")/)
             const name = m ? (JSON.parse(m[1]) as string) : ''
-            if (!name.trim() || name.length > 64 || /spectrum/i.test(name)) return reject(400, 'invalid site name')
+            if (!name.trim() || name.length > 32) return reject(400, 'invalid site name')
             writeFileSync(resolve(server.config.root, 'src/brand.config.ts'), brandConfig)
             writeFileSync(resolve(server.config.root, 'src/site.config.json'), siteConfig)
             writeFileSync(resolve(server.config.root, '.env.local'), envLocal)

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from './chains'
+import brand from '../../brand.config'
 
 // App-level "viewing network" for the Base⇄Eth toggle. Independent of the wallet's
 // connected chain (read views work with no wallet); the UI can sync the wallet via
@@ -13,6 +14,11 @@ function readInitial(): number {
     const v = Number(localStorage.getItem(STORAGE_KEY))
     if (ids.includes(v)) return v
   }
+  // First visit: the operator's brand default (e.g. Robinhood Chain on a
+  // stocks-forward site — owner 2026-07-29) when it's a scaffolded chain;
+  // a returning visitor's own stored choice above always wins.
+  const branded = Number(brand.defaultChainId)
+  if (ids.includes(branded)) return branded
   return DEFAULT_CHAIN_ID
 }
 

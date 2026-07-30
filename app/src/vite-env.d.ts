@@ -23,6 +23,8 @@ interface ImportMetaEnv {
   readonly VITE_UNIV3_SWAP_ROUTER_ADDRESS?: string
   readonly VITE_UNIV3_QUOTER_ADDRESS?: string
   readonly VITE_AERODROME_FACTORY_ADDRESS?: string
+  readonly VITE_NOTES_REGISTRY_ADDRESS?: string
+  readonly VITE_LEAGUE_POOL_ADDRESS?: string
   readonly VITE_V4_QUOTER_ADDRESS?: string
   readonly VITE_SWAP_ROUTER_ADDRESS?: string
   readonly VITE_UNIVERSAL_ROUTER_ADDRESS?: string

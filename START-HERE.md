@@ -15,7 +15,10 @@ fee wallet is optional — and **no fee recipient ever ships as a default**.
 >
 > 1. **One prompt (Claude Code / Codex / any AI coding agent):** paste this file in and say
 >    *"set up my Spectrum Mini site."* The agent launches the visual studio for you and
->    handles everything technical — the runbook below.
+>    handles everything technical — the runbook below. **In an AI IDE you don't even need
+>    the prompt:** the repo ships its own agent instructions, so dropping the folder in is
+>    enough — Trae reads `.trae/rules/project_rules.md`, Claude Code reads `CLAUDE.md`, and
+>    other agents read `AGENTS.md`. All three point at this runbook.
 > 2. **CLI or in-site studio:** `node create/index.mjs` — or run the app and open **`/setup`**
 >    (the "Customize" page): design in the browser with a live preview; in dev, **Apply**
 >    writes your config straight into the project.
@@ -43,7 +46,8 @@ never hand over a hex code), and what you will do about it next. Never report a 
 - **Never fabricate, guess, or autofill a contract or wallet address.** Blank is always
   valid (blank = the canonical deployment; blank fee wallet = the share isn't taken).
 - The **fee wallet** comes only from the user, verbatim. It routes real value.
-- The site **name must not contain "Spectrum"** (the wizard enforces this — don't fight it).
+- The site **name is the user's own wordmark** (≤32 chars, text only). "Spectrum" is
+  allowed and is the shipped default — don't talk them out of it.
 - **The default site is fully live** — launch, buy/sell (through the shipped canonical
   router), and the fee console are all on. Say that plainly when handing over, and scope
   down to a narrower tier (`info` / `creation` / `fees` / `marketplace`) whenever the
@@ -124,6 +128,14 @@ node create/index.mjs --yes --name "<name>" --style <style> \
   [--host zip|cloudflare|netlify|vercel|vps]   # prints that host's deploy steps
 ```
 
+**Product knobs — all default ON, so only ask if the user raises them** (never
+volunteer a wall of options): `--no-stocks` hides every tokenized-stock surface ·
+`--no-starter-tokens` drops the curated launch suggestions (third-party tokens
+suggested on their site) · `--no-prism-credit` removes the "Powered by Prism"
+banner that links out to Prism Beat · `--no-setup-studio` locks the deployed site
+by dropping `/setup`. The table in `app/OPERATORS.md` → "Product knobs" is the
+reference; the `/setup` studio exposes the same switches visually.
+
 ### Stage 2 — validate (you run this)
 
 ```sh
@@ -173,11 +185,23 @@ click, then drive:
   are all committed (`src/site.config.json`), so CI needs exactly ONE env var,
   `VITE_ALCHEMY_API_KEY`: set it via the host CLI (`vercel env add` / `netlify env:set`)
   or print it ready to paste.
-- **Custom domain**: the host dashboard walks the DNS (on Cloudflare-managed domains
-  `npx wrangler pages domain add` works too; a domain elsewhere means one registrar
-  visit). **The set-the-URL loop (every host):** the first deploy gives you the real
-  URL — put it in `src/site.config.json` (or re-run the studio and Apply), rebuild,
-  redeploy. Link previews + the sitemap brand from it; until then they're unbranded.
+- **Custom domain — yes, on every host, and nobody has to live on the host's subdomain.**
+  Ask early whether they own a domain; if they do, do this instead of handing them a
+  `*.pages.dev` / `*.netlify.app` URL.
+  - **Cloudflare Pages** is the easy case: `npx wrangler pages domain add <project>
+    <domain>`. If the domain is already in that same Cloudflare account, Cloudflare
+    writes the DNS record itself and issues the certificate — no registrar visit at all.
+    Registered elsewhere? Either point its nameservers at Cloudflare, or add the CNAME the
+    dashboard shows at the current registrar. Add both `www` and the bare domain if they
+    want both.
+  - **Netlify / Vercel:** `npx netlify domains:add <domain>` / `npx vercel domains add
+    <domain>`, then the one registrar DNS step each prints.
+  - **Then re-set the site URL.** This is the step people skip: after the domain is live,
+    put it in `src/site.config.json` (or re-run the studio and Apply), rebuild, redeploy.
+    Otherwise link previews and the sitemap keep advertising the host subdomain — the site
+    works fine, but every share and every crawler points at the wrong host.
+  - **The set-the-URL loop applies even without a custom domain:** the first deploy is what
+    reveals the real URL, so set it and rebuild once. Until then previews are unbranded.
 
 **Deployed ≠ done — verify the LIVE site before you say "deployed":**
 

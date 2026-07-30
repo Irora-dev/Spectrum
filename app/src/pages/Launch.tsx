@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { BasketBuilder } from '../components/launch/BasketBuilder'
 
 export function Launch() {
@@ -25,14 +25,36 @@ export function Launch() {
               {isVersion ? 'New version' : 'Create a basket'}
             </div>
             <h1 className="mt-3 font-display text-5xl font-bold uppercase leading-[0.95] tracking-tight text-ink sm:text-6xl">
-              {isVersion ? 'New Version' : 'Launch a Basket'}
+              {isVersion ? (
+                <>New<br />Version</>
+              ) : (
+                <>Launch<br />a Basket</>
+              )}
             </h1>
           </div>
-          <p className="enter max-w-md text-pretty text-sm leading-relaxed text-ink-dim sm:text-right sm:text-balance" style={{ '--enter-i': 1 } as CSSProperties}>
-            {isVersion
-              ? 'Edit the prefilled basket below and deploy it as a new, separate immutable version. The original stays live and unchanged; holders move only if they choose to.'
-              : 'Pick a set of tokens, weight it, set your fee config, and deploy one basket token. Mints settle straight into the pool, and there is no management fee.'}
-          </p>
+          <div className="enter flex flex-col items-start gap-3 sm:items-end" style={{ '--enter-i': 1 } as CSSProperties}>
+            <p className="text-sm leading-relaxed text-ink-dim sm:text-right">
+              {isVersion ? (
+                'Edit the prefilled basket below and deploy it as a new, separate immutable version. The original stays live and unchanged; holders move only if they choose to.'
+              ) : (
+                <>
+                  <span className="block sm:whitespace-nowrap">Pick tokens, weight them, set your fee, deploy.</span>
+                  <span className="block sm:whitespace-nowrap">No management fee, ever.</span>
+                </>
+              )}
+            </p>
+            {/* the Composer as a creator TOOL off the launch page (owner 2026-07-29:
+                it left the primary nav; this is now its front door) */}
+            {!isVersion && (
+              <Link
+                to="/compose"
+                title="The Composer is the research bench: build a candidate mix, see how it would have performed as one basket, and hand it to this launch flow prefilled."
+                className="rounded-lg border border-white/12 px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-dim press hover:border-cyan/50 hover:text-cyan"
+              >
+                Not sure about the mix? Open the Composer ⓘ
+              </Link>
+            )}
+          </div>
         </div>
       </header>
       <BasketBuilder predecessor={from} predecessorChainId={fromChain} />

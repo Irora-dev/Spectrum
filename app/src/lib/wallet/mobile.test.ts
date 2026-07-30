@@ -15,8 +15,19 @@ describe('walletAppLinks', () => {
   const url = 'https://acme.example/token/8453/0xAbC?x=1'
   const links = Object.fromEntries(walletAppLinks(url).map((l) => [l.name, l.href]))
 
-  it('MetaMask gets the scheme-stripped host+path form', () => {
-    expect(links['MetaMask']).toBe('https://link.metamask.io/dapp/acme.example/token/8453/0xAbC?x=1')
+  it('MetaMask gets the scheme-stripped form with the path+query tail ENCODED (audit: a raw ?basket=&chain= tail rode un-namespaced on the universal link)', () => {
+    expect(links['MetaMask']).toBe(
+      `https://link.metamask.io/dapp/acme.example${encodeURIComponent('/token/8453/0xAbC?x=1')}`,
+    )
+  })
+
+  it('MetaMask carries the hash too', () => {
+    const withHash = Object.fromEntries(
+      walletAppLinks('https://acme.example/swap?basket=0xAbC&amt=100#ref').map((l) => [l.name, l.href]),
+    )
+    expect(withHash['MetaMask']).toBe(
+      `https://link.metamask.io/dapp/acme.example${encodeURIComponent('/swap?basket=0xAbC&amt=100#ref')}`,
+    )
   })
 
   it('Phantom gets the encoded browse form with a ref', () => {

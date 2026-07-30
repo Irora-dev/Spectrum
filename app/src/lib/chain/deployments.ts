@@ -55,13 +55,40 @@ export interface ChainDeployment {
   universalRouter: Address | null
   /** Aerodrome PoolFactory (Base) — detected only to WARN (no hook support). */
   aerodromeFactory: Address | null
+  /** SpectrumNotes (registry/SpectrumNotes.sol) — ownerless, event-only
+   *  on-chain metadata store (creator profiles + basket theses). Optional:
+   *  unset → metadata falls back to the signed-blob rungs. */
+  notesRegistry: Address | null
+  /** LeaguePool (registry/LeaguePool.sol; canonical home = spectrum-contracts
+   *  V3) — the creator league's ownerless pool, which STREAMS each league fee
+   *  slice to the current crown-holder (no prize pot, no settlement day).
+   *  Optional: unset → no /league page, no league copy anywhere. */
+  leaguePool: Address | null
+  /** True when THIS chain's configured factory is the V4Q lineage (the stocks
+   *  fork: its Venue enum adds V4Q = settlement-quoted hookless V4). Arms the
+   *  detector's settlement-paired sweep, letting stocks whose depth lives
+   *  USDG-side (AAPL/TSLA class) become venue-3 legs. json-only, NO env
+   *  override BY DESIGN: lineage is a property of the factory, so the flag
+   *  must travel with the deployments.json edit that points at that factory —
+   *  a standalone env flag could arm venue 3 against a deployed V2-lineage
+   *  factory, whose enum stops at V2, bricking every deploy at simulate. */
+  v4qLineage: boolean
+  /** The creator-league slice this chain's baskets take OFF THE TOP of every fee,
+   *  in bps (0 = this lineage has no league leg). Like `v4qLineage` this is
+   *  json-only with NO env override BY DESIGN: it is a compile-time constant in
+   *  the basket bytecode, so it must travel with the deployments.json edit that
+   *  points at that factory. Getting it wrong doesn't break a transaction — it
+   *  makes every DISPLAYED fee split wrong, which is why it is config and not a
+   *  guess (a league chain showed the creator 24.00% where the contract paid
+   *  22.80%, and the league slice nowhere at all). */
+  leagueShareBps: number
 }
 
 function addr(v: unknown): Address | null {
   return typeof v === 'string' && isAddress(v, { strict: false }) ? (v as Address) : null
 }
 
-const ENV_OVERRIDES: Partial<Record<keyof ChainDeployment, string | undefined>> = {
+const ENV_OVERRIDES: Partial<Record<AddressField, string | undefined>> = {
   factory: import.meta.env.VITE_FACTORY_ADDRESS,
   usdc: import.meta.env.VITE_USDC_ADDRESS,
   poolManager: import.meta.env.VITE_POOL_MANAGER_ADDRESS,
@@ -74,9 +101,13 @@ const ENV_OVERRIDES: Partial<Record<keyof ChainDeployment, string | undefined>> 
   v4Quoter: import.meta.env.VITE_V4_QUOTER_ADDRESS,
   universalRouter: import.meta.env.VITE_UNIVERSAL_ROUTER_ADDRESS,
   aerodromeFactory: import.meta.env.VITE_AERODROME_FACTORY_ADDRESS,
+  notesRegistry: import.meta.env.VITE_NOTES_REGISTRY_ADDRESS,
+  leaguePool: import.meta.env.VITE_LEAGUE_POOL_ADDRESS,
 }
 
-const FIELDS: (keyof ChainDeployment)[] = [
+type AddressField = Exclude<keyof ChainDeployment, 'v4qLineage' | 'leagueShareBps'>
+
+const FIELDS: AddressField[] = [
   'factory',
   'usdc',
   'poolManager',
@@ -89,18 +120,26 @@ const FIELDS: (keyof ChainDeployment)[] = [
   'v4Quoter',
   'universalRouter',
   'aerodromeFactory',
+  'notesRegistry',
+  'leaguePool',
 ]
 
 /** The default chain env overrides apply to (Base). */
 export const DEFAULT_CHAIN_ID = 8453
 
 export function deploymentFor(chainId: number): ChainDeployment {
-  const entry = (raw as Record<string, Record<string, string>>)[String(chainId)] ?? {}
+  const entry = (raw as Record<string, Record<string, unknown>>)[String(chainId)] ?? {}
   const out = {} as ChainDeployment
   for (const f of FIELDS) {
     const env = chainId === DEFAULT_CHAIN_ID ? addr(ENV_OVERRIDES[f]) : null
     out[f] = env ?? addr(entry[f])
   }
+  // Not addresses — and json-only (see the field docs for why no env override).
+  out.v4qLineage = entry.v4qLineage === true
+  const league = Number(entry.leagueShareBps)
+  // Bounded: a malformed or absurd value must degrade to "no league leg" rather
+  // than silently rewrite every displayed fee split.
+  out.leagueShareBps = Number.isFinite(league) && league > 0 && league <= 2_000 ? Math.round(league) : 0
   return out
 }
 

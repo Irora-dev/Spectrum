@@ -239,7 +239,7 @@ function BuySuccessCard({
       {share && (
         <p className="mt-3 font-mono text-xs leading-relaxed text-teal/90">
           Your link earns ~5% of the fee on buys through it.{' '}
-          <a href="/refer" className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-cyan">
+          <a href="/earn" className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-cyan">
             Learn more about the refer system
             <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
@@ -344,14 +344,21 @@ export function SwapPendingOverlay({
         : `Selling $${symbol}`
 
   return createPortal(
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" onClick={running ? undefined : onClose}>
-      <div className="absolute inset-0 bg-void/85 backdrop-blur-sm" />
+    // Scrollable overlay + m-auto card (mobile audit H): flex-centering a card
+    // taller than the viewport overflowed it off BOTH ends with no scroll path
+    // — the buy-success Done button was unreachable on most phones. Bottom
+    // padding respects the home-indicator zone.
+    <div
+      className="fixed inset-0 z-[95] flex overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      onClick={running ? undefined : onClose}
+    >
+      <div className="fixed inset-0 bg-void/85 backdrop-blur-sm" />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={heading}
         onClick={(e) => e.stopPropagation()}
-        className={`search-pop relative w-full overflow-hidden rounded-3xl card-surface text-center backdrop-blur-md ${buySuccess ? 'max-w-xl p-9' : 'max-w-sm p-7'}`}
+        className={`search-pop relative m-auto w-full overflow-hidden rounded-3xl card-surface text-center backdrop-blur-md ${buySuccess ? 'max-w-xl p-9' : 'max-w-sm p-7'}`}
       >
         <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: SPECTRAL }} />
 
@@ -440,6 +447,17 @@ export function SwapPendingOverlay({
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* the actual reason (owner live 2026-07-28): a failed step must say WHY.
+            The generic retry line hid every real revert reason (slippage, balance,
+            RPC) — the message was already captured per step, just never shown. */}
+        {error && !done && (
+          <div className="mt-4 rounded-lg border border-magenta/40 bg-magenta/[0.08] px-3 py-2.5 text-left">
+            <p className="break-words font-mono text-[11px] leading-relaxed text-magenta">
+              {steps.map((s) => txOf(s.key).error).find(Boolean) ?? error}
+            </p>
           </div>
         )}
 

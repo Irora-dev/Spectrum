@@ -9,6 +9,9 @@ import { DexSwapCard } from '../components/DexSwapCard'
 import { PageHeader } from '../components/PageHeader'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { BasketBento } from '../components/BasketBento'
+import { PoweredByPrism } from '../components/PoweredByPrism'
+import { TradePrism } from '../components/TradePrism'
+import { BasketSpark } from '../components/BasketSpark'
 import { BasketWash } from '../components/BasketWash'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +34,8 @@ function SwapPage() {
   const [selected, setSelected] = useState<string | null>(null)
 
   const paramBasket = params.get('basket')
+  // quick-buy deep link: /swap?basket=…&chain=…&amt=100
+  const paramAmount = params.get('amt')
   const paramChain = Number(params.get('chain'))
   useEffect(() => {
     if (paramChain && paramChain !== chainId) setActiveChainId(paramChain)
@@ -77,8 +82,17 @@ function SwapPage() {
         {/* console LEFT · what-you're-buying RIGHT (stacks on mobile, panel
             below the console so the money controls stay first) */}
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,560px)_minmax(0,1fr)] lg:gap-8">
-          <DexSwapCard chainId={chainId} initialBasket={paramBasket} large onBasketChange={setSelected} />
+          <div className="min-w-0 space-y-6">
+            <DexSwapCard chainId={chainId} initialBasket={paramBasket} initialAmount={paramAmount} large onBasketChange={setSelected} />
+            {/* Buy PRISM itself, right under the console (owner 2026-07-30) */}
+            <TradePrism buyOnly />
+          </div>
           <BasketContextPanel address={selected} chainId={chainId} />
+        </div>
+
+        {/* ecosystem credit — links out to PrismBeat (owner 2026-07-30) */}
+        <div className="mt-10 flex justify-center">
+          <PoweredByPrism />
         </div>
       </div>
     </div>
@@ -96,7 +110,10 @@ function BasketContextPanel({ address, chainId }: { address: string | null; chai
 
   const top = [...b.top].sort((a, y) => y.weightPct - a.weightPct)
   return (
-    <aside className="relative hidden overflow-hidden rounded-3xl border border-white/12 bg-white/[0.02] backdrop-blur-md lg:sticky lg:top-24 lg:block">
+    // Renders on EVERY width (was hidden lg:block — phone buyers got zero
+    // thesis/composition context on /swap; mobile UX review 5). Below lg it
+    // stacks under the console, exactly as the grid comment always promised.
+    <aside className="relative overflow-hidden rounded-3xl border border-white/12 bg-white/[0.02] backdrop-blur-md lg:sticky lg:top-24">
       {/* the basket's own color field */}
       <BasketWash ix={b} side="right" opacity={0.3} />
 
@@ -112,6 +129,23 @@ function BasketContextPanel({ address, chainId }: { address: string | null; chai
         {meta?.tagline && (
           <p className="mt-4 font-display text-lg font-semibold leading-snug text-ink">{meta.tagline}</p>
         )}
+
+        {/* the selected basket's living trend (owner 2026-07-29: charts on the
+            swap page) — the dither engine in its identity colour, hoverable */}
+        <div className="mt-4 h-28 w-full">
+          <BasketSpark
+            chainId={b.chainId}
+            assets={top.map((h) => ({ address: h.address, weight: h.weightPct }))}
+            navPerToken={b.navPerToken}
+            fallback={b.navSeries}
+            range="7D"
+            address={b.address}
+            symbol={b.symbol}
+            legs={top.map((h) => ({ symbol: h.symbol, address: h.address, weightPct: h.weightPct }))}
+            withRanges
+            bloom="low"
+          />
+        </div>
 
         {/* the facts row — NAV · 24h · TVL, spread across the width (owner 15:32) */}
         <div className="mt-4 flex items-end justify-between gap-6 border-t border-white/10 pt-4 pr-2 sm:pr-6">

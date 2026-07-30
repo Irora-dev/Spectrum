@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { coingeckoLogoUrl, logoSources } from '../lib/spectrum/token-art'
+import { blockscoutIconUrl, coingeckoLogoUrl, logoSources } from '../lib/spectrum/token-art'
 
 // Token icon with a multi-source fallback chain (token-art.ts: DexScreener →
 // TrustWallet → async Coingecko contract lookup) and an initials terminal state.
@@ -26,23 +26,46 @@ export function AssetLogo({
   const [srcIdx, setSrcIdx] = useState(0)
   // undefined = not looked up yet · null = looked up, no logo · string = the URL
   const [cgUrl, setCgUrl] = useState<string | null | undefined>(undefined)
+  const [tries, setTries] = useState(0)
   const box = { width: size, height: size }
   const srcs = [...(preferredSrc ? [preferredSrc] : []), ...logoSources(address, chainId), ...(cgUrl ? [cgUrl] : [])]
   const src = srcs[srcIdx] as string | undefined
   const initials = (symbol || '?').replace(/^\$/, '').slice(0, 3).toUpperCase()
   const next = () => setSrcIdx((i) => i + 1)
 
-  // Static rungs exhausted → one cached Coingecko contract lookup before initials.
+  // A recycled component (same element, new token) must restart the ladder —
+  // and must not keep the previous token's latched lookup state.
+  useEffect(() => {
+    setSrcIdx(0)
+    setCgUrl(undefined)
+    setTries(0)
+  }, [address, chainId])
+
+  // Static rungs exhausted → async lookups before initials: Blockscout's token
+  // icon on Robinhood Chain (the only registry that covers it), else Coingecko.
+  // A null result may be TRANSIENT (the producers un-cache 429/network blips) —
+  // latching it in state defeated their retry-on-next-ask design for the whole
+  // mounted lifetime (verify pass). Bounded backoff instead: definitive misses
+  // are memoized upstream, so those retries cost zero network.
   useEffect(() => {
     if (src != null || cgUrl !== undefined) return
     let stale = false
-    void coingeckoLogoUrl(address, chainId).then((u) => {
-      if (!stale) setCgUrl(u)
-    })
+    let timer: number | undefined
+    void blockscoutIconUrl(address, chainId)
+      .then((bs) => bs ?? coingeckoLogoUrl(address, chainId))
+      .then((u) => {
+        if (stale) return
+        if (u == null && tries < 2) {
+          timer = window.setTimeout(() => setTries((t) => t + 1), 4000 * (tries + 1))
+          return
+        }
+        setCgUrl(u)
+      })
     return () => {
       stale = true
+      if (timer != null) window.clearTimeout(timer)
     }
-  }, [src, cgUrl, address, chainId])
+  }, [src, cgUrl, address, chainId, tries])
 
   // Framed variant — used by the bento tiles. Padding makes the disc a visible
   // rim (most logos are opaque circles, so a plain bg behind them never shows).

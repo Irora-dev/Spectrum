@@ -10,9 +10,10 @@ import { BasketAvatar } from './BasketAvatar'
 // Claimable holder fees, surfaced ON the portfolio (R+C walkthrough 2026-07-06:
 // holders shouldn't have to find /flush). Self-hiding: renders nothing until a
 // held basket actually has USDC to claim. The full crank console stays /flush.
-export function PortfolioClaims({ baskets, className = '' }: { baskets: BasketSummary[]; className?: string }) {
+/** The aggregation, reusable (the portfolio Earn card condenses to one number
+ *  + Claim all; per-basket rows stay for surfaces that want the breakdown). */
+export function usePortfolioClaimables(baskets: BasketSummary[]) {
   const { address } = useAccount()
-  const ca = useClaimAll()
   const results = useQueries({
     queries: baskets.map((b) => ({
       queryKey: ['spectrum', 'feeState', b.chainId, b.address.toLowerCase(), address?.toLowerCase()],
@@ -21,8 +22,7 @@ export function PortfolioClaims({ baskets, className = '' }: { baskets: BasketSu
       staleTime: 15_000,
     })),
   })
-  if (!TRADING_ENABLED || !address) return null
-  const me = address.toLowerCase()
+  const me = address?.toLowerCase() ?? ''
   const claimable = baskets
     .map((b, i) => ({ b, usdc: results[i].data?.claimableUsdc ?? 0 }))
     .filter((x) => x.usdc > 0.005)
@@ -36,28 +36,40 @@ export function PortfolioClaims({ baskets, className = '' }: { baskets: BasketSu
         .reduce((s, f) => s + f.pendingUsdc, 0),
     }))
     .filter((x) => x.usdc > 0.005)
-  if (claimable.length === 0 && created.length === 0) return null
-
-  // one-button sweep across every row (owner 2026-07-07): holder claims +
-  // creator flushes, sequenced on the current chain.
   const items: ClaimAllItem[] = [
     ...claimable.map(({ b }) => ({ address: b.address as Address, chainId: b.chainId, kind: 'claim' as const })),
     ...created.map(({ b }) => ({ address: b.address as Address, chainId: b.chainId, kind: 'flush' as const })),
   ]
   const totalUsdc = [...claimable, ...created].reduce((s, x) => s + x.usdc, 0)
+  // A failed read coerces to 0 and then gets filtered OUT, so the basket silently
+  // vanished from the list and the total, and the portfolio stated "$0.00
+  // claimable" as fact (kit audit). The producer forbids exactly that — carry the
+  // flag so the surfaces can say the figure may be incomplete.
+  const degraded = results.some((r) => r.data?.degraded === true)
+  return { claimable, created, items, totalUsdc, degraded }
+}
+
+export function PortfolioClaims({ baskets, className = '', bare = false }: { baskets: BasketSummary[]; className?: string;
+  /** Content-only: the caller's card owns the chrome (the portfolio Earn card). */
+  bare?: boolean }) {
+  const { address } = useAccount()
+  const ca = useClaimAll()
+  const { claimable, created, items, totalUsdc } = usePortfolioClaimables(baskets)
+  if (!TRADING_ENABLED || !address) return null
+  if (claimable.length === 0 && created.length === 0) return null
+  const rowCount = claimable.length + created.length
   const fmtUsd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   return (
-    <section className={`rounded-2xl border border-teal/25 bg-teal/[0.04] p-4 ${className}`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1.5">
+    <section className={bare ? className : `rounded-2xl border border-teal/25 bg-teal/[0.04] p-4 ${className}`}>
+      <div className="flex flex-wrap items-baseline justify-center gap-x-3 gap-y-1.5 text-center">
         <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-teal">Claimable fees</span>
-        <span className="font-mono text-[10px] text-ink-faint">accrued to you · paid in USDC</span>
         {items.length >= 2 && (
           <button
             type="button"
             disabled={ca.running}
             onClick={() => void ca.claimAll(items)}
-            className="press ml-auto rounded-lg border border-teal/50 bg-teal/15 px-3 py-1.5 font-display text-[11px] font-bold uppercase tracking-[0.12em] text-teal hover:enabled:border-teal disabled:opacity-60"
+            className="press mx-auto rounded-lg border border-teal/50 bg-teal/15 px-3 py-1.5 font-display text-[11px] font-bold uppercase tracking-[0.12em] text-teal hover:enabled:border-teal disabled:opacity-60"
           >
             {ca.running ? `Claiming ${ca.done + ca.failed}/${ca.total}…` : `Claim all ${fmtUsd(totalUsdc)}`}
           </button>
@@ -69,14 +81,49 @@ export function PortfolioClaims({ baskets, className = '' }: { baskets: BasketSu
           {ca.skippedOtherChain > 0 ? ` ${ca.skippedOtherChain} on another network — switch to claim those.` : ''}
         </p>
       )}
-      <div className="mt-3 flex flex-wrap gap-2.5">
-        {claimable.map(({ b, usdc }) => (
-          <ClaimRow key={`h:${b.chainId}:${b.address}`} basket={b} usdc={usdc} />
-        ))}
-        {created.map(({ b, usdc }) => (
-          <CreatorFlushRow key={`c:${b.chainId}:${b.address}`} basket={b} usdc={usdc} me={address} />
-        ))}
-      </div>
+      {/* SCALES with the number of baskets (owner 2026-07-29: "it shouldn't push
+          the card down"). Up to two, the full rows fit and each keeps its own
+          button. Beyond that the rows would grow the summary card without
+          bound, so we collapse to the ONE total (the Claim-all button above)
+          plus a compact avatar per basket — the whole amount stays visible and
+          the per-basket detail moves behind a disclosure. */}
+      {rowCount <= 2 ? (
+        <div className="mt-3 flex flex-wrap justify-center gap-2.5">
+          {claimable.map(({ b, usdc }) => (
+            <ClaimRow key={`h:${b.chainId}:${b.address}`} basket={b} usdc={usdc} />
+          ))}
+          {created.map(({ b, usdc }) => (
+            <CreatorFlushRow key={`c:${b.chainId}:${b.address}`} basket={b} usdc={usdc} me={address} />
+          ))}
+        </div>
+      ) : (
+        <details className="group mt-3">
+          <summary className="press flex cursor-pointer list-none flex-wrap items-center justify-center gap-2">
+            <span className="flex flex-wrap items-center justify-center gap-1">
+              {[...claimable.map((x) => ({ ...x, k: 'h' })), ...created.map((x) => ({ ...x, k: 'c' }))].slice(0, 8).map(({ b, k }) => (
+                <span key={`i:${k}:${b.chainId}:${b.address}`} title={`$${b.symbol}`} className="ring-1 ring-white/10 rounded-lg">
+                  <BasketAvatar address={b.address} symbol={b.symbol} size={22} />
+                </span>
+              ))}
+              {rowCount > 8 && (
+                <span className="ml-1 font-mono text-[10px] tabular-nums text-ink-faint">+{rowCount - 8}</span>
+              )}
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors group-hover:text-ink-dim">
+              across {rowCount} baskets
+              <span aria-hidden className="ml-1 inline-block transition-transform group-open:rotate-180">▾</span>
+            </span>
+          </summary>
+          <div className="mt-3 flex flex-wrap justify-center gap-2.5">
+            {claimable.map(({ b, usdc }) => (
+              <ClaimRow key={`h:${b.chainId}:${b.address}`} basket={b} usdc={usdc} />
+            ))}
+            {created.map(({ b, usdc }) => (
+              <CreatorFlushRow key={`c:${b.chainId}:${b.address}`} basket={b} usdc={usdc} me={address} />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   )
 }

@@ -7,11 +7,15 @@ import { SPECTRUM_DNA } from './theme/brand'
 // Your site's look + name. Edit by hand, or let the onboarding wizard write it.
 // Change `style` (spectral | aurora | prism | umbra | sylvan) and `palette` to make the
 // site your own; the default below reproduces the reference "spectral" look exactly.
-// `name` is a text wordmark (no logo) and must not contain "Spectrum" (see validateSiteName).
+// `name` is a text wordmark (no logo). "Spectrum" is the recommended default
+// (owner 2026-07-29): a site built on this kit is an interface to the protocol.
 export const brand: BrandConfig = {
-  name: 'Baskets',
+  name: 'Spectrum',
   style: 'spectral',
   palette: { ...SPECTRUM_DNA },
+  // No `defaultChainId` here on purpose: the kit ships BASE-first. The lab branch
+  // sets 4663 for the stocks-forward demo, and that override is deliberately not
+  // promoted — an operator picks their own default in /setup or this file.
 }
 
 export default brand

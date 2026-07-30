@@ -72,8 +72,9 @@ describe('validateSiteName', () => {
   it('rejects names longer than 32 chars', () => {
     expect(validateSiteName('x'.repeat(33)).ok).toBe(false)
   })
-  it('rejects anything containing "spectrum", case-insensitively', () => {
-    expect(validateSiteName('SpEcTrUm Pro').ok).toBe(false)
-    expect(validateSiteName('my spectrum site').ok).toBe(false)
+  it('ACCEPTS "spectrum" — the rejection was removed (owner 2026-07-29: it is the recommended default)', () => {
+    expect(validateSiteName('Spectrum').ok).toBe(true)
+    expect(validateSiteName('SpEcTrUm Pro').ok).toBe(true)
+    expect(validateSiteName('my spectrum site').ok).toBe(true)
   })
 })

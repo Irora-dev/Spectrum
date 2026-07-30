@@ -54,7 +54,7 @@ interface RawList {
  *  into <img src>, so it gets the same posture as creator-metadata's
  *  sanitizeImageUrl: anything that doesn't parse to an https URL is dropped
  *  (the UI falls back to the generated logo). */
-function normalizeLogo(uri: string | undefined): string | undefined {
+export function normalizeLogo(uri: string | undefined): string | undefined {
   if (!uri) return undefined
   const candidate = uri.startsWith('ipfs://')
     ? `https://ipfs.io/ipfs/${uri.slice(7)}`

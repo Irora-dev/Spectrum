@@ -65,21 +65,25 @@ Then **Deploy**. The build takes a minute or two; you'll get a `*.vercel.app` UR
    - a **CNAME** for a subdomain (`www` → `cname.vercel-dns.com`).
    Add it at your registrar's DNS page exactly as shown.
 4. Vercel verifies and provisions HTTPS automatically, usually within minutes.
+5. **Make the site know its own domain** — the step people skip: set the **site URL** to the
+   custom domain (setup studio, or `src/site.config.json` → `siteUrl`), commit, and let it
+   redeploy. Until you do, social cards and the sitemap keep advertising the `*.vercel.app`
+   subdomain instead of your domain.
 
 Now go lock your RPC key to this domain if you added one (see
 [README → RPC keys](README.md#rpc-keys-public-vs-your-own)).
 
 ## Troubleshooting (Vercel-specific)
 
-- **Deep links 404 (e.g. refreshing `/discover` fails).** A Vite SPA needs a rewrite. Add
-  `vercel.json` at the repo root containing:
-  ```json
-  { "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
-  ```
-  Commit it and redeploy. (See [Make deep links work](README.md#make-deep-links-work-one-time).)
+- **Deep links 404 (e.g. refreshing `/explore` fails).** A Vite SPA needs a rewrite —
+  the kit **ships one** at `app/vercel.json` (the SPA catch-all plus the nested-route
+  asset remaps; don't replace it with a bare catch-all or refreshing `/creator/…`,
+  `/docs/…` and `/bundle/…` pages goes blank). If deep links 404, check the file is at
+  your deploy root (project root if you deploy from the repo root), then redeploy. (See
+  [Deep links work out of the box](README.md#deep-links-work-out-of-the-box).)
 - **Blank page after deploy.** Output directory must be `dist`. Re-check Build & Output Settings.
 - **Env var changes not showing.** They're build-time — **Redeploy** after editing.
 
 ---
 
-← Back to [README.md](README.md) · Other host: [Cloudflare Pages](cloudflare-pages.md)
+← Back to [README.md](README.md) · Other hosts: [Cloudflare Pages](cloudflare-pages.md) · [Netlify](netlify.md)

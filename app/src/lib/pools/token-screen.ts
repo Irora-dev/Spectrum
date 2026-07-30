@@ -178,7 +178,7 @@ export async function screenTokenIdentity(
       hardFail: {
         code: 'SPECTRUM_BASKET',
         message:
-          'This is a Spectrum basket token — baskets are their own V4 hooks and cannot be nested as constituents.',
+          'This is a Spectrum basket token. Nesting one basket inside another strands its fee stream: the parent has no way to call the child\'s claimFees(), so the child\'s holder fees accrue to a holder that never claims them. Pick the underlying assets instead.',
       },
       warnings: [],
       decimals: decimalsRead.value,

@@ -11,8 +11,8 @@ const DISMISS_KEY = 'spectrum:ref-banner-dismissed'
 // extra cost. Transparency (and the buyer-side §9 disclosure). Site-wide via
 // Layout; self-hides when there's no ref or the ref is the connected wallet.
 export function ReferredBanner() {
-  const ref = getStoredRef()
   const { address } = useAccount()
+  const ref = getStoredRef(address)
   const { data: ensName } = useEnsName({ address: ref ?? undefined, chainId: MAINNET_CHAIN_ID })
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -36,7 +36,7 @@ export function ReferredBanner() {
 
   return (
     <div className="border-b border-violet/20 bg-violet/[0.06]">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
+      <div className="mx-auto flex max-w-[1000px] items-center justify-between gap-3 px-4 py-2 sm:px-6">
         <span className="min-w-0 font-mono text-[11px] leading-relaxed text-ink-dim">
           Referred by <span className="text-ink">{ensName ?? shortAddr(ref)}</span> — they earn a slice of the
           protocol fee on your trades, at no extra cost to you.

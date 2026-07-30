@@ -2,19 +2,29 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { formatUnits, isAddress, parseUnits } from 'viem'
 import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
-import { chainCfg } from '../lib/chain/chains'
+import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { deploymentFor } from '../lib/chain/deployments'
 import type { BasketData } from '../lib/spectrum/basket-data'
 import { useAllBaskets, useBasketData } from '../lib/spectrum/hooks'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
 import { useDexSwap, type DexTxState, type HubToken } from '../lib/spectrum/use-dex-swap'
+import {
+  hubPay,
+  parseStoredPayToken,
+  rememberRecentPayToken,
+  serializePayToken,
+  type PayToken,
+} from '../lib/spectrum/pay-token'
 import { erc20BalanceAbi } from '../lib/spectrum/abis-v2'
 import { clampSlippageBps, DEFAULT_SLIPPAGE_BPS } from '../lib/spectrum/hook-data'
 import { formatNav, formatUsdCompact, shortAddr } from '../lib/spectrum/format'
 import { AssetLogo } from './AssetLogo'
 import { BasketAvatar } from './BasketAvatar'
+import { BridgeBanner, BridgeFund } from './BridgeFund'
+import { PayTokenPicker } from './PayTokenPicker'
 import { SwapPendingOverlay } from './SwapPendingOverlay'
 import { ShareEarnNudge } from './ShareEarnNudge'
+import { hasFinePointer } from '../lib/wallet/mobile'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The DEX-style swap console: one pay box, one receive box, a flip, and a
@@ -31,6 +41,37 @@ import { ShareEarnNudge } from './ShareEarnNudge'
 
 const SPECTRAL = 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))'
 const HUBS: HubToken[] = ['ETH', 'USDC', 'WETH']
+
+/** The one-line strip's CTA label, kept SHORT. The full state machine's labels are
+ *  written for the big console and reach 43 characters; in the strip the button is
+ *  shrink-0 + nowrap, so a long one overflows the card. Every long state collapses
+ *  to a 1–2 word stand-in and the full sentence goes to the button's tooltip. */
+const STRIP_LABEL_MAX = 16 // fits "Select a basket" — the longest real short label
+
+export function stripCtaLabel(label: string, amountRaw: bigint, hasBasket: boolean): string {
+  if (amountRaw === 0n && hasBasket) return 'Buy'
+  const trimmed = label.trim()
+  // never render an empty button: an empty/blank label used to pass straight
+  // through the length check and produce a button with no text at all
+  if (!trimmed) return 'Buy'
+  if (trimmed.length <= STRIP_LABEL_MAX) return trimmed
+  if (/^Switch wallet/i.test(trimmed)) return 'Switch network'
+  if (/^Connect/i.test(trimmed)) return 'Connect'
+  if (/no router/i.test(trimmed)) return 'Preview only'
+  if (/^First buy/i.test(trimmed)) return 'Minimum'
+  if (/insufficient|balance/i.test(trimmed)) return 'Low balance'
+  // last resort: cut at the first separator, then at a WORD boundary — a
+  // mid-word chop ("Select a baske") reads like a rendering bug
+  const head = trimmed.split(/[·—,(]/)[0].trim()
+  if (head && head.length <= STRIP_LABEL_MAX) return head
+  const words = (head || trimmed).split(/\s+/)
+  let out = ''
+  for (const w of words) {
+    if ((out ? `${out} ${w}` : w).length > STRIP_LABEL_MAX) break
+    out = out ? `${out} ${w}` : w
+  }
+  return out || 'Buy'
+}
 
 function EthGlyph({ size = 22 }: { size?: number }) {
   return (
@@ -75,6 +116,7 @@ export function DexSwapCard({
   chainId,
   fixedBasket = null,
   initialBasket = null,
+  initialAmount = null,
   large = false,
   strip = false,
   defaultHub = 'ETH',
@@ -85,6 +127,8 @@ export function DexSwapCard({
   fixedBasket?: BasketData | null
   /** Free mode: preselect this basket address (deep link). */
   initialBasket?: string | null
+  /** Prefill the pay amount (quick-buy deep link) — never blank-by-default. */
+  initialAmount?: string | null
   /** Roomier paddings + typography for the standalone /swap page. */
   large?: boolean
   /** The one-row streamlined buy (owner 19:24): pay left → basket right → Buy.
@@ -135,20 +179,83 @@ export function DexSwapCard({
   const hubInfra = !!depHere.uniV3SwapRouter && !!depHere.uniV3Quoter && !!depHere.weth
   const lifiHubChain = cfg.externalHubRouter === 'lifi' && !hubInfra
   const hubChoices: HubToken[] = hubInfra ? HUBS : lifiHubChain ? ['ETH', 'USDC'] : ['USDC']
-  const [hub, setHub] = useState<HubToken>(hubInfra || lifiHubChain ? defaultHub : 'USDC')
+  // Any-token pay side rides LiFi — offered only where LiFi covers the chain.
+  const anyTokenPay = cfg.hasLifi
+  // Remembered pay token (owner 2026-07-29, ease-of-buying): the pay side is a
+  // standing preference, so re-picking it on every visit is pure friction. Per
+  // chain, because what a wallet holds differs per chain. A caller-supplied
+  // `defaultHub` (the seed prompt's USDC) still wins — it is context, not habit.
+  // Since batch 2 the pay side may also be ANY ERC-20 (`PayToken`); hub picks
+  // persist as the same bare names as before, so old preferences keep working.
+  const payMemKey = `spectrum:pay-token:${chainId}`
+  const [pay, setPay] = useState<PayToken>(() => {
+    if (!(hubInfra || lifiHubChain)) return hubPay('USDC')
+    try {
+      const saved = parseStoredPayToken(window.localStorage.getItem(payMemKey), chainId, hubInfra ? HUBS : ['ETH', 'USDC'])
+      if (saved && (saved.kind === 'hub' || anyTokenPay)) return saved
+    } catch {
+      /* privacy mode — fall through to the default */
+    }
+    return hubPay(defaultHub)
+  })
+  // The hub view of the pay side (null = a custom ERC-20 riding LiFi).
+  const hub: HubToken | null = pay.kind === 'hub' ? pay.hub : null
+  const paySymbol = pay.kind === 'hub' ? (pay.hub === 'USDC' ? cfg.usdcSymbol : pay.hub) : pay.symbol
+  // Persist ONLY on an explicit pick (audit 2026-07-29 #3): the old effect ran
+  // on every pay/key change, so an in-place chain switch wrote the PREVIOUS
+  // chain's pay token over the NEW chain's saved preference before the fit
+  // fallback could run — destroying exactly what the feature remembers.
+  const persistPay = (p: PayToken) => {
+    try {
+      window.localStorage.setItem(payMemKey, serializePayToken(p))
+    } catch {
+      /* storage unavailable — the preference is a nicety */
+    }
+  }
   useEffect(() => {
-    if (!hubChoices.includes(hub)) setHub('USDC')
+    // A pay side that no longer fits the chain falls back to settlement: a hub
+    // this chain can't execute, an ERC-20 pinned to a DIFFERENT chain (addresses
+    // mean nothing across chains), or an ERC-20 where LiFi has no coverage.
+    if (pay.kind === 'hub' && !hubChoices.includes(pay.hub)) setPay(hubPay('USDC'))
+    if (pay.kind === 'erc20' && (pay.chainId !== chainId || !anyTokenPay)) {
+      const saved = parseStoredPayToken(
+        (() => {
+          try {
+            return window.localStorage.getItem(payMemKey)
+          } catch {
+            return null
+          }
+        })(),
+        chainId,
+        hubInfra ? HUBS : ['ETH', 'USDC'],
+      )
+      setPay(saved && (saved.kind === 'hub' || anyTokenPay) ? saved : hubPay('USDC'))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hubInfra, lifiHubChain, chainId])
   // Display name of the settlement asset: USDC on Base/Ethereum, USDG on
   // Robinhood Chain. Mechanics identical — labels only.
   const usdcSym = cfg.usdcSymbol
-  const hubLabel = (h: HubToken) => (h === 'USDC' ? usdcSym : h)
-  const [amount, setAmount] = useState('')
+  // A prefilled amount (quick-buy from a card) — an empty field is a decision
+  // forced on the buyer, so a caller can hand one over.
+  const [amount, setAmount] = useState(initialAmount ?? '')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [customSlip, setCustomSlip] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
   const [hubMenuOpen, setHubMenuOpen] = useState(false)
+  const [tokenPickerOpen, setTokenPickerOpen] = useState(false)
+  // Cross-chain funding (owner 2026-07-29, phase 2): move funds from another
+  // network into this wallet as settlement, then buy with the ARRIVED amount.
+  const [bridgeOpen, setBridgeOpen] = useState(false)
+  const bridgeAvailable = cfg.hasLifi && SUPPORTED_CHAIN_IDS.some((id) => id !== chainId && chainCfg(id).hasLifi)
+  const useArrived = (arrivedRaw: bigint) => {
+    hubPicked.current = true
+    setDir('buy')
+    setPay(hubPay('USDC'))
+    persistPay(hubPay('USDC'))
+    setAmount(formatUnits(arrivedRaw, 6))
+    dex.resetRun()
+  }
   const [flipped, setFlipped] = useState(false)
   // Trade details (fee/min/route/slippage) fold behind one summary row — the
   // rail stays clean until the user asks for the numbers (owner ask 2026-07-05).
@@ -157,7 +264,7 @@ export function DexSwapCard({
   // by the user on done/error).
   const [pending, setPending] = useState(false)
 
-  const dex = useDexSwap(ix, dir, hub, chainId)
+  const dex = useDexSwap(ix, dir, pay, chainId)
 
   // Tell the host page which basket the console is on (context panel follows).
   useEffect(() => {
@@ -199,7 +306,7 @@ export function DexSwapCard({
     if (hubPicked.current || hub === 'USDC') return
     if (dir !== 'buy' || ix?.effectiveSupply !== 0) return
     if (viewerUsdc == null || viewerUsdc < 10_000_000n) return // the C-1 seed floor
-    setHub('USDC')
+    setPay(hubPay('USDC'))
   }, [viewerUsdc, hub, dir, ix?.effectiveSupply])
 
   // Share-&-earn nudge shown on the swap-success overlay (owner 2026-07-07): a
@@ -219,8 +326,9 @@ export function DexSwapCard({
     return { url, xHref }
   })()
 
-  const payDecimals = dir === 'buy' ? hubDecimals(hub) : Math.min(ix?.decimals ?? 18, 18)
-  const receiveDecimals = dir === 'buy' ? Math.min(ix?.decimals ?? 18, 18) : hubDecimals(hub)
+  const paySideDecimals = pay.kind === 'hub' ? hubDecimals(pay.hub) : pay.decimals
+  const payDecimals = dir === 'buy' ? paySideDecimals : Math.min(ix?.decimals ?? 18, 18)
+  const receiveDecimals = dir === 'buy' ? Math.min(ix?.decimals ?? 18, 18) : paySideDecimals
   const amountRaw = useMemo(() => {
     try {
       const v = parseUnits(amount || '0', payDecimals)
@@ -230,12 +338,15 @@ export function DexSwapCard({
     }
   }, [amount, payDecimals])
 
-  // Debounced quoting.
+  // Debounced quoting. Keyed on `pay` (the object), NOT the derived `hub` —
+  // hub is null for EVERY custom token, so an erc20→erc20 switch with the same
+  // decimals would otherwise keep showing the previous token's quote (audit
+  // 2026-07-29; execution always re-quotes fresh, this is display integrity).
   useEffect(() => {
     const t = window.setTimeout(() => void dex.refreshQuote(amountRaw, slippageBps, feeFrac), 320)
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amountRaw, slippageBps, feeFrac, hub, dir, ix?.address, chainId])
+  }, [amountRaw, slippageBps, feeFrac, pay, dir, ix?.address, chainId])
 
   const wrongChain = isConnected && walletChainId !== chainId
   const insufficient = dex.payBalance != null && amountRaw > 0n && amountRaw > dex.payBalance
@@ -299,7 +410,10 @@ export function DexSwapCard({
     cta = fixedBasket
       ? { label: 'Loading basket…', disabled: true }
       : { label: 'Select a basket', onClick: () => setPickerOpen(true), disabled: false }
-  else if (!isConnected) cta = { label: 'Connect a wallet (top right)', disabled: true }
+  // The CTA CONNECTS instead of pointing at desktop geography ("top right" is
+  // nothing on a phone; mobile UX review 4) — WalletButton listens for this.
+  else if (!isConnected)
+    cta = { label: 'Connect wallet', onClick: () => window.dispatchEvent(new Event('spectrum:connect')), disabled: false }
   else if (wrongChain)
     cta = {
       label: switching ? 'Confirm in wallet…' : `Switch wallet to ${cfg.name}`,
@@ -309,7 +423,7 @@ export function DexSwapCard({
   else if (dex.running) cta = { label: 'Swapping…', disabled: true }
   else if (dex.done) cta = { label: 'Swap again', onClick: () => { setAmount(''); dex.resetRun() }, disabled: false }
   else if (amountRaw === 0n) cta = { label: 'Enter an amount', disabled: true }
-  else if (insufficient) cta = { label: `Insufficient ${dir === 'buy' ? hubLabel(hub) : `$${ix.symbol}`} balance`, disabled: true }
+  else if (insufficient) cta = { label: `Insufficient ${dir === 'buy' ? paySymbol : `$${ix.symbol}`} balance`, disabled: true }
   else if (seedShort) cta = { label: `First buy needs ≥ 10 ${usdcSym} on the basket leg`, disabled: true }
   else if (dex.quoting) cta = { label: 'Quoting…', disabled: true }
   else if (!dex.quote) cta = { label: 'Quote unavailable', disabled: true }
@@ -335,7 +449,7 @@ export function DexSwapCard({
       out && ix
         ? dir === 'buy'
           ? `≈ ${out} $${ix.symbol} received`
-          : `≈ ${out} ${hubLabel(hub)} received`
+          : `≈ ${out} ${paySymbol} received`
         : 'Swap confirmed'
     setLastSwap(null)
     setPending(true)
@@ -350,8 +464,33 @@ export function DexSwapCard({
   const hubBoxZ = hubMenuOpen ? 'z-30' : 'z-[1]'
 
   const hubChip = (
-    <HubChip hub={hub} chainId={chainId} open={hubMenuOpen} setOpen={setHubMenuOpen} onPick={(h) => { hubPicked.current = true; setHub(h); dex.resetRun() }} disabled={dex.running} choices={hubChoices} usdcSym={usdcSym} />
+    <PayChip
+      pay={pay}
+      chainId={chainId}
+      open={hubMenuOpen}
+      setOpen={setHubMenuOpen}
+      onPickHub={(h) => { hubPicked.current = true; setPay(hubPay(h)); persistPay(hubPay(h)); dex.resetRun() }}
+      onAnyToken={anyTokenPay ? () => { setHubMenuOpen(false); setTokenPickerOpen(true) } : undefined}
+      disabled={dex.running}
+      choices={hubChoices}
+      usdcSym={usdcSym}
+    />
   )
+  const payTokenPicker = tokenPickerOpen ? (
+    <PayTokenPicker
+      chainId={chainId}
+      exclude={[depHere.usdc, depHere.weth, ix?.address]}
+      onPick={(t) => {
+        hubPicked.current = true
+        rememberRecentPayToken(t)
+        setPay(t)
+        persistPay(t)
+        setTokenPickerOpen(false)
+        dex.resetRun()
+      }}
+      onClose={() => setTokenPickerOpen(false)}
+    />
+  ) : null
   const basketChip = (
     <BasketChip ix={ix} onClick={fixedBasket ? undefined : () => setPickerOpen(true)} disabled={dex.running} />
   )
@@ -359,10 +498,10 @@ export function DexSwapCard({
   // ── the STRIP: buy-only — every guard/quote/overlay shared. Two balanced,
   //    labeled cells (You pay | You receive) bridged by a directional badge,
   //    the CTA riding the right edge (owner 2026-07-07 14:5x: "way more
-  //    beautiful and balanced"). Wraps to stacked cells inside narrow hosts
-  //    (row expansions) — the badge hides when stacked. ──────────────────────
+  //    beautiful and balanced"). ONE line on sm+ (owner 2026-07-29 — never
+  //    two); MOBILE stacks cleanly full-width (nowrap there crushed the chips
+  //    into each other — his overlap report). ─────────────────────────────────
   if (strip) {
-    const armed = !cta.disabled && amountRaw > 0n
     // No basket yet (directory loading / nothing picked): the pay/receive cells
     // have nothing to say, so the card shows ONE centered Select-a-basket
     // button instead of an empty two-cell shell (owner 2026-07-07 15:0x).
@@ -401,69 +540,95 @@ export function DexSwapCard({
     }
     return (
       <div className="relative">
-        <div className={`relative flex flex-wrap items-stretch gap-2 rounded-2xl card-surface p-2 backdrop-blur-md sm:p-2.5 ${hubMenuOpen ? 'z-30' : ''}`}>
-          {/* ── You pay ── */}
-          <div className="min-w-[13rem] flex-1 rounded-xl border border-white/[0.07] bg-black/30 px-3.5 py-2">
-            <div className="flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.18em] text-ink-faint">
-              <span>You pay</span>
-              {dex.payBalance != null && (
-                <button type="button" onClick={setMax} className="press whitespace-nowrap hover:text-cyan">
-                  {fmtAmt(dex.payBalance, payDecimals)} · Max
-                </button>
-              )}
-            </div>
-            <div className="mt-1 flex items-center gap-2.5">
-              {hubChip}
-              <input
-                value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                inputMode="decimal"
-                placeholder="0"
-                size={1}
-                disabled={dex.running}
-                aria-label="Amount to pay"
-                className="min-w-[2.5rem] flex-1 bg-transparent text-right font-num text-xl font-light tabular-nums text-ink outline-none placeholder:text-ink-faint disabled:opacity-60"
-              />
-            </div>
+        {/* ONE LINE when it FITS, two when it doesn't — keyed to the CONTAINER,
+            not the viewport (owner 2026-07-30: "the quick swap buttons overlap,
+            they should never overlap, make the card wider to fit it").
+            Why it overlapped: every element except the amount input and the
+            estimate is `shrink-0` (chips truncate, the CTA is nowrap), so those
+            two were the only give in the row — they collapsed to zero width and
+            then the fixed items still overflowed and collided. A `sm:` viewport
+            breakpoint can't see that, because this strip is embedded at wildly
+            different widths (a narrow Explore column, a full-width expansion, a
+            phone). So: `@container` here + `@min-[34rem]` for the single-row
+            layout, and the two flexible zones carry a real min width so the row
+            WRAPS instead of squeezing. Same state machine and guards. */}
+        <div
+          className={`@container relative flex flex-wrap items-center gap-2 rounded-2xl card-surface p-2 backdrop-blur-md ${hubMenuOpen ? 'z-30' : ''}`}
+        >
+          {/* pay: token + amount. `flex-[1.1_1_0]` sets basis 0 EXPLICITLY —
+              `flex-[1.1]` alone leaves basis at content width, and the later
+              `basis-auto` used to re-assert it, so this cell started at full
+              content size while the receive cell (flex-1 → basis 0) collapsed:
+              the exact overlap the container-query change was meant to end. */}
+          <div className="flex min-w-0 basis-full items-center gap-1.5 @min-[34rem]:flex-[1_1_0]">
+            {hubChip}
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+              inputMode="decimal" enterKeyHint="done" autoComplete="off"
+              placeholder="0"
+              size={1}
+              disabled={dex.running}
+              aria-label="Amount to pay"
+              /* min-w keeps the amount readable: without it this was the first
+                 thing to collapse to 0, and the row then overflowed (overlapping
+                 controls) instead of wrapping */
+              className="min-w-[3.5rem] flex-1 bg-transparent text-right font-num text-lg font-light tabular-nums text-ink outline-none placeholder:text-ink-faint disabled:opacity-60"
+            />
+            {dex.payBalance != null && (
+              <button
+                type="button"
+                onClick={setMax}
+                title={`Balance ${fmtAmt(dex.payBalance, payDecimals)} — use it all`}
+                className="press shrink-0 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint hover:text-cyan"
+              >
+                Max
+              </button>
+            )}
           </div>
 
-          {/* ── the bridge (hidden when the cells stack) ── */}
-          <div className="hidden self-center sm:block">
-            <span
-              aria-hidden
-              className={`grid h-8 w-8 place-items-center rounded-full border transition-colors ${
-                dex.quote ? 'border-cyan/50 bg-cyan/10 text-cyan' : 'border-white/12 bg-white/[0.03] text-ink-faint'
-              }`}
-            >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14m0 0l-5-5m5 5l-5 5" />
-              </svg>
-            </span>
-          </div>
-
-          {/* ── You receive ── */}
-          <div className="min-w-[13rem] flex-1 rounded-xl border border-white/[0.07] bg-black/30 px-3.5 py-2">
-            <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-faint">You receive (est.)</div>
-            <div className="mt-1 flex items-center gap-2.5">
-              {basketChip}
-              <span className={`min-w-0 flex-1 truncate text-right font-num text-xl font-light tabular-nums ${dex.quote ? 'text-ink' : 'text-ink-faint'}`}>
-                {dex.quoting ? <span className="animate-pulse">…</span> : fmtAmt(dex.quote?.outRaw ?? null, receiveDecimals)}
-              </span>
-            </div>
-          </div>
-
-          {/* ── the CTA — gradient once armed, quiet before ── */}
-          <button
-            type="button"
-            disabled={cta.disabled}
-            onClick={cta.onClick}
-            className={`press w-full whitespace-nowrap rounded-xl px-6 py-2.5 font-display text-xs font-bold uppercase tracking-[0.14em] transition-transform hover:enabled:scale-[1.02] active:enabled:scale-[0.97] disabled:cursor-not-allowed sm:w-auto sm:self-stretch ${
-              armed ? 'text-black' : 'border border-white/12 bg-white/[0.04] text-ink-dim disabled:opacity-70'
-            }`}
-            style={armed ? { background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' } : undefined}
+          <span
+            aria-hidden
+            className={`hidden shrink-0 font-mono text-sm @min-[34rem]:inline ${dex.quote ? 'text-cyan' : 'text-ink-faint'}`}
           >
-            {amountRaw === 0n && ix ? `Buy $${ix.symbol}` : cta.label}
-          </button>
+            →
+          </span>
+
+          {/* receive: basket + estimate + Buy — one wrapping unit, so the CTA
+              always travels with the row it belongs to instead of being orphaned
+              onto a line of its own */}
+          <div className="flex basis-full items-center gap-2 @min-[34rem]:flex-[1.2_1_0] @min-[34rem]:basis-auto">
+            {/* min-w-[7rem], not min-w-0: with 0 this box squeezed BELOW its
+                content instead of forcing a wrap, which is how the chip and the
+                estimate ended up painted over the Buy button */}
+            <div className="flex min-w-[7rem] flex-1 items-center gap-1.5">
+            {basketChip}
+            <span
+              title="Estimated amount received"
+              className={`min-w-[3.5rem] flex-1 truncate text-right font-num text-lg font-light tabular-nums ${dex.quote ? 'text-ink' : 'text-ink-faint'}`}
+            >
+              {dex.quoting ? <span className="animate-pulse">…</span> : fmtAmt(dex.quote?.outRaw ?? null, receiveDecimals)}
+            </span>
+            </div>
+
+            {/* SHORT label only. cta.label runs up to 43 chars ("Preview only ·
+                no router configured", "First buy needs ≥ 10 USDG …") and this
+                button is shrink-0 + nowrap inside an unclipped card, so the long
+                states used to bleed straight out of the card at every width. The
+                full text rides the tooltip; the strip is not where prose goes. */}
+            <button
+              type="button"
+              disabled={cta.disabled}
+              onClick={cta.onClick}
+              title={cta.label}
+              className={`press shrink-0 whitespace-nowrap rounded-xl px-4 py-2 font-display text-[11px] font-bold uppercase tracking-[0.12em] transition-transform hover:enabled:scale-[1.02] active:enabled:scale-[0.97] disabled:cursor-not-allowed ${
+                !cta.disabled && amountRaw > 0n ? 'text-black' : 'border border-white/12 bg-white/[0.04] text-ink-dim disabled:opacity-70'
+              }`}
+              style={!cta.disabled && amountRaw > 0n ? { background: SPECTRAL } : undefined}
+            >
+              {stripCtaLabel(cta.label, amountRaw, !!ix)}
+            </button>
+          </div>
         </div>
         {pickerOpen && !fixedBasket && (
           <BasketPicker
@@ -477,6 +642,11 @@ export function DexSwapCard({
             onClose={() => setPickerOpen(false)}
           />
         )}
+        {payTokenPicker}
+        {/* arrivals banner (compact hosts get the tracking, not the launcher) */}
+        <div className="mt-2 empty:hidden">
+          <BridgeBanner chainId={chainId} onUse={useArrived} />
+        </div>
         <SwapPendingOverlay
           open={pending && (dex.running || dex.done != null || dex.error != null)}
           dir={dir}
@@ -502,6 +672,11 @@ export function DexSwapCard({
 
   return (
     <div className="relative">
+      {/* live cross-chain arrivals into this wallet (persisted; survives reload) */}
+      <div className="mb-3 empty:hidden">
+        <BridgeBanner chainId={chainId} onUse={useArrived} />
+      </div>
+
       {/* ── PAY ─────────────────────────────────────────────────────────── */}
       <section className={`relative rounded-3xl card-surface backdrop-blur-md transition-shadow focus-within:ring-1 focus-within:ring-cyan/25 ${boxPad} ${dir === 'buy' ? hubBoxZ : 'z-[1]'}`}>
         <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
@@ -509,17 +684,20 @@ export function DexSwapCard({
           {dex.payBalance != null && (
             <span className="flex items-center gap-1">
               <span className="mr-1 tabular-nums">{fmtAmt(dex.payBalance, payDecimals)}</span>
+              {/* visual size unchanged; after:-inset expands the TOUCH target
+                  toward the 44px floor — these are precision-critical money
+                  chips (mis-tap Max vs 50%; mobile UX review 6) */}
               {([25, 50] as const).map((pct) => (
                 <button
                   key={pct}
                   type="button"
                   onClick={() => setAmount(formatUnits((dex.payBalance! * BigInt(pct)) / 100n, payDecimals))}
-                  className="press rounded-md border border-white/10 px-1.5 py-0.5 hover:border-cyan/40 hover:text-cyan"
+                  className="press relative rounded-md border border-white/10 px-1.5 py-0.5 after:absolute after:-inset-2.5 hover:border-cyan/40 hover:text-cyan"
                 >
                   {pct}%
                 </button>
               ))}
-              <button type="button" onClick={setMax} className="press rounded-md border border-cyan/30 px-1.5 py-0.5 text-cyan hover:border-cyan/60">
+              <button type="button" onClick={setMax} className="press relative rounded-md border border-cyan/30 px-1.5 py-0.5 text-cyan after:absolute after:-inset-2.5 hover:border-cyan/60">
                 Max
               </button>
             </span>
@@ -529,7 +707,7 @@ export function DexSwapCard({
           <input
             value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-            inputMode="decimal"
+            inputMode="decimal" enterKeyHint="done" autoComplete="off"
             placeholder="0"
             size={1} // kill the default 20-char intrinsic width, at text-4xl it inflates ancestor grid tracks on phones
             disabled={dex.running}
@@ -540,6 +718,17 @@ export function DexSwapCard({
         </div>
         {fmtUsd(payUsd) && (
           <div className="mt-1 font-mono text-[11px] tabular-nums text-ink-faint">{fmtUsd(payUsd)}</div>
+        )}
+        {dir === 'buy' && bridgeAvailable && (
+          <div className="mt-2 text-right">
+            <button
+              type="button"
+              onClick={() => setBridgeOpen(true)}
+              className="press font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-cyan"
+            >
+              Funds on another network? Move them here →
+            </button>
+          </div>
         )}
       </section>
 
@@ -594,8 +783,8 @@ export function DexSwapCard({
                 <span className="animate-pulse text-ink-faint">Quoting…</span>
               ) : rate && ix ? (
                 dir === 'buy'
-                  ? `1 ${hubLabel(hub)} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 4 })} $${ix.symbol}`
-                  : `1 $${ix.symbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${hubLabel(hub)}`
+                  ? `1 ${paySymbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 4 })} $${ix.symbol}`
+                  : `1 $${ix.symbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${paySymbol}`
               ) : (
                 <span className="text-ink-faint">Trade details</span>
               )}
@@ -626,7 +815,7 @@ export function DexSwapCard({
               <div className="flex items-center justify-between gap-3">
                 <span className="text-ink-faint">Minimum received</span>
                 <span className="tabular-nums">
-                  {dex.quote ? `${fmtAmt(dex.quote.minOutRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : hubLabel(hub)}` : '—'}
+                  {dex.quote ? `${fmtAmt(dex.quote.minOutRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : paySymbol}` : '—'}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -636,10 +825,10 @@ export function DexSwapCard({
                     ? dir === 'buy'
                       ? hub === 'USDC'
                         ? `${usdcSym} → $${ix.symbol} · self-pool`
-                        : `${hub} → ${usdcSym} → $${ix.symbol} · ${lifiHubChain ? 'LiFi' : 'V3'} + self-pool`
+                        : `${paySymbol} → ${usdcSym} → $${ix.symbol} · ${pay.kind === 'erc20' || lifiHubChain ? 'LiFi' : 'V3'} + self-pool`
                       : hub === 'USDC'
                         ? `$${ix.symbol} → ${usdcSym} · self-pool`
-                        : `$${ix.symbol} → ${usdcSym} → ${hub} · self-pool + ${lifiHubChain ? 'LiFi' : 'V3'}`
+                        : `$${ix.symbol} → ${usdcSym} → ${paySymbol} · self-pool + ${pay.kind === 'erc20' || lifiHubChain ? 'LiFi' : 'V3'}`
                     : '—'}
                   {dex.quote && dir === 'buy' ? ` · ${dex.quote.legCount} legs, each with its own floor` : ''}
                 </span>
@@ -668,7 +857,7 @@ export function DexSwapCard({
                         if (Number.isFinite(pct) && pct > 0) setSlippageBps(clampSlippageBps(Math.round(pct * 100)))
                       }}
                       placeholder="1.0"
-                      inputMode="decimal"
+                      inputMode="decimal" enterKeyHint="done" autoComplete="off"
                       className="w-11 bg-transparent text-right text-[12px] tabular-nums text-ink outline-none placeholder:text-ink-faint"
                     />
                     <span className="text-[12px] text-ink-faint">%</span>
@@ -769,6 +958,8 @@ export function DexSwapCard({
           onClose={() => setPickerOpen(false)}
         />
       )}
+      {payTokenPicker}
+      {bridgeOpen && <BridgeFund destChainId={chainId} onClose={() => setBridgeOpen(false)} />}
 
       {/* on-brand wait animation while the swap's steps confirm (token page + /swap) */}
       <SwapPendingOverlay
@@ -796,14 +987,17 @@ export function DexSwapCard({
 
 // ── chips ─────────────────────────────────────────────────────────────────────
 
-function HubChip({
-  hub, chainId, open, setOpen, onPick, disabled, choices = HUBS, usdcSym = 'USDC',
+function PayChip({
+  pay, chainId, open, setOpen, onPickHub, onAnyToken, disabled, choices = HUBS, usdcSym = 'USDC',
 }: {
-  hub: HubToken
+  pay: PayToken
   chainId: number
   open: boolean
   setOpen: (v: boolean) => void
-  onPick: (h: HubToken) => void
+  onPickHub: (h: HubToken) => void
+  /** Opens the any-token picker; undefined = the chain has no LiFi coverage
+   *  and the pay side stays hubs-only. */
+  onAnyToken?: () => void
   disabled?: boolean
   /** The hubs THIS CHAIN can execute (full uni infra = all three; LiFi chain =
    *  ETH + settlement; neither = settlement only). */
@@ -821,6 +1015,7 @@ function HubChip({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open, setOpen])
 
+  const hub = pay.kind === 'hub' ? pay.hub : null
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -829,20 +1024,26 @@ function HubChip({
         onClick={() => setOpen(!open)}
         className="press flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] py-1.5 pl-2 pr-3 hover:border-white/30 disabled:opacity-60"
       >
-        <HubIcon hub={hub} chainId={chainId} />
-        <span className="font-display text-sm font-bold text-ink">{hub === 'USDC' ? usdcSym : hub}</span>
+        {pay.kind === 'hub' ? (
+          <HubIcon hub={pay.hub} chainId={chainId} />
+        ) : (
+          <AssetLogo address={pay.address} symbol={pay.symbol} chainId={chainId} size={22} />
+        )}
+        <span className="max-w-[6.5rem] truncate font-display text-sm font-bold text-ink">
+          {pay.kind === 'hub' ? (pay.hub === 'USDC' ? usdcSym : pay.hub) : pay.symbol}
+        </span>
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-ink-faint">
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
       {open && (
-        <div className="search-pop absolute right-0 z-40 mt-2 w-44 rounded-2xl border border-white/12 bg-panel/95 p-1.5 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
+        <div className="search-pop absolute right-0 z-40 mt-2 w-48 rounded-2xl border border-white/12 bg-panel/95 p-1.5 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
           {choices.map((h) => (
             <button
               key={h}
               type="button"
               onClick={() => {
-                onPick(h)
+                onPickHub(h)
                 setOpen(false)
               }}
               className={`press flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left ${h === hub ? 'bg-cyan/10 ring-1 ring-inset ring-cyan/30' : 'hover:bg-white/[0.06]'}`}
@@ -856,6 +1057,29 @@ function HubChip({
               </span>
             </button>
           ))}
+          {onAnyToken && (
+            <button
+              type="button"
+              onClick={onAnyToken}
+              className={`press mt-1 flex w-full items-center gap-2.5 rounded-xl border-t border-white/[0.07] px-2.5 py-2 text-left ${pay.kind === 'erc20' ? 'bg-cyan/10 ring-1 ring-inset ring-cyan/30' : 'hover:bg-white/[0.06]'}`}
+            >
+              {pay.kind === 'erc20' ? (
+                <AssetLogo address={pay.address} symbol={pay.symbol} chainId={chainId} size={22} />
+              ) : (
+                <span aria-hidden className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full border border-dashed border-white/25 text-[13px] leading-none text-ink-dim">
+                  +
+                </span>
+              )}
+              <span className="flex-1">
+                <span className="block font-display text-sm font-bold text-ink">
+                  {pay.kind === 'erc20' ? pay.symbol : 'Another token'}
+                </span>
+                <span className="block font-mono text-[9px] uppercase tracking-wider text-ink-faint">
+                  {pay.kind === 'erc20' ? 'change token' : 'pay with anything'}
+                </span>
+              </span>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -929,7 +1153,7 @@ function BasketPicker({
   // ancestor's transform or filter re-bases `fixed` and the dialog paints in a
   // clipped "weird window" (same trap as the icon popovers). On body it can't.
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto p-4 pt-[12vh]" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[12vh]" onClick={onClose}>
       <div className="absolute inset-0 bg-void/85 backdrop-blur-sm" />
       <div
         role="dialog"
@@ -941,7 +1165,9 @@ function BasketPicker({
         <div aria-hidden className="h-1 w-full" style={{ background: SPECTRAL }} />
         <div className="p-4">
           <input
-            autoFocus
+            // desktop only: on touch, autoFocus pops the keyboard over the very
+            // list the user opened to browse (mobile UX review 11)
+            autoFocus={hasFinePointer()}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search baskets, name, ticker, or address"

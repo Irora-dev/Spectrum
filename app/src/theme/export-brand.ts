@@ -26,6 +26,15 @@ export function brandConfigToTs(brand: BrandConfig): string {
     for (const k of off) L.push(`    ${k}: false,`)
     L.push('  },')
   }
+  // default-on knobs: emitted only when the operator turned them OFF / set them
+  if (brand.stocks === false) L.push('  stocks: false,')
+  if (brand.prismCredit === false) L.push('  prismCredit: false,')
+  if (brand.starterTokens === false) L.push('  starterTokens: false,')
+  // setupStudio must round-trip too: without it, an operator who LOCKED their
+  // site with --no-setup-studio and then pressed Apply on a dev build silently
+  // got /setup + the footer Customize link back on their next production build.
+  if (brand.setupStudio === false) L.push('  setupStudio: false,')
+  if (brand.defaultChainId != null) L.push(`  defaultChainId: ${brand.defaultChainId},`)
   L.push('}', '', 'export default brand', '')
   return L.join('\n')
 }

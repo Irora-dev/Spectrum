@@ -49,10 +49,11 @@ What does NOT work keyless:
   `.env.local`, not `.env.example`). `npm run check:config` validates your config
   before you build — it catches a transactional flag without `WALLET`, malformed or
   mistyped addresses, `VITE_ENABLE_SWAP` with no router, an activated chain with no
-  factory, and a **missing site URL (fatal — a build requires one**, from
-  `src/site.config.json` or the `VITE_SITE_URL` override), and prints which build
-  tier your flags express. It also runs automatically as a **prebuild check**, so a
-  fatal misconfig can't slip into a build (run `vite build` directly to bypass).
+  factory, and a **missing site URL (a warning — fine for a first deploy**; your host
+  assigns one, then set it in `src/site.config.json` or via `VITE_SITE_URL` and
+  rebuild), and prints which build tier your flags express. It also runs automatically
+  as a **prebuild check**, so a fatal misconfig can't slip into a build (run
+  `vite build` directly to bypass).
 - `src/lib/chain/deployments.json` ships the **canonical Spectrum addresses** for
   Base, Ethereum + Robinhood Chain — blank env = the canonical deployment. To serve **your own**
   deployment, use the `VITE_*` overrides in `.env.example` or edit the JSON.
@@ -67,6 +68,24 @@ What does NOT work keyless:
   empty shell until you configure its deployment.
 - **Every `VITE_` value ships publicly in the static bundle.** A key you set is
   a public key. Use origin-restricted keys or a proxy.
+
+  **Restricting the key to your own domain is the right setup** — that is what
+  makes a public key safe to ship, and it is exactly what an RPC provider's
+  allowlist is for. Two things to get right when you do it:
+
+  1. **Allowlist every origin the site is actually served from**, not just the
+     final domain. If you deploy to Cloudflare Pages and keep the
+     `*.pages.dev` URL alive, that is a second origin; preview deployments get
+     their own hostnames too. And add **`http://localhost:5173`** (whatever port
+     you run) or your own `npm run dev` stops working the moment the key is
+     locked down — that surprise is usually the first thing people hit.
+  2. **It is an allowlist, not a secret.** Providers enforce it on the browser's
+     `Origin`/`Referer` header, so it stops your key being reused on somebody
+     else's site — the thing that actually costs you money — but it is not a
+     defence against someone crafting their own request. Never put a key with
+     write access, billing rights, or admin scope in a `VITE_` value; if you need
+     real secrecy, put a read proxy you control in front and point the kit at it
+     with `VITE_BASE_RPC_URL` (etc.) instead of shipping the key at all.
 - Your **site URL + fee wallet** live in the committed `src/site.config.json` (the
   setup studio/wizard write it; public by construction — every `VITE_` value ships in
   the bundle anyway). `VITE_SITE_URL` / the two fee vars override it. A build REQUIRES
@@ -78,6 +97,48 @@ What does NOT work keyless:
 - `VITE_PARTNER_APP_URL` — optional "Visit $SYMBOL" link target. Unset, the CTA
   simply doesn't render; this package does not anoint a trading venue.
 
+## Product knobs in `brand.config.ts`
+
+Separate from the env/address config above: `src/brand.config.ts` carries your
+**look and which surfaces exist**. Everything here is **default-ON** — omit a key
+and you get it; only an explicit `false` turns it off. The **`/setup` studio**
+(footer → Customize) edits all of it visually and downloads the file, and the
+**CLI wizard** takes the matching `--no-*` flags — you never have to hand-edit.
+
+| Key | Default | What `false` does | CLI flag |
+|---|---|---|---|
+| `pages` | all on | Drops a page from the nav, the routes and the footer (`discover`, `launch`, `trade`, `fees`, `portfolio`, `creators`, `refer`, `league`, `bundle`, `integrate`, `docs`) | `--no-<page>` |
+| `stocks` | on | Hides every tokenized-stock **surface**: the launcher's stock shelf, the stocks-and-tokens banner, stock badges. It cannot block a pasted stock address — routability stays the chain's own truth | `--no-stocks` |
+| `starterTokens` | on | Drops the small curated **starter suggestions** the launch shelves fall back to before your chain has baskets of its own. These are third-party token addresses suggested on your site; off leaves the shelf purely organic (most-used constituents of live baskets, ranked by live market data) | `--no-starter-tokens` |
+| `prismCredit` | on | Removes the **"Powered by Prism"** banner (home, basket, swap, fees) that links out to Prism Beat. The protocol's PRISM buy-and-burn leg is contract-side and unaffected either way | `--no-prism-credit` |
+| `setupStudio` | on | Locks a deployed site: drops the `/setup` route and the footer Customize link. Dev builds always serve it; drafts were never server-side, so this is product posture, not security | `--no-setup-studio` |
+| `defaultChainId` | book default | Sets the **first-visit** network (must be a scaffolded chain id). A returning visitor's own network choice always wins | — |
+
+`style` + `palette` are the visual identity (5 drastically different styles, 14
+gradient presets); `name` is a text wordmark (no logo), up to 32 characters.
+"Spectrum" is allowed — a site built on this kit *is* an interface to the Spectrum
+protocol, and it ships as the default. Keep it short: the home hero renders the
+name very large, and a single word beyond ~11 characters starts getting clipped on
+a narrow phone.
+
+## Mobile
+
+The kit is mobile-first out of the box; there is nothing to configure.
+
+- **A bottom tab bar is the phone navigation** (Home · Explore · Swap · Portfolio
+  · More), with the remaining enabled pages in a bottom sheet. It renders the
+  same gated link model as the desktop menu, so your `pages` choices govern
+  both, and it hides itself once the full top menu fits. It also gets out of the
+  way while the on-screen keyboard is up.
+- **The basket page grows a mini-buy bar** on phones once the swap console
+  scrolls out of reach — one tap back to the single console, not a second one.
+- Safe areas (notch, home indicator) are respected throughout, inputs are at the
+  16px floor iOS needs to stop auto-zooming on focus, and the hero art ships
+  phone-sized variants so a phone never decodes a 4K image.
+- The animated spectral background **stops drawing** under
+  `prefers-reduced-motion` and in the flat design styles that hide it, so it
+  costs an idle phone nothing.
+
 ## Social link previews (OG cards)
 
 Social crawlers (X, Telegram, Discord, Slack) don't run JavaScript, so a
@@ -85,14 +146,17 @@ client-rendered SPA can only ever show them the single generic card in
 `index.html`. Two tiers, pick one:
 
 - **Baseline — no extra infra.** Set `VITE_SITE_URL` (above) and every shared link
-  unfurls as the branded generic card (`public/og.png` ships). Perfectly fine to
-  launch with; the preview just isn't personalised per basket.
+  unfurls as the shipped generic card (`public/og.png` — name-neutral spectral art;
+  your site's NAME rides in the og:title/description text, which the build brands
+  from `brand.name`). Perfectly fine to launch with; the preview just isn't
+  personalised per basket. Want your own art? Replace `public/og.png` (1200×630).
 - **Per-URL cards (recommended) — a Netlify Edge Function that ships with the app.**
   `app/netlify/edge-functions/og.ts` (wired by the repo-root `netlify.toml`)
   rewrites the `<title>` + og/twitter tags per shared URL for `/token`,
   `/creator/<addr>` and `/refer`. **If you host on Netlify with base
   `app`, it deploys WITH the app automatically — no separate deploy, no
-  route to configure.** It reads basket names from a live `/tokenlist.json`
+  route to configure** (dashboard walkthrough: `docs/deploy/netlify.md`). It
+  reads basket names from a live `/tokenlist.json`
   (regenerate with `npm run build:tokenlist` when baskets launch). Its `og:image`
   is the generic card today; per-basket card *images* are a documented follow-up
   (`app/netlify/edge-functions/README.md`).

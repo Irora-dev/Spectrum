@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { AssetLogo } from './AssetLogo'
 import { useAssetHistory } from '../lib/spectrum/hooks'
-import { computeReturns } from '../lib/spectrum/history'
+import { honest24hPct } from '../lib/spectrum/history'
 import { tokenVisual } from '../lib/spectrum/token-meta'
 import { formatPct, formatPrice } from '../lib/spectrum/format'
 
@@ -23,10 +23,9 @@ export function AssetHoverCard({
   const series = data ?? []
   const vis = tokenVisual(symbol, address)
   const price = series.length ? series[series.length - 1].value : null
-  const change24h = useMemo(
-    () => computeReturns(series, null).find((r) => r.range === '24H')?.pct ?? null,
-    [series],
-  )
+  // Shared honesty guard: no 24h chip unless a real sample sits near the anchor
+  // (the weights row had the guard; this sibling surface didn't — verify pass).
+  const change24h = useMemo(() => honest24hPct(series), [series])
   const c = (change24h ?? 0) >= 0 ? 'var(--color-cyan)' : 'var(--color-magenta)'
 
   const spark = useMemo(() => {

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -15,12 +16,20 @@ import { Link } from 'react-router-dom'
 const INK = 'rgba(140,225,255,0.85)' // blueprint line ink
 const INK_FAINT = 'rgba(140,225,255,0.35)'
 
-// Four schematic tiles on a 4×2 sheet — spec weights sum to 100.
-const TILES: { label: string; w: string; cls: string }[] = [
-  { label: 'ASSET 01', w: '40%', cls: 'col-span-2 row-span-2' },
-  { label: 'ASSET 02', w: '30%', cls: 'col-span-2 row-span-1' },
-  { label: 'ASSET 03', w: '18%', cls: 'col-span-1 row-span-1' },
-  { label: 'ASSET 04', w: '12%', cls: 'col-span-1 row-span-1' },
+// Four schematic tiles on a 4×2 sheet — spec weights sum to 100. The weights
+// SLOWLY CYCLE through example allocations (owner 2026-07-29: the invitation
+// demonstrates itself) — a calm 6s cadence, paused for reduced-motion.
+const WEIGHT_SETS: [string, string, string, string][] = [
+  ['40%', '30%', '18%', '12%'],
+  ['55%', '20%', '15%', '10%'],
+  ['25%', '25%', '25%', '25%'],
+  ['34%', '33%', '22%', '11%'],
+]
+const TILES: { label: string; cls: string }[] = [
+  { label: 'ASSET 01', cls: 'col-span-2 row-span-2' },
+  { label: 'ASSET 02', cls: 'col-span-2 row-span-1' },
+  { label: 'ASSET 03', cls: 'col-span-1 row-span-1' },
+  { label: 'ASSET 04', cls: 'col-span-1 row-span-1' },
 ]
 
 const hatch: CSSProperties = {
@@ -29,6 +38,15 @@ const hatch: CSSProperties = {
 }
 
 export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
+  // the living spec: cycle allocations on a calm cadence; static under
+  // prefers-reduced-motion (the first set is a fine drawing on its own)
+  const [wi, setWi] = useState(0)
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const t = window.setInterval(() => setWi((i) => (i + 1) % WEIGHT_SETS.length), 6000)
+    return () => window.clearInterval(t)
+  }, [])
+  const weights = WEIGHT_SETS[wi]
   return (
     <section
       aria-label="Basket blueprint — no live basket holds the spotlight yet"
@@ -107,8 +125,8 @@ export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
                   <span className="font-mono text-[9px]" style={{ color: INK_FAINT }}>
                     wt.
                   </span>
-                  <span className="font-num text-lg font-light tabular-nums" style={{ color: INK }}>
-                    {t.w}
+                  <span className="bp-weight-in font-num text-lg font-light tabular-nums" style={{ color: INK }} key={weights[i]}>
+                    {weights[i]}
                   </span>
                 </div>
                 {/* corner tick, drawing-style */}

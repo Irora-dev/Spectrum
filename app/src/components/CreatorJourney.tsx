@@ -21,9 +21,9 @@ import { VersionJourney, VersionHoverCard } from './VersionJourney'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const W = 720
-const H = 200
+const H = 110
 const PAD_X = 56
-const PAD_Y = 30
+const PAD_Y = 20
 
 // One dot on the journey line — a version (chain mode) or launch/today (single).
 interface JourneyNode {
@@ -64,7 +64,9 @@ export function CreatorJourney({ deployer }: { deployer: string }) {
   if (!chainMode && !single) return null
 
   const nodes: JourneyNode[] = chainMode
-    ? chain.map((v, i) => ({ nav: v.navPerToken, axis: `v${i + 1} · $${v.symbol}`, perf: perfLabel(v), cur: !v.supersededBy }))
+    ? // perf only for TVL-measurable versions — a drained superseded v1 shows
+      // fee-residue-over-dust NAV as an absurd % (audit; single mode already gates)
+      chain.map((v, i) => ({ nav: v.navPerToken, axis: `v${i + 1} · $${v.symbol}`, perf: perfMeasurable(v) ? perfLabel(v) : '', cur: !v.supersededBy }))
     : [
         { nav: 1, axis: 'launch', perf: '', cur: false },
         { nav: single!.navPerToken, axis: `$${single!.symbol} today`, perf: perfLabel(single!), cur: true },
@@ -82,10 +84,10 @@ export function CreatorJourney({ deployer }: { deployer: string }) {
   const gid = `cj-${head.address.slice(2, 10)}`
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.02] p-5 sm:p-6">
+    <section className="rounded-2xl border border-white/10 bg-white/[0.02] px-5 py-3.5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h2 className="font-display text-lg font-bold uppercase tracking-tight text-ink">The journey</h2>
+          <h2 className="font-display text-sm font-bold uppercase tracking-tight text-ink">The journey</h2>
           <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
             {chainMode
               ? `${chain.length} versions of $${head.symbol} · where each stands today vs its ~$1.00 launch`
@@ -95,7 +97,7 @@ export function CreatorJourney({ deployer }: { deployer: string }) {
         {chainMode && <VersionJourney chain={chain} />}
       </div>
 
-      <div className="mt-4 overflow-x-auto">
+      <div className="mt-2 overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full min-w-[480px]" role="img" aria-label={`NAV journey of $${head.symbol}`}>
           <defs>
             <linearGradient id={gid} x1="0" y1="0" x2="1" y2="0">

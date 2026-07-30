@@ -14,6 +14,24 @@ export const MAX_BUNDLE_LEGS = 6
 
 const isAddr = (s: string): boolean => /^0x[0-9a-fA-F]{40}$/.test(s)
 
+/** A stable, composition-derived id for a PUBLISHED bundle: the same SET of
+ *  baskets (order- and weight-independent) always yields the same slug, so
+ *  re-publishing after a reweight EDITS that bundle instead of stacking a
+ *  duplicate. Short hex, cheap in calldata. FNV-1a — no crypto needed, and a
+ *  collision across one creator's handful of bundles is not a concern. */
+export function slugForLegs(legs: BundleLeg[]): string {
+  const key = legs
+    .map((l) => `${l.chainId}:${l.address.toLowerCase()}`)
+    .sort()
+    .join('|')
+  let h = 0x811c9dc5
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
 export interface BundleLeg {
   chainId: number
   address: string

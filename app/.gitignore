@@ -1,6 +1,9 @@
 node_modules
 dist
 dist-ssr
+# build OUTPUT (prebuild regenerates it from the site URL every build; tracking
+# it let a previous build's origin ship after the URL was cleared — kit audit)
+public/sitemap.xml
 *.local
 *-site.zip
 site.zip

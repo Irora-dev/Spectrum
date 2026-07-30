@@ -23,6 +23,16 @@ const APP = resolve(ROOT, 'app')
 // 'all' (the full site) leads and is the default; the narrower tiers scope down.
 const TIERS = ['all', 'info', 'creation', 'fees', 'marketplace']
 
+// `--no-<x>` turns something OFF. Most are PAGES, but a few are default-on
+// FEATURE knobs on BrandConfig — they must land on their own plan field, not in
+// pagesOff where PAGE_KEYS would silently drop them (`--no-stocks` did nothing).
+const NO_FEATURE_FLAGS = {
+  stocks: 'stocks',
+  'starter-tokens': 'starterTokens',
+  'prism-credit': 'prismCredit',
+  'setup-studio': 'setupStudio',
+}
+
 function parseFlags(args) {
   const f = { pagesOff: [] }
   for (let i = 0; i < args.length; i++) {
@@ -30,7 +40,12 @@ function parseFlags(args) {
     if (a === '--yes' || a === '-y') f.yes = true
     else if (a === '--force') f.force = true
     else if (a === '--help' || a === '-h') f.help = true
-    else if (a.startsWith('--no-')) f.pagesOff.push(a.slice(5))
+    else if (a.startsWith('--no-')) {
+      const suffix = a.slice(5)
+      const feature = NO_FEATURE_FLAGS[suffix]
+      if (feature) f[feature] = false
+      else f.pagesOff.push(suffix)
+    }
     else if (a.startsWith('--')) {
       const key = a.slice(2)
       const val = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : 'true'
@@ -50,6 +65,11 @@ Flags: --name --tagline --style(${STYLES.join('|')})
        --tier(${TIERS.join('|')})  default: all — the full site
        --host(${HOSTS.join('|')})  prints tailored deploy steps for that host
        --no-<page> (${PAGE_KEYS.join(',')})  --yes  --force
+       --no-stocks         hide every tokenized-stock surface
+       --no-starter-tokens drop the curated launch starter suggestions
+       --no-prism-credit   remove the "Powered by Prism" banner
+       --no-setup-studio   lock the deployed site (drops /setup + Customize)
+       --default-chain-id <id>  first-visit network (8453 Base · 1 Ethereum · 4663 Robinhood)
 Contracts are the shipped canonical Spectrum deployment (Base, Ethereum + Robinhood Chain).
 Writes app/src/brand.config.ts + app/src/site.config.json + app/.env.local.`
 
@@ -73,6 +93,14 @@ async function main() {
       return { from: f.from || g?.from, via: f.via || g?.via, to: f.to || g?.to, accent: f.accent }
     })(),
     pagesOff: f.pagesOff,
+    // Default-ON feature knobs (only ever false, never true — omission IS on).
+    stocks: f.stocks,
+    starterTokens: f.starterTokens,
+    prismCredit: f.prismCredit,
+    setupStudio: f.setupStudio,
+    // First-visit network. renderBrandConfig could always emit this; the CLI had
+    // no way to set it, so the headless path couldn't choose a chain (kit audit).
+    defaultChainId: f['default-chain-id'] ? Number(f['default-chain-id']) : undefined,
     // Power overrides — accepted but undocumented (canonical ships; own-deployment is a
     // hand-edit path). --factory / --swap-router / --wallet-connect-id still work.
     factory: f.factory,
@@ -101,7 +129,7 @@ async function main() {
     }
     const rl = createInterface({ input: stdin, output: stdout })
     const ask = async (q, def) => (await rl.question(`${q}${def ? ` (${def})` : ''}: `)).trim() || def || ''
-    plan.name = plan.name || (await ask('Site name (text wordmark, not "Spectrum")'))
+    plan.name = plan.name || (await ask('Site name (text wordmark, up to 32 characters)'))
     plan.tagline = plan.tagline || (await ask('Tagline (optional)'))
     plan.style = plan.style || (await ask(`Design style ${STYLES.join('/')}`, 'spectral'))
     plan.palette.from = plan.palette.from || (await ask('Gradient from', SPECTRUM_DNA.from))

@@ -1,8 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { isAddress } from 'viem'
-import { chainCfg } from '../../lib/chain/chains'
+import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
+import { setActiveChainId } from '../../lib/chain/active-chain'
 import { AssetLogo } from '../AssetLogo'
 import { searchTokens, type TokenHit } from '../../lib/spectrum/token-search'
+import { stocksForChain } from '../../lib/chain/stocks'
+import brand from '../../brand.config'
+import { stocksEnabled } from '../../theme/brand'
 import { coingeckoInfo } from '../../lib/spectrum/token-art'
 import { formatUsdCompact, shortAddr } from '../../lib/spectrum/format'
 
@@ -46,14 +50,45 @@ export function AssetSearch({
   const inputRef = useRef<HTMLInputElement>(null)
   const listId = useId()
 
+  // Keyed on the JOINED string, not array identity — the parent passes a fresh
+  // array every render, which restarted the search debounce on every unrelated
+  // re-render (typing the basket name starved the dropdown; sweep catch).
+  const excludeKey = excludeAddresses.map((a) => a.toLowerCase()).sort().join(',')
   const exclude = useMemo(
-    () => new Set(excludeAddresses.map((a) => a.toLowerCase())),
-    [excludeAddresses],
+    () => new Set(excludeKey ? excludeKey.split(',') : []),
+    [excludeKey],
   )
   const trimmed = query.trim()
   const looksLikeAddress = isAddress(trimmed)
   const chainLabel = chainCfg(chainId).name
   const canAdd = !busy && trimmed.length > 0
+  // The tokenized-stock shelf (owner 2026-07-29): on Robinhood Chain, surface
+  // the official registry's stocks before the user types. Surfacing only —
+  // findBestPool stays the routability judge, and the builder's thin-pool
+  // warnings fire where a stock's depth lives USDG-side (AAPL/TSLA today).
+  // The shelf FILTERS by the query rather than vanishing on the first keystroke
+  // (sweep catch: typing "AAPL" on Robinhood showed "no matches" while AAPL sat
+  // in the app's own curated list — search itself is unindexed there).
+  const shelfQ = trimmed.toLowerCase()
+  const stockShelf = stocksEnabled(brand) && !looksLikeAddress
+    ? stocksForChain(chainId).filter(
+        (t) =>
+          !exclude.has(t.address.toLowerCase()) &&
+          (shelfQ.length === 0 || t.symbol.toLowerCase().includes(shelfQ) || t.name.toLowerCase().includes(shelfQ)),
+      )
+    : []
+  // Known tokenized stocks on ANOTHER chain matching the query (owner report
+  // 2026-07-29: typing "nvda" on Base showed nothing while NVDA sits in the
+  // app's OWN 4663 registry). The product knows the token — say where it lives
+  // and offer the switch. Safe mid-build: drafts persist per chain.
+  const crossChainStocks =
+    stocksEnabled(brand) && !looksLikeAddress && shelfQ.length >= 2
+      ? SUPPORTED_CHAIN_IDS.filter((id) => id !== chainId).flatMap((id) =>
+          stocksForChain(id)
+            .filter((t) => t.symbol.toLowerCase().includes(shelfQ) || t.name.toLowerCase().includes(shelfQ))
+            .map((t) => ({ ...t, chainId: id })),
+        )
+      : []
 
   // Debounced search; aborts stale requests so fast typing never races.
   useEffect(() => {
@@ -74,7 +109,7 @@ export function AssetSearch({
         for (const h of hits.slice(0, 3)) {
           void coingeckoInfo(h.address, chainId).then((info) => {
             if (ctrl.signal.aborted || info?.rank == null) return
-            setRanks((r) => (r[h.address.toLowerCase()] === info.rank ? r : { ...r, [h.address.toLowerCase()]: info.rank! }))
+            setRanks((r) => (r[`${chainId}:${h.address.toLowerCase()}`] === info.rank ? r : { ...r, [`${chainId}:${h.address.toLowerCase()}`]: info.rank! }))
           })
         }
       } catch {
@@ -98,7 +133,11 @@ export function AssetSearch({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [])
 
-  const showDropdown = open && !looksLikeAddress && trimmed.length >= 2
+  // When the query has NO search hits but DOES match shelf stocks, the shelf is
+  // the answer — the absolute "no matches" panel would paint over the very
+  // chips its copy points at (verify pass: occluded + unclickable geometry).
+  const shelfAnswers = !loading && results.length === 0 && shelfQ.length > 0 && stockShelf.length > 0
+  const showDropdown = open && !looksLikeAddress && trimmed.length >= 2 && !shelfAnswers
 
   const pick = (h: TokenHit) => {
     onPick(h.address, h.symbol)
@@ -230,9 +269,42 @@ export function AssetSearch({
 
           {!loading && results.length === 0 && (
             <li className="px-3 pb-2 font-mono text-xs leading-relaxed text-ink-dim">
-              Only tokens with an ETH/WETH pool are listed (basket legs route through ETH venues).
-              Paste the token&rsquo;s contract address (0x…) to add it directly.
+              {chainCfg(chainId).dexscreenerSlug
+                ? <>Only tokens with an ETH/WETH pool are listed (basket legs route through ETH venues). Paste the token&rsquo;s contract address (0x…) to add it directly.</>
+                : <>No token by that name on {chainLabel}. Paste the token&rsquo;s contract address (0x…) to add it directly{stockShelf.length > 0 ? ', or pick from the stocks below' : ''}.</>}
             </li>
+          )}
+
+          {/* the query IS a token — on a different network (tokenized stocks) */}
+          {!loading && results.length === 0 && crossChainStocks.length > 0 && (
+            <>
+              <li className="border-t border-white/[0.07] px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
+                Found on another network
+              </li>
+              {crossChainStocks.slice(0, 3).map((t) => (
+                <li key={`${t.chainId}:${t.address}`}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveChainId(t.chainId)}
+                    className="press flex w-full items-center gap-3.5 rounded-xl px-3 py-3 text-left hover:bg-white/[0.06]"
+                  >
+                    <AssetLogo address={t.address} symbol={t.symbol} chainId={t.chainId} size={38} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline gap-2">
+                        <span className="font-display text-base font-bold uppercase tracking-wide text-ink">{t.symbol}</span>
+                        <span className="truncate font-mono text-xs text-ink-dim">{t.name}</span>
+                      </span>
+                      <span className="mt-0.5 block font-mono text-[11px] text-ink-faint">
+                        tokenized stock on {chainCfg(t.chainId).name}
+                      </span>
+                    </span>
+                    <span className="shrink-0 rounded-lg bg-cyan/15 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-cyan">
+                      Switch network
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </>
           )}
 
           {results.map((h, i) => (
@@ -251,6 +323,14 @@ export function AssetSearch({
                     <span className="font-display text-base font-bold uppercase tracking-wide text-ink">
                       {h.symbol}
                     </span>
+                    {!h.verified && (
+                      <span
+                        title="Not on a canonical token list — check the contract address below against the issuer's own docs. Same-name impostors are cheap to deploy."
+                        className="inline-flex shrink-0 translate-y-[1px] items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-px font-mono text-[8px] font-bold uppercase tracking-[0.14em] text-amber-200"
+                      >
+                        Unverified
+                      </span>
+                    )}
                     {h.verified && (
                       <span
                         title="On a canonical token list (Uniswap Labs / Coingecko), the real address for this symbol"
@@ -267,7 +347,8 @@ export function AssetSearch({
                   {/* Always show the contract address — it's the only fact that
                       distinguishes the real token from a same-name impostor. */}
                   <span className="mt-0.5 block truncate font-mono text-[11px] text-ink-faint">
-                    {ranks[h.address.toLowerCase()] != null ? `#${ranks[h.address.toLowerCase()]} by mcap · ` : ''}
+                    {!chainCfg(chainId).dexscreenerSlug ? 'no liquidity data on this network · ' : ''}
+                    {ranks[`${chainId}:${h.address.toLowerCase()}`] != null ? `#${ranks[`${chainId}:${h.address.toLowerCase()}`]} by mcap · ` : ''}
                     {h.marketCapUsd > 0 ? `${formatUsdCompact(h.marketCapUsd)} mcap · ` : ''}
                     {h.liquidityUsd > 0 ? `${formatUsdCompact(h.liquidityUsd)} liquidity · ` : ''}
                     {h.volumeH24Usd > 0 ? `${formatUsdCompact(h.volumeH24Usd)} 24h vol · ` : ''}
@@ -285,6 +366,33 @@ export function AssetSearch({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* ── the tokenized-stock shelf (Robinhood Chain; filters with the query) ── */}
+      {stockShelf.length > 0 && (
+        <div className={compact ? 'mt-2.5' : 'mt-3.5'}>
+          <div className="flex items-baseline gap-2 px-1">
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Tokenized stocks</span>
+            <span className="font-mono text-[9px] text-ink-faint">
+              issuer-backed tracking tokens · pools trade 24/7, markets do not
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {stockShelf.map((t) => (
+              <button
+                key={t.address}
+                type="button"
+                disabled={busy}
+                onClick={() => onPick(t.address, t.symbol)}
+                title={`${t.name} — add to the basket`}
+                className="press inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] py-1 pl-1.5 pr-2.5 hover:border-cyan/50 disabled:opacity-50"
+              >
+                <AssetLogo address={t.address} symbol={t.symbol} chainId={chainId} size={18} />
+                <span className="font-mono text-[11px] font-semibold text-ink">{t.symbol}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )

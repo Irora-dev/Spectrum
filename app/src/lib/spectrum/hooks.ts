@@ -4,7 +4,7 @@ import type { Address } from 'viem'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
 import { useActiveChainId } from '../chain/active-chain'
 import { clientFor } from '../chain/rpc'
-import { factoryAbi } from './abis-v2'
+import { factoryAbi, SLOT_DURATION_BLOCKS } from './abis-v2'
 import {
   getBasketData,
   getUserHoldings,
@@ -15,6 +15,7 @@ import type { BasketSummary, NavPoint } from './basket-data'
 import type { ExposureLeg } from './exposure'
 import { resolveCreator, type ResolvedCreator } from './creator'
 import { resolveCreatorMeta } from './creator-metadata'
+import { resolveCreatorIdentityAny } from './creator-identity'
 import { countVersionSeries } from './leaderboard'
 import { buildLineageGraph, computeBasketDiff } from './versioning'
 import {
@@ -46,20 +47,28 @@ export function useAllBaskets() {
   return useQueries({
     queries: SUPPORTED_CHAIN_IDS.map((chainId) => ({
       queryKey: ['spectrum', 'baskets', chainId],
-      queryFn: () => listBasketsForChain(chainId).catch(() => [] as BasketSummary[]),
+      // No swallow (audit R7): a failed chain used to `.catch(() => [])`,
+      // making an OUTAGE indistinguishable from an EMPTY chain — every
+      // cross-chain money total silently omitted it. The error now lands in
+      // the query (matching useBasketsForChain on the same cache key) and the
+      // combine below keeps the other chains' list alive and COUNTS the gap.
+      queryFn: () => listBasketsForChain(chainId),
       staleTime: LIST_STALE_MS,
       refetchInterval: chainId === activeChainId ? LIST_POLL_ACTIVE_MS : LIST_POLL_INACTIVE_MS,
     })),
     combine: (results) => ({
-      // Undefined until every chain settles once — same first-paint semantics
-      // as the old single Promise.all query (no partial-list reflow).
-      data: results.every((r) => r.data !== undefined)
+      // Undefined until every chain SETTLES once (data or final error) — same
+      // first-paint semantics as before; a failed chain then contributes []
+      // instead of blanking the others (stale data, when it exists, is kept).
+      data: results.every((r) => r.data !== undefined || r.isError)
         ? results
-            .flatMap((r) => r.data as BasketSummary[])
+            .flatMap((r) => (r.data ?? []) as BasketSummary[])
             .sort((a, b) => b.aumUsd - a.aumUsd)
         : undefined,
       isLoading: results.some((r) => r.isLoading),
       isError: results.every((r) => r.isError),
+      /** Chains whose CURRENT read is failing (money surfaces say so). */
+      chainsFailed: results.filter((r) => r.isError).length,
     }),
   })
 }
@@ -140,7 +149,7 @@ export interface Portfolio {
 // A connected wallet's positions: baskets held (balance × NAV) + baskets
 // created. Per-wallet balances are the only fresh read (batched per chain).
 export function usePortfolio(address?: string) {
-  const { data: all, isLoading: allLoading, isError: allError } = useAllBaskets()
+  const { data: all, isLoading: allLoading, isError: allError, chainsFailed } = useAllBaskets()
   const baskets = useMemo(() => all ?? [], [all])
   const sig = baskets.map((b) => `${b.chainId}:${b.address}`).join(',')
 
@@ -175,7 +184,7 @@ export function usePortfolio(address?: string) {
     }
   }, [address, all, balances.data])
 
-  return { data, isLoading: allLoading || balances.isLoading, isError: allError || balances.isError }
+  return { data, isLoading: allLoading || balances.isLoading, isError: allError || balances.isError, chainsFailed }
 }
 
 export interface LiveExposure {
@@ -238,6 +247,20 @@ export function useCreatorMeta(basket?: string, chainId: number = DEFAULT_CHAIN_
     queryFn: () => resolveCreatorMeta(basket as Address, chainId),
     enabled: !!basket,
     staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+  })
+}
+
+// Verified, SELF-signed creator identity (profile page: name/bio/banner +
+// bullish-on picks — creator-identity.ts). Resolves across every scaffolded
+// chain; null → honest address attribution. Invalidated by the /creators editor
+// on publish so the creator's own page updates without a reload.
+export function useCreatorIdentity(creator?: string) {
+  return useQuery({
+    queryKey: ['spectrum', 'creatorIdentity', creator?.toLowerCase()],
+    queryFn: () => resolveCreatorIdentityAny(creator as Address),
+    enabled: !!creator,
+    staleTime: 60_000,
     gcTime: 30 * 60_000,
   })
 }
@@ -474,23 +497,37 @@ export function useDeployPrice(chainId: number, enabled = true) {
   return useQuery({
     queryKey: ['spectrum', 'deployPrice', chainId],
     enabled,
-    queryFn: async (): Promise<{ priceWei: bigint | null; slotOpen: boolean }> => {
+    queryFn: async (): Promise<{ priceWei: bigint | null; slotOpen: boolean; blocksLeft: number | null }> => {
       const factory = chainCfg(chainId).factory
-      if (!factory) return { priceWei: null, slotOpen: false }
+      if (!factory) return { priceWei: null, slotOpen: false, blocksLeft: null }
+      const client = clientFor(chainId)
       try {
-        const wei = await clientFor(chainId).readContract({
+        const wei = await client.readContract({
           address: factory,
           abi: factoryAbi,
           functionName: 'currentDeployPrice',
         })
-        return { priceWei: wei as bigint, slotOpen: true }
+        return { priceWei: wei as bigint, slotOpen: true, blocksLeft: null }
       } catch {
-        return { priceWei: null, slotOpen: false } // SlotNotOpen() between slots
+        // SlotNotOpen() — the 10-block cooldown after someone else's launch
+        // (contracts team, launch ceremony: show a COUNTDOWN, never a stale
+        // price). lastDeployBlock is public, so the remaining wait is exact.
+        try {
+          const [last, now] = await Promise.all([
+            client.readContract({ address: factory, abi: factoryAbi, functionName: 'lastDeployBlock' }),
+            client.getBlockNumber(),
+          ])
+          const left = Number((last as bigint) + SLOT_DURATION_BLOCKS - now)
+          return { priceWei: null, slotOpen: false, blocksLeft: left > 0 ? left : 1 }
+        } catch {
+          return { priceWei: null, slotOpen: false, blocksLeft: null }
+        }
       }
     },
     // Only currentDeployPrice() exists on-chain (no param getters), so a poll
-    // is unavoidable — but 12 s tracks a declining Dutch auction plenty
-    // closely for a CTA (the click-time simulate reprices exactly), at half
+    // is unavoidable — 12 s tracks the V2 auction's decline plenty closely for
+    // a CTA (the click-time simulate reprices exactly; the new lineage's flat
+    // fee makes the poll a slot-open watcher and nothing more), at half
     // the standing cost of the old 6 s loop. Callers already gate `enabled`
     // to a fully-specified basket; the interval also stops while unfocused.
     refetchInterval: 12_000,

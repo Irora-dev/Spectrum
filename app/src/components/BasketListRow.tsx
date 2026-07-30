@@ -314,7 +314,10 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
                 right here") — the real console, locked to this basket; the
                 page link rides beside it as Read the basket */}
             {SWAP_ENABLED && full && (
-              <div className="mt-3">
+              // -mx-0.5 gives the strip the row's full width back (the expansion's
+              // px-0.5 gutter was squeezing the one control that must never
+              // collide); the strip itself is container-queried, so it uses it
+              <div className="-mx-0.5 mt-3">
                 <DexSwapCard chainId={ix.chainId} fixedBasket={full} strip />
               </div>
             )}

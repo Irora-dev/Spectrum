@@ -28,17 +28,20 @@
     "universalRouter": "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"
   },
   "4663": {
-    "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
+    "factory": "0x07Bfce0976b205FcfDF115F7aD1401Ab1f197e6f",
     "usdc": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
-    "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA",
-    "weth": "",
+    "swapRouter": "0x4d3590a5B0aCee04Bb7Ab721B23fDdae8B880486",
+    "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
     "uniV2Factory": "",
-    "uniV3Factory": "",
+    "uniV3Factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
     "uniV3SwapRouter": "",
     "uniV3Quoter": "",
     "aerodromeFactory": "",
-    "v4Quoter": "",
-    "universalRouter": ""
+    "v4Quoter": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+    "universalRouter": "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+    "leaguePool": "0xd1B485a0C40fb40fd94aa8dDbA32Ed6DCaDC35Be",
+    "notesRegistry": "0xd30C187db729F7af160709d384dA1A2a3886ac3b",
+    "leagueShareBps": 500
   }
 }

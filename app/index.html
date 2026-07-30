@@ -2,22 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: the mobile bottom tab bar pads itself with
+         env(safe-area-inset-bottom), which is 0 unless the page opts into the
+         full notch/home-indicator area -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Spectrum · onchain baskets</title>
     <meta name="description" content="Spectrum is software for creating and reading onchain basket tokens on Base. Each basket is a single token that holds a whole basket of assets." />
     <meta name="theme-color" content="#07070b" />
 
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest" />
+    <!-- relative: an absolute /site.webmanifest 404s under IPFS/ENS gateway
+         paths, killing installability (base is './' for exactly that case) -->
+    <link rel="manifest" href="./site.webmanifest" />
 
     <!-- Design-style type system: the faces every design style draws from (spectral = Chakra
          Petch + JetBrains + Space Grotesk; umbra = Inter; sylvan = Newsreader serif). Loaded
          so a style reads intentionally, not on system fallbacks. structure.ts pins per style. -->
+    <!-- ONE stylesheet for every family×weight any style pins (a second,
+         near-duplicate link used to double the render-blocking fetches on the
+         critical path — mobile systems audit). Space Grotesk carries 300-700:
+         the union of both old links. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Space+Grotesk:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
     />
 
@@ -41,12 +50,6 @@
     <meta name="twitter:description" content="Spectrum is software for creating and reading onchain basket tokens on Base. Each basket is a single token that holds a whole basket of assets." />
     <meta name="twitter:image" content="%VITE_SITE_URL%/og.png" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;400;500&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body>
     <div id="root"></div>

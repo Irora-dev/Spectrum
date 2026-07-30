@@ -48,6 +48,11 @@ export interface ChainCfg extends ChainDeployment {
    *  diamond (the only verified router on Robinhood Chain). null = the chain has
    *  proper Uniswap infra (Base/Ethereum) or no hub path at all. */
   externalHubRouter: 'lifi' | null
+  /** LiFi's routing service covers this chain — gates the OFFER of the any-token
+   *  pay/receive side (the erc20 leg always executes through LiFi regardless of
+   *  Uniswap infra, because route-finding across every venue is the aggregator's
+   *  job). false = the console offers only the chain's own hub tokens. */
+  hasLifi: boolean
 }
 
 // Chain scaffolds the app knows how to render (viem chain, explorer, pricing
@@ -63,6 +68,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     explorer: BASESCAN,
     usdcSymbol: 'USDC',
     externalHubRouter: null,
+    hasLifi: true,
   },
   [MAINNET_CHAIN_ID]: {
     chainId: MAINNET_CHAIN_ID,
@@ -73,6 +79,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     explorer: ETHERSCAN,
     usdcSymbol: 'USDC',
     externalHubRouter: null,
+    hasLifi: true,
   },
   [ROBINHOOD_CHAIN_ID]: {
     chainId: ROBINHOOD_CHAIN_ID,
@@ -83,6 +90,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     explorer: ROBINHOOD_EXPLORER,
     usdcSymbol: 'USDG',
     externalHubRouter: 'lifi',
+    hasLifi: true,
   },
 }
 
@@ -147,4 +155,18 @@ export type PoolReadyChainCfg = ChainCfg & {
 
 export function isPoolReady(cfg: ChainCfg): cfg is PoolReadyChainCfg {
   return !!(cfg.weth && cfg.poolManager && cfg.uniV2Factory && cfg.uniV3Factory)
+}
+
+/** V3-only readiness (owner 2026-07-29: Robinhood Chain has canonical V3 but NO
+ *  canonical V2 — the all-or-nothing gate left the FE blind to a $750k V3 pool
+ *  while the deployed contracts could route it fine). */
+export type V3ReadyChainCfg = ChainCfg & { weth: Address; poolManager: Address; uniV3Factory: Address }
+export function isV3Ready(cfg: ChainCfg): cfg is V3ReadyChainCfg {
+  return !!(cfg.weth && cfg.poolManager && cfg.uniV3Factory)
+}
+export type V2ReadyChainCfg = ChainCfg & { weth: Address; poolManager: Address; uniV2Factory: Address }
+export function isV2Ready(cfg: ChainCfg): cfg is V2ReadyChainCfg {
+  // V2 alone (the sweep's mirror-image catch: the alias of isPoolReady demanded
+  // a V3 factory too — a V2-only chain/operator book would silently lose V2).
+  return !!(cfg.weth && cfg.poolManager && cfg.uniV2Factory)
 }

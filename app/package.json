@@ -25,21 +25,29 @@
     "package:only": "node scripts/package-site.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify:deployments": "node scripts/verify-deployments.mjs"
   },
   "dependencies": {
     "@paper-design/shaders-react": "^0.0.77",
     "@tanstack/react-query": "^5.62.0",
+    "clsx": "^2.1.1",
+    "d3-scale": "^4.0.2",
+    "d3-shape": "^3.2.0",
+    "motion": "^12.43.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",
     "recharts": "^3.8.1",
+    "tailwind-merge": "^3.6.0",
     "three": "^0.184.0",
     "viem": "^2.21.0",
     "wagmi": "^2.14.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@types/d3-scale": "^4.0.9",
+    "@types/d3-shape": "^3.1.8",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.184.1",

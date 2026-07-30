@@ -1,8 +1,13 @@
-import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAllBaskets } from '../lib/spectrum/hooks'
+import { useActiveChainId } from '../lib/chain/active-chain'
+import { deploymentFor } from '../lib/chain/deployments'
+import { ROBINHOOD_CHAIN_ID } from '../lib/chain/constants'
+import { stocksEnabled } from '../theme/brand'
+import brand from '../brand.config'
 import { versionChain } from '../lib/spectrum/leaderboard'
-import { PROTOCOL_FEE_MODEL, feeSplit } from '../lib/spectrum/fee-model'
+import { PROTOCOL_FEE_MODEL, feeSplit, type FeeSplit } from '../lib/spectrum/fee-model'
 import { formatUsdCompact } from '../lib/spectrum/format'
 import { usePrefersReducedMotion, useInViewOnce } from '../lib/motion'
 import { ConceptOrbit } from '../components/ConceptReveal'
@@ -30,26 +35,64 @@ import { WarpIdentity } from '../components/WarpIdentity'
 const BasketBuilder = lazy(() =>
   import('../components/launch/BasketBuilder').then((m) => ({ default: m.BasketBuilder })),
 )
-// The Composer, embedded above the launch section (owner 19:15) — backtest +
-// compose a mix here, then launch it just below. `embedded` drops its masthead.
-const Composer = lazy(() => import('./Composer').then((m) => ({ default: m.Composer })))
 
-const MIN_FEE_PCT = PROTOCOL_FEE_MODEL.MIN_BASKET_FEE_BPS / 100 // 1.00
-const MAX_FEE_PCT = PROTOCOL_FEE_MODEL.MAX_BASKET_FEE_BPS / 100 // 3.00
-const MAX_CREATOR_PCT = PROTOCOL_FEE_MODEL.MAX_CREATOR_SHARE_BPS / 100 // 30
+// Exported for the league walkthrough (R 2026-07-29 11:29): the /league popup
+// re-tells this page's sections step by step, from the same single source.
+export const MIN_FEE_PCT = PROTOCOL_FEE_MODEL.MIN_BASKET_FEE_BPS / 100 // 1.00
+export const MAX_FEE_PCT = PROTOCOL_FEE_MODEL.MAX_BASKET_FEE_BPS / 100 // 3.00
+export const MAX_CREATOR_PCT = PROTOCOL_FEE_MODEL.MAX_CREATOR_SHARE_BPS / 100 // 30
 
-const SPLIT = feeSplit(PROTOCOL_FEE_MODEL.MAX_CREATOR_SHARE_BPS, { hasInterface: true, hasLauncher: true })
-const pct = (frac: number) => Math.round(frac * 100)
+// One decimal only when a share is non-integral (the league carve makes creator
+// 22.8%), plain integers everywhere else — a non-league chain renders exactly
+// the strings it always did.
+export const pct = (frac: number) => {
+  const v = Math.round(frac * 1000) / 10
+  return Number.isInteger(v) ? String(v) : v.toFixed(1)
+}
 
-const GRADIENT = 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))'
+export const GRADIENT = 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))'
 
-const FEE_SINKS: { key: string; legend: string; short: string; frac: number; bg: string; text: string; dot: string }[] = [
-  { key: 'creator', legend: 'You', short: 'You', frac: SPLIT.creator, bg: 'linear-gradient(135deg,var(--color-cyan),var(--color-violet))', text: '#04040a', dot: 'var(--color-cyan)' },
-  { key: 'holders', legend: 'Basket holders', short: 'Holders', frac: SPLIT.holders, bg: '#8b7bff', text: '#04040a', dot: '#8b7bff' },
-  { key: 'burn', legend: 'PRISM burn', short: 'Burn', frac: SPLIT.burn, bg: 'var(--color-magenta)', text: '#04040a', dot: 'var(--color-magenta)' },
-  { key: 'interface', legend: 'Interface', short: '', frac: SPLIT.interface, bg: '#3b3b52', text: 'var(--color-ink-dim)', dot: '#6b6b8e' },
-  { key: 'launcher', legend: 'Launchpad', short: '', frac: SPLIT.launcher, bg: '#2c2c3e', text: 'var(--color-ink-faint)', dot: '#4a4a63' },
-]
+export interface FeeSink {
+  key: string
+  legend: string
+  short: string
+  frac: number
+  bg: string
+  text: string
+  dot: string
+}
+
+// The marketing split: max creator take, interface + launcher present (the same
+// conservative case the launch flow shows). League-aware: on a chain whose
+// lineage carves the creator league off the top, the league is a REAL sink —
+// omitting it overstated the creator at 24.00% where the contract pays 22.80%
+// (kit audit) and left the split bar 5% short of a whole.
+export function feeSinksFor(leagueBps: number): { split: FeeSplit; sinks: FeeSink[] } {
+  const split = feeSplit(PROTOCOL_FEE_MODEL.MAX_CREATOR_SHARE_BPS, {
+    hasInterface: true,
+    hasLauncher: true,
+    leagueBps,
+  })
+  const sinks: FeeSink[] = [
+    { key: 'creator', legend: 'You', short: 'You', frac: split.creator, bg: 'linear-gradient(135deg,var(--color-cyan),var(--color-violet))', text: '#04040a', dot: 'var(--color-cyan)' },
+    { key: 'holders', legend: 'Basket holders', short: 'Holders', frac: split.holders, bg: '#8b7bff', text: '#04040a', dot: '#8b7bff' },
+    { key: 'burn', legend: 'PRISM burn', short: 'Burn', frac: split.burn, bg: 'var(--color-magenta)', text: '#04040a', dot: 'var(--color-magenta)' },
+    // Crown gold (PixelCrown's palette): the slice streaming to the league champion.
+    ...(split.league > 0
+      ? [{ key: 'league', legend: 'Creator league', short: '', frac: split.league, bg: '#FFC53D', text: '#04040a', dot: '#FFC53D' }]
+      : []),
+    { key: 'interface', legend: 'Interface', short: '', frac: split.interface, bg: '#3b3b52', text: 'var(--color-ink-dim)', dot: '#6b6b8e' },
+    { key: 'launcher', legend: 'Launchpad', short: '', frac: split.launcher, bg: '#2c2c3e', text: 'var(--color-ink-faint)', dot: '#4a4a63' },
+  ]
+  return { split, sinks }
+}
+
+/** The ACTIVE chain's league-aware marketing split — the one source every
+ *  fee-split surface (this page, the walkthrough) shares. */
+export function useFeeSinks() {
+  const chainId = useActiveChainId()
+  return useMemo(() => feeSinksFor(deploymentFor(chainId).leagueShareBps), [chainId])
+}
 
 // An illustrative basket (real Base tokens, illustrative weights) — six assets so
 // the interactive weight strip reads cleanly. No fabricated market data.
@@ -194,7 +237,8 @@ function ExampleBasket() {
 // The concept animation: logos SHOW + SPIN (~2s), then come together and vanish;
 // then a DARK basket card reveals — the AI Agents logo + name FIRST, then the
 // bento loads in a beat later (owner 17:30); holds a couple seconds, then replays.
-function NarrativeConverge() {
+// Exported: also the "what is Spectrum" slide of the league walkthrough.
+export function NarrativeConverge() {
   const reduced = usePrefersReducedMotion()
   const [cycle, setCycle] = useState(0)
   const [phase, setPhase] = useState<number>(reduced ? 3 : 0)
@@ -269,7 +313,8 @@ function NarrativeConverge() {
 
 // v1 → v2 (owner 17:30): fires only when the card is well into view; shows v1
 // first, then pops to v2 and the change rows animate in (a token added, reweights).
-function VersionUpdateCard() {
+// Exported: also the "update any time" slide of the league walkthrough.
+export function VersionUpdateCard() {
   const ref = useRef<HTMLDivElement>(null)
   const inView = useInViewOnce(ref, '0px 0px -30% 0px')
   const reduced = usePrefersReducedMotion()
@@ -357,11 +402,12 @@ function VersionUpdateCard() {
 // and COUNSEL-GATED — labelled an illustration on hypothetical volume, not a
 // projection or guarantee; every figure derives from the protocol split.
 function VolumeCalculator() {
+  const { split, sinks } = useFeeSinks()
   const [volume, setVolume] = useState(50_000)
   const [feeBps, setFeeBps] = useState<number>(PROTOCOL_FEE_MODEL.MIN_BASKET_FEE_BPS)
   const feePool = volume * (feeBps / 10_000)
   const perDay = (frac: number) => feePool * frac
-  const others = FEE_SINKS.filter((s) => s.key !== 'creator')
+  const others = sinks.filter((s) => s.key !== 'creator')
   return (
     <div className="card-surface mt-4 rounded-2xl p-8">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -403,8 +449,8 @@ function VolumeCalculator() {
           <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-cyan/20 blur-2xl" />
           <div className="relative">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">Your fees · per day</div>
-            <div className="mt-1 font-num text-4xl font-bold tabular-nums text-cyan">{formatUsdCompact(perDay(SPLIT.creator))}</div>
-            <div className="mt-1 font-mono text-[11px] text-ink-dim">≈ {formatUsdCompact(perDay(SPLIT.creator) * 30)} / month</div>
+            <div className="mt-1 font-num text-4xl font-bold tabular-nums text-cyan">{formatUsdCompact(perDay(split.creator))}</div>
+            <div className="mt-1 font-mono text-[11px] text-ink-dim">≈ {formatUsdCompact(perDay(split.creator) * 30)} / month</div>
           </div>
         </div>
         {/* the other sinks */}
@@ -432,6 +478,9 @@ function VolumeCalculator() {
 // ── the page ─────────────────────────────────────────────────────────────────
 
 export function SlashCreators() {
+  const activeChainId = useActiveChainId()
+  const { sinks } = useFeeSinks()
+  const rhStocks = activeChainId === ROBINHOOD_CHAIN_ID && stocksEnabled(brand)
   const { data, isLoading, isError } = useAllBaskets()
   const heads = (data ?? []).filter((b) => !b.supersededBy)
   const showcase = heads.slice(0, 4)
@@ -463,8 +512,15 @@ export function SlashCreators() {
             into a <span className="spectral-text">token</span>
           </h1>
           <p className="mt-7 max-w-2xl text-base leading-snug text-ink-dim sm:text-lg">
-            Bundle your favorite tokens into one and earn on every trade.
+            {rhStocks
+              ? 'Bundle stocks and tokens into one and earn on every trade.'
+              : 'Bundle your favorite tokens into one and earn on every trade.'}
           </p>
+          {rhStocks && (
+            <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-ink-faint">
+              NVDA · SPY · ETH in a single basket, on Robinhood Chain
+            </p>
+          )}
         </div>
       </section>
 
@@ -517,10 +573,15 @@ export function SlashCreators() {
               <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: GRADIENT }} />
               <div className="relative flex items-baseline gap-3">
                 <span className="font-num text-8xl font-bold leading-[0.9] tabular-nums spectral-text">{MAX_CREATOR_PCT}%</span>
-                <span className="font-display text-xl font-bold uppercase tracking-tight text-ink">of the fee pool</span>
+                {/* "of remaining fees", not "of the fee pool": the 30% applies
+                    AFTER the burn + interface/launcher slices, ≈24-27% of the
+                    total fee — the split card next to this shows the true
+                    "You 24%" (honesty audit) */}
+                <span className="font-display text-xl font-bold uppercase tracking-tight text-ink">of remaining fees</span>
               </div>
               <p className="relative mt-4 max-w-sm text-sm leading-snug text-ink-dim [text-wrap:balance]">
-                You earn up to {MAX_CREATOR_PCT}% of the fee pool on every trade, for as long as the basket trades.
+                You earn up to {MAX_CREATOR_PCT}% of what remains after the fixed protocol slices, roughly a
+                quarter of every fee, for as long as the basket trades.
               </p>
               <div className="relative mt-auto flex items-center gap-3 border-t border-white/10 pt-5">
                 <span className="font-mono text-xs uppercase tracking-[0.14em] text-ink-faint">You set the trade fee</span>
@@ -531,7 +592,7 @@ export function SlashCreators() {
             <div className="card-surface flex flex-col rounded-2xl p-8">
               <div className="font-display text-lg font-bold uppercase tracking-tight text-ink">Where each trade&rsquo;s fee goes</div>
               <div className="mt-5 flex h-20 w-full overflow-hidden rounded-xl ring-1 ring-white/10">
-                {FEE_SINKS.map((s, i) => (
+                {sinks.map((s, i) => (
                   <div key={s.key} className="relative flex flex-col items-center justify-center gap-0.5 overflow-hidden" style={{ width: `${s.frac * 100}%`, background: s.bg, boxShadow: 'inset -1px 0 0 rgba(7,7,11,0.55)' }} title={`${s.legend} · ${pct(s.frac)}%`}>
                     <div aria-hidden className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0) 38%, rgba(0,0,0,0.2))' }} />
                     <div aria-hidden className="bento-sheen absolute inset-0" style={{ backgroundImage: 'linear-gradient(115deg, transparent 44%, rgba(255,255,255,0.18) 50%, transparent 56%)', animationDuration: `${6 + i}s` }} />
@@ -546,7 +607,7 @@ export function SlashCreators() {
               </div>
               <div className="mt-auto pt-6">
                 <div className="flex flex-wrap justify-center gap-2">
-                  {FEE_SINKS.map((s) => (
+                  {sinks.map((s) => (
                     <span key={s.key} className="inline-flex min-w-[7.5rem] items-center justify-center gap-2 rounded-full border px-3 py-1.5" style={{ borderColor: `${s.dot}66`, background: `${s.dot}14` }}>
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.dot }} />
                       <span className="font-mono text-[11px] text-ink">{s.legend}</span>
@@ -616,27 +677,35 @@ export function SlashCreators() {
         </Section>
 
         {/* ── COMPOSE — the composer, embedded above launch (owner 19:15) ────── */}
-        <section id="compose" className="mx-auto max-w-6xl scroll-mt-20">
-          <div className="enter" style={{ '--enter-i': 0 } as CSSProperties}>
-            <h2 className="font-display text-4xl font-bold uppercase leading-[0.95] tracking-tight text-ink sm:text-5xl">Compose &amp; backtest</h2>
-            <p className="mt-4 max-w-2xl text-pretty text-base leading-relaxed text-ink-dim">
-              Build a mix and see how it would have performed as a basket token before you launch it. Happy with it?
-              Launch it just below.
-            </p>
-          </div>
-          <div className="mt-8">
-            <Suspense
-              fallback={
-                <div className="grid min-h-[40vh] place-items-center rounded-2xl border border-white/10 bg-white/[0.02]" role="status" aria-label="Loading the composer">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-cyan" />
-                </div>
-              }
+        {/* your creator page — a POINTER now (owner 2026-07-29: the real flow
+            is launch first; the page exists automatically and is claimed/edited
+            ON the page itself) */}
+        <section id="profile" className="mx-auto max-w-5xl scroll-mt-20">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.02] px-6 py-5">
+            <div>
+              <div className="font-display text-lg font-bold uppercase tracking-tight text-ink">
+                Every creator gets a page, automatically
+              </div>
+              <p className="mt-1 max-w-xl text-sm leading-relaxed text-ink-dim">
+                Launch your first basket and your page is live at your address, with your baskets,
+                theses and performance. Connect your wallet on it to add your name, avatar and picks.
+              </p>
+            </div>
+            <Link
+              to="/launch"
+              className="press rounded-lg bg-cyan px-5 py-2.5 font-mono text-xs font-bold uppercase tracking-[0.14em] text-black hover:opacity-90"
             >
-              <Composer embedded />
-            </Suspense>
+              Launch your first →
+            </Link>
           </div>
         </section>
 
+        {/* The embedded COMPOSER was removed here (owner 2026-07-29: "two launch
+            systems on the creators page, remove the old one"). The page now has
+            exactly ONE launch surface — the multi-step builder below, the same
+            component /launch serves. The Composer is a separate creator TOOL
+            (compose + backtest, then hand off) and still lives at /compose with
+            its own nav link; its launch button opens this very builder. */}
         {/* ── LAUNCH — the real builder, embedded (same component as /launch) ─── */}
         <section id="launch" className="mx-auto max-w-5xl scroll-mt-20">
           <div className="enter" style={{ '--enter-i': 0 } as CSSProperties}>

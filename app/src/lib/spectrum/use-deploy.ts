@@ -82,8 +82,9 @@ interface Prepared {
  * Headless launch flow for the basket builder. Two steps so the UI ceremony can
  * play while we mine, then ask for an explicit signature:
  *   • prepare(input) — assemble basket → mine the 0x88 salt → read the
- *     Dutch-auction price → compute the $1.00-NAV start price → simulate (no
- *     broadcast). Lands in 'ready'.
+ *     launch price (currentDeployPrice — auction on V2, flat fee on the new
+ *     lineage, ABI-identical) → compute the $1.00-NAV start price → simulate
+ *     (no broadcast). Lands in 'ready'.
  *   • broadcast()    — sign + send deployBasket, wait for the receipt, parse Launched.
  *
  * `enabled` is false unless DEPLOY_ENABLED and a wallet is connected on the
@@ -206,8 +207,9 @@ export function useDeployBasket(chainId: number) {
     }
     try {
       patch({ status: 'signing', error: null })
-      // maxCost == the price we showed: a tight slippage guard. The Dutch price only
-      // falls within a slot, so this lands; if a new slot opened it reverts (no overpay).
+      // maxCost == the price we showed: a tight slippage guard. On the V2 auction the
+      // price only falls within a slot; on the new flat-fee lineage it is constant —
+      // either way this lands, and a surprise repricing reverts (no overpay).
       const hash = await writeContractAsync({
         address: p.factory,
         abi: factoryDeployAbi,

@@ -9,6 +9,8 @@ import { useClaimAll } from '../lib/spectrum/use-fee-actions'
 import { refLinkFor } from '../lib/spectrum/referral'
 import { TRADING_ENABLED } from '../lib/config/features'
 import { shortAddr } from '../lib/spectrum/format'
+import { useAllBaskets } from '../lib/spectrum/hooks'
+import { CrownWinnings } from '../components/CrownWinnings'
 
 const GRADIENT = 'linear-gradient(90deg,var(--color-amber),var(--color-magenta),var(--color-cyan))'
 const CARD_GRAD = 'linear-gradient(135deg, rgba(53,224,255,0.35), rgba(164,139,255,0.18) 45%, rgba(255,77,184,0.28))'
@@ -159,10 +161,31 @@ function HeroLink() {
 }
 
 export function Refer() {
-  const { items, total } = useReferralEarned()
+  const { address } = useAccount()
+  const { items, total, claimableTotal } = useReferralEarned()
   const ca = useClaimAll()
-  const canClaim = TRADING_ENABLED && items.length > 0 && !ca.running
+  // Only genuinely flushable pots reach the claim button — a mainnet pot at or
+  // under the 10-USDC crank floor is refused by the contract (F-1), so sending
+  // it would only confuse (and on the incumbent lineage, strip it to the cranker).
+  const flushableItems = items.filter((it) => it.flushable)
+  const canClaim = TRADING_ENABLED && flushableItems.length > 0 && !ca.running
   const [modal, setModal] = useState<null | 'buyer' | 'creator' | 'spectrum'>(null)
+
+  // Creator earnings belong on this page too (owner 2026-07-30): the accrual
+  // mapping is ONE per-address pot (pendingFrontendFees), so `total` already
+  // contains creator fees on baskets you deployed and any fee-tag accruals.
+  // Derived from the basket list alone — no per-holding balance multicall
+  // (audit) — and the label claims only what deployer-keying supports: "your
+  // basket" (the creator fee pays creatorPayout, which may not be the
+  // deployer, so the row never asserts WHICH slice filled the pot).
+  const { data: allBaskets, chainsFailed } = useAllBaskets()
+  const me = address?.toLowerCase()
+  const created = me
+    ? (allBaskets ?? []).filter((b) => b.deployer?.toLowerCase() === me && !b.supersededBy)
+    : []
+  const createdKeys = new Set(created.map((b) => `${b.chainId}:${b.address.toLowerCase()}`))
+  const earningKeys = new Set(items.map((it) => `${it.chainId}:${it.address.toLowerCase()}`))
+  const quietCreated = created.filter((b) => !earningKeys.has(`${b.chainId}:${b.address.toLowerCase()}`))
 
   return (
     <div className="pb-10">
@@ -177,7 +200,7 @@ export function Refer() {
         <div className="relative z-10 mx-auto flex min-h-[56svh] max-w-4xl flex-col items-center justify-center px-4 pt-6 text-center">
           <div className="enter inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-ink-dim backdrop-blur" style={{ '--enter-i': 0 } as CSSProperties}>
             <span className="h-2 w-2 animate-pulse rounded-full bg-cyan" />
-            Refer &amp; earn · permissionless
+            Earn · permissionless
           </div>
           <h1 className="enter mt-7 font-display text-6xl font-bold uppercase leading-[0.9] tracking-tight text-ink sm:text-7xl md:text-8xl" style={{ '--enter-i': 1 } as CSSProperties}>
             Share Spectrum, earn the <span className="spectral-text">fees</span>.
@@ -193,6 +216,95 @@ export function Refer() {
       </section>
 
       <div className="mx-auto max-w-5xl space-y-16 px-1">
+        {/* ── CLAIMABLE — first thing under the hero (owner 2026-07-29): every
+               earning type in one place — referral interface fees, launcher
+               fees, and pointers to creator-fee + poke claims ── */}
+        <section className="rounded-3xl border border-cyan/25 bg-cyan/[0.03] p-6 sm:p-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan">Claimable · USDC</div>
+              <div className="mt-1 font-num text-5xl font-semibold tabular-nums text-ink sm:text-6xl">
+                {TRADING_ENABLED ? fmtUsd(claimableTotal) : '—'}
+              </div>
+              {/* pots under a chain's crank floor accrue but can't flush yet —
+                  count them separately, never inside "claimable" (F-1) */}
+              {TRADING_ENABLED && total - claimableTotal > 0.005 && (
+                <div className="mt-1 font-mono text-[11px] text-ink-faint">
+                  + {fmtUsd(total - claimableTotal)} accruing toward the $10 minimum
+                </div>
+              )}
+            </div>
+            {canClaim && (
+              <button
+                type="button"
+                disabled={ca.running}
+                onClick={() => void ca.claimAll(flushableItems.map((it) => ({ address: it.address, chainId: it.chainId, kind: 'flush' as const })))}
+                className="press rounded-xl px-6 py-3 font-display text-sm font-bold uppercase tracking-[0.14em] text-void transition-opacity hover:opacity-90 disabled:opacity-60"
+                style={{ background: GRADIENT }}
+              >
+                {ca.running ? `Claiming ${ca.done + ca.failed}/${ca.total}…` : 'Claim all'}
+              </button>
+            )}
+          </div>
+
+          {items.length > 0 || quietCreated.length > 0 ? (
+            <div className="mt-6 divide-y divide-white/8 border-t border-white/10">
+              {items.map((it) => (
+                <div key={`${it.chainId}:${it.address}`} className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="flex min-w-0 items-baseline gap-2.5">
+                    <span className="font-display text-sm font-bold uppercase tracking-wide text-ink">${it.symbol}</span>
+                    {createdKeys.has(`${it.chainId}:${it.address.toLowerCase()}`) && (
+                      <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">your basket</span>
+                    )}
+                    {!it.flushable && (
+                      <span
+                        className="rounded-full border border-amber/30 bg-amber/10 px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.12em] text-amber"
+                        title="Ethereum refuses frontend-fee flushes at or under 10 USDC — the pot keeps accruing and flushes once it clears the floor."
+                      >
+                        accruing · flushes over $10
+                      </span>
+                    )}
+                  </span>
+                  <span className={`font-num text-sm tabular-nums ${it.flushable ? 'text-teal' : 'text-ink-dim'}`}>{fmtUsd(it.usdc)}</span>
+                </div>
+              ))}
+              {/* deployed baskets with nothing pending yet, at $0.00 — the row
+                  claims only "you deployed this, nothing pending to you here"
+                  (whether its creator fee pays you depends on the payout
+                  address chosen at launch) */}
+              {quietCreated.map((b) => (
+                <div key={`q:${b.chainId}:${b.address}`} className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="flex min-w-0 items-baseline gap-2.5">
+                    <span className="font-display text-sm font-bold uppercase tracking-wide text-ink-dim">${b.symbol}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">your basket</span>
+                  </span>
+                  <span className="font-num text-sm tabular-nums text-ink-faint">{fmtUsd(0)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-ink-dim">
+              Nothing to claim yet. Share your link, or launch a basket — referral, launcher and creator
+              fees all accrue here.
+            </p>
+          )}
+
+          <p className="mt-5 font-mono text-[10px] leading-relaxed text-ink-faint">
+            Everything your address earns, across all baskets: interface fees on referred trades, launcher
+            fees on referred launches, creator fees where a basket&rsquo;s payout address is yours, and any
+            other fee tag pointing at you. Fixed protocol slices redirected to you, never an added fee.
+            {total > 0 && total < 1 ? ' Small balances may cost more in gas to claim than they’re worth — let them build up.' : ''}
+            {ca.skippedOtherChain > 0 && !ca.running ? ` ${ca.skippedOtherChain} on another network — switch to claim those.` : ''}
+            {ca.error && !ca.running ? ` ${ca.error}` : ''}
+            {chainsFailed > 0 ? ` ${chainsFailed} network${chainsFailed === 1 ? '' : 's'} unavailable right now — the total may be missing accruals there.` : ''}
+            {' '}Crown earnings from the creator league are separate and withdrawable any time, below.
+          </p>
+        </section>
+
+        {/* crown winnings — a won season is real money that lived only on
+            /league before (owner 2026-07-30); self-hides until one exists */}
+        <CrownWinnings />
+
         {/* ── TWO WAYS TO EARN — just the numbers (owner 21:49) ──────────── */}
         <section>
           <h2 className="text-center font-display text-4xl font-bold uppercase leading-tight tracking-tight text-ink sm:text-5xl">
@@ -202,8 +314,10 @@ export function Refer() {
             <div className="relative flex flex-col overflow-hidden rounded-3xl border border-white/[0.12] bg-white/[0.02] p-8 text-center shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
               <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: 'linear-gradient(90deg,var(--color-cyan),transparent)' }} />
               <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-cyan">Refer a buyer</div>
+              {/* "of the FEES" — the slice is ~5% of each trade's fee, not of the
+                  trade; the old tile overstated ~33-100× (audit, owner rule) */}
               <div className="mt-3 font-display text-6xl font-bold leading-none tracking-tight text-ink">~5%</div>
-              <div className="mt-3 font-display text-lg font-bold uppercase tracking-tight text-ink">of every trade they make</div>
+              <div className="mt-3 font-display text-lg font-bold uppercase tracking-tight text-ink">of the fees on every trade they make</div>
               <button type="button" onClick={() => setModal('buyer')} className="press mx-auto mt-6 rounded-full border border-white/15 px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim hover:border-cyan/50 hover:text-cyan">
                 How it works
               </button>
@@ -212,7 +326,7 @@ export function Refer() {
               <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: 'linear-gradient(90deg,var(--color-magenta),transparent)' }} />
               <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-magenta">Refer a creator</div>
               <div className="mt-3 font-display text-6xl font-bold leading-none tracking-tight text-ink">~5%</div>
-              <div className="mt-3 font-display text-lg font-bold uppercase tracking-tight text-ink">of their basket, forever</div>
+              <div className="mt-3 font-display text-lg font-bold uppercase tracking-tight text-ink">of their basket&rsquo;s fees, forever</div>
               <button type="button" onClick={() => setModal('creator')} className="press mx-auto mt-6 rounded-full border border-white/15 px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim hover:border-magenta/60 hover:text-magenta">
                 How it works
               </button>
@@ -240,51 +354,6 @@ export function Refer() {
           ))}
         </section>
 
-        {/* ── CLAIMABLE — full width, big, broken down, nestled under WHY ── */}
-        <section className="rounded-3xl border border-cyan/25 bg-cyan/[0.03] p-6 sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan">Claimable · USDC</div>
-              <div className="mt-1 font-num text-5xl font-semibold tabular-nums text-ink sm:text-6xl">
-                {TRADING_ENABLED ? fmtUsd(total) : '—'}
-              </div>
-            </div>
-            {canClaim && (
-              <button
-                type="button"
-                disabled={ca.running}
-                onClick={() => void ca.claimAll(items.map((it) => ({ address: it.address, chainId: it.chainId, kind: 'flush' as const })))}
-                className="press rounded-xl px-6 py-3 font-display text-sm font-bold uppercase tracking-[0.14em] text-void transition-opacity hover:opacity-90 disabled:opacity-60"
-                style={{ background: GRADIENT }}
-              >
-                {ca.running ? `Claiming ${ca.done + ca.failed}/${ca.total}…` : 'Claim all'}
-              </button>
-            )}
-          </div>
-
-          {items.length > 0 ? (
-            <div className="mt-6 divide-y divide-white/8 border-t border-white/10">
-              {items.map((it) => (
-                <div key={`${it.chainId}:${it.address}`} className="flex items-center justify-between gap-3 py-2.5">
-                  <span className="font-display text-sm font-bold uppercase tracking-wide text-ink">${it.symbol}</span>
-                  <span className="font-num text-sm tabular-nums text-teal">{fmtUsd(it.usdc)}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-4 text-sm text-ink-dim">
-              Nothing to claim yet. Share your link — interface and launcher fees will accrue here.
-            </p>
-          )}
-
-          <p className="mt-5 font-mono text-[10px] leading-relaxed text-ink-faint">
-            Interface fees on referred trades + launcher fees on referred launches, accrued to you across
-            all baskets. Fixed protocol slices redirected to you, never an added fee.
-            {total > 0 && total < 1 ? ' Small balances may cost more in gas to claim than they’re worth — let them build up.' : ''}
-            {ca.skippedOtherChain > 0 && !ca.running ? ` ${ca.skippedOtherChain} on another network — switch to claim those.` : ''}
-            {ca.error && !ca.running ? ` ${ca.error}` : ''}
-          </p>
-        </section>
       </div>
 
       {modal === 'buyer' && (
@@ -295,7 +364,7 @@ export function Refer() {
               steps={[
                 { icon: LinkIcon, label: 'You share your link' },
                 { icon: SwapIcon, label: 'They trade a basket' },
-                { icon: CoinIcon, label: 'You earn ~5%' },
+                { icon: CoinIcon, label: 'You earn ~5% of the fee' },
               ]}
             />
           </div>
@@ -321,7 +390,7 @@ export function Refer() {
               steps={[
                 { icon: LinkIcon, label: 'You share your link' },
                 { icon: LaunchIcon, label: 'They launch a basket' },
-                { icon: CoinIcon, label: 'You earn ~5% forever' },
+                { icon: CoinIcon, label: 'You earn ~5% of its fees, forever' },
               ]}
             />
           </div>

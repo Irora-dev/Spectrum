@@ -31,7 +31,11 @@ const Faq = lazy(() => import('./pages/Faq').then((m) => ({ default: m.Faq })))
 const Learn = lazy(() => import('./pages/Learn').then((m) => ({ default: m.Learn })))
 const Docs = lazy(() => import('./pages/Docs').then((m) => ({ default: m.Docs })))
 const Integrate = lazy(() => import('./pages/Integrate').then((m) => ({ default: m.Integrate })))
+const League = lazy(() => import('./pages/League').then((m) => ({ default: m.League })))
+const Bundle = lazy(() => import('./pages/Bundle').then((m) => ({ default: m.Bundle })))
+const PublishedBundlePage = lazy(() => import('./pages/Bundle').then((m) => ({ default: m.PublishedBundlePage })))
 const Refer = lazy(() => import('./pages/Refer').then((m) => ({ default: m.Refer })))
+const PrismClaim = lazy(() => import('./pages/PrismClaim').then((m) => ({ default: m.PrismClaim })))
 const Terms = lazy(() => import('./pages/Terms').then((m) => ({ default: m.Terms })))
 const VerifyPage = lazy(() => import('./pages/Verify').then((m) => ({ default: m.Verify })))
 const Privacy = lazy(() => import('./pages/Privacy').then((m) => ({ default: m.Privacy })))
@@ -52,38 +56,45 @@ const BuySuccessTest = import.meta.env.DEV
 
 const queryClient = new QueryClient()
 
-// Per-route browser-tab titles (the static index.html title/OG is what social
-// crawlers see; this just keeps the tab label in sync as you navigate).
-const ROUTE_TITLES: Record<string, string> = {
-  '/': 'Spectrum · onchain baskets',
-  '/explore': 'Explore · Spectrum',
-  '/creators': 'For creators · Spectrum',
-  '/token': 'Basket · Spectrum',
-  '/portfolio': 'Portfolio · Spectrum',
-  '/launch': 'Launch a Basket · Spectrum',
-  '/compose': 'Composer · Spectrum',
-  '/createbasket': 'Create a Basket · Spectrum',
-  '/swap': 'Swap · Spectrum',
-  '/flush': 'Fees & cranks · Spectrum',
-  '/embed': 'Basket · Spectrum',
-  '/faq': 'FAQ · Spectrum',
-  '/learn': 'Learn · Spectrum',
-  '/docs': 'Docs · Spectrum',
-  '/docs/valuation': 'Valuation docs · Spectrum',
-  '/integrate': 'Route baskets · Spectrum',
-  '/refer': 'Refer & earn · Spectrum',
-  '/terms': 'Terms · Spectrum',
-  '/verify': 'Verify contracts · Spectrum',
-  '/privacy': 'Privacy · Spectrum',
-  '/risk': 'Risk · Spectrum',
+// Per-route browser-tab titles. These are BRAND-DERIVED (kit audit): they used to
+// hardcode "Spectrum", which silently defeated the build-time brandHtml plugin —
+// that plugin exists so an operator's tab and social cards carry THEIR name, and
+// the social half worked while this overwrote the tab one frame after hydration.
+// The page label is the part before the separator; the suffix is the operator's.
+const ROUTE_LABELS: Record<string, string> = {
+  '/explore': 'Explore',
+  '/creators': 'For creators',
+  '/token': 'Basket',
+  '/portfolio': 'Portfolio',
+  '/launch': 'Launch a Basket',
+  '/compose': 'Composer',
+  '/createbasket': 'Create a Basket',
+  '/swap': 'Swap',
+  '/flush': 'Fees & cranks',
+  '/embed': 'Basket',
+  '/faq': 'FAQ',
+  '/learn': 'Learn',
+  '/docs': 'Docs',
+  '/docs/valuation': 'Valuation docs',
+  '/integrate': 'Route baskets',
+  '/earn': 'Earn',
+  '/league': 'Creator league',
+  '/bundle': 'Bundles',
+  '/claim': 'PRISM claim',
+  '/terms': 'Terms',
+  '/verify': 'Verify contracts',
+  '/privacy': 'Privacy',
+  '/risk': 'Risk',
 }
+
+/** The home/fallback title — mirrors what brandHtml writes into index.html. */
+const homeTitle = () => `${brand.name} · ${brand.tagline?.trim() || 'onchain baskets'}`
 
 function RouteTitle() {
   const { pathname, search } = useLocation()
   useEffect(() => {
-    document.title =
-      ROUTE_TITLES[pathname] ??
-      (pathname.startsWith('/creator') ? 'Creator · Spectrum' : 'Spectrum · onchain baskets')
+    const label = ROUTE_LABELS[pathname] ?? (pathname.startsWith('/creator') ? 'Creator' : null)
+    document.title = label ? `${label} · ${brand.name}` : homeTitle()
   }, [pathname])
   // Capture a `?ref=<address>` from any inbound link and persist it (FIRST-touch —
   // the original referrer wins and is never overwritten; see referral.ts), so the
@@ -102,6 +113,16 @@ function RouteFallback() {
   )
 }
 
+// The animated band canvas, gated off /embed: embeds render chrome-less inside
+// THIRD-PARTY iframes (Layout bypasses all chrome there), and since the bands
+// moved to the foreground (z-40) the canvas would paint animated glow over the
+// host page's card — and burn WebGL in every embed (audit).
+function AmbientBackground() {
+  const { pathname } = useLocation()
+  if (pathname.startsWith('/embed')) return null
+  return <SpectrumBackground />
+}
+
 export function App() {
   return (
     <WagmiProvider config={config}>
@@ -109,7 +130,7 @@ export function App() {
         <BrowserRouter>
           <RouteTitle />
           <Suspense fallback={null}>
-            <SpectrumBackground />
+            <AmbientBackground />
           </Suspense>
           <Layout>
             <Suspense fallback={<RouteFallback />}>
@@ -128,7 +149,12 @@ export function App() {
                     deep-link (?tokens=&chain=) — renders the Composer, which
                     pre-fills + hands off to the real signed launch flow. */}
                 <Route path="/createbasket" element={gate('launch', <Composer />)} />
-                {/* Cross-chain bundles (pages/Bundle.tsx) are HIDDEN for now — no route. */}
+                {/* Cross-chain ALLOCATIONS — several single-chain baskets held as one
+                    allocation (revived 2026-07-29; hidden 07-09). NOT one token. */}
+                <Route path="/bundle" element={gate('bundle', <Bundle />)} />
+                {/* a PUBLISHED bundle's own page — stable + shareable, reads the
+                    on-chain note so it survives the share link being lost */}
+                <Route path="/bundle/:creator/:slug" element={gate('bundle', <PublishedBundlePage />)} />
                 <Route path="/swap" element={gate('trade', <Swap />)} />
                 <Route path="/flush" element={gate('fees', <Flush />)} />
                 {/* chrome-less (Layout bypasses for /embed) — the iframe-able card */}
@@ -143,7 +169,11 @@ export function App() {
                 <Route path="/docs/valuation" element={gate('docs', <Docs />)} />
                 {/* aggregator / solver / bot integration guide (one BD-linkable URL) */}
                 <Route path="/integrate" element={gate('integrate', <Integrate />)} />
-                <Route path="/refer" element={gate('refer', <Refer />)} />
+                <Route path="/earn" element={gate('refer', <Refer />)} />
+                {/* the old path lives on as a redirect — shared links keep working */}
+                <Route path="/refer" element={<Navigate to="/earn" replace />} />
+                <Route path="/league" element={gate('league', <League />)} />
+                <Route path="/claim" element={gate('claim', <PrismClaim />)} />
                 <Route path="/terms" element={<Terms />} />
                 <Route path="/verify" element={<VerifyPage />} />
                 <Route path="/privacy" element={<Privacy />} />

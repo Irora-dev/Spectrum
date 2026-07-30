@@ -33,6 +33,9 @@ export interface PageToggles {
   portfolio: boolean // /portfolio (also needs VITE_ENABLE_WALLET)
   creators: boolean // /creators
   refer: boolean // /refer
+  league: boolean // /league (renders only when the chain has a leaguePool configured)
+  bundle: boolean // /bundle (cross-chain BUNDLES: several baskets, one allocation)
+  claim: boolean // /claim (PRISM v2 community-airdrop claim tool, Ethereum mainnet) + its banner
   integrate: boolean // /integrate
   docs: boolean // /docs + /docs/valuation + /faq + /learn
 }
@@ -40,14 +43,16 @@ export interface PageToggles {
 export type PageKey = keyof PageToggles
 
 /** Runtime list of the toggleable pages (order = how the setup studio lists them). */
-// (Cross-chain bundles are HIDDEN for now — owner 2026-07-09: no route, no nav, not offered
-// in setup. The code stays in the tree; re-add 'bundle' here + the Nav/App entries to revive.)
+// Cross-chain bundles were hidden 2026-07-09 and REVIVED 2026-07-29 (owner) under the
+// portfolio-plus-completion framing: a bundle is ONE ALLOCATION made of several
+// single-chain basket tokens the buyer holds themselves. Never "one token".
 export const PAGE_KEYS: PageKey[] = [
-  'discover', 'launch', 'trade', 'fees', 'portfolio', 'creators', 'refer', 'integrate', 'docs',
+  'discover', 'launch', 'trade', 'fees', 'portfolio', 'creators', 'refer', 'league', 'bundle', 'claim', 'integrate', 'docs',
 ]
 
 export interface BrandConfig {
-  /** Text wordmark. MUST fail /spectrum/i (see validateSiteName) — no operator is "Spectrum". */
+  /** Text wordmark. "Spectrum" is the recommended default (owner 2026-07-29) —
+   *  a site on this kit is an interface to the Spectrum protocol. */
   name: string
   tagline?: string
   style: DesignStyle
@@ -59,11 +64,49 @@ export interface BrandConfig {
    *  /setup route + the footer link). Visitors can never persist anything server-side
    *  either way (drafts are per-browser), so this is product posture, not security. */
   setupStudio?: boolean
+  /** Tokenized-stock surfaces (default ON; owner 2026-07-29): the launcher's
+   *  stock shelf, the stocks+tokens banner on Robinhood Chain, stock badges.
+   *  false hides every stock-specific SURFACE — it does not (cannot) block a
+   *  pasted stock address; routability stays the chain's own truth. */
+  stocks?: boolean
+  /** First-visit viewing chain (must be a scaffolded chain id; ignored
+   *  otherwise). Unset → the deployment book's default. A returning visitor's
+   *  own persisted network choice always wins over this. */
+  defaultChainId?: number
+  /** The "Powered by Prism" ecosystem banner (default ON; owner 2026-07-30) —
+   *  a small pill on Home / basket / swap / fees linking out to Prism Beat.
+   *  It is an OUTBOUND third-party link on the operator's own site, so it has
+   *  to be droppable: `false` removes every instance. The protocol's PRISM
+   *  buy-and-burn leg is unaffected either way (it is contract-side). */
+  prismCredit?: boolean
+  /** Curated launch STARTER suggestions (default ON; owner 2026-07-30): the
+   *  per-chain seed set the builder/composer shelves fall back to before a
+   *  chain has organic basket data (see lib/chain/starter-suggestions.ts).
+   *  These are THIRD-PARTY token addresses surfaced as suggestions on the
+   *  operator's site, so `false` drops them and leaves the shelf purely
+   *  organic (most-used constituents of live baskets, ranked by live market
+   *  data). Stock entries additionally respect `stocks`. */
+  starterTokens?: boolean
 }
 
 /** Default-on: a page shows unless it is explicitly turned off. */
 export function pageEnabled(pages: Partial<PageToggles> | undefined, key: PageKey): boolean {
   return pages?.[key] !== false
+}
+
+/** Stock surfaces: default-ON unless `stocks: false`. */
+export function stocksEnabled(config: Pick<BrandConfig, 'stocks'>): boolean {
+  return config.stocks !== false
+}
+
+/** The Prism ecosystem credit banner: default-ON unless `prismCredit: false`. */
+export function prismCreditEnabled(config: Pick<BrandConfig, 'prismCredit'>): boolean {
+  return config.prismCredit !== false
+}
+
+/** Curated launch starter suggestions: default-ON unless `starterTokens: false`. */
+export function starterTokensEnabled(config: Pick<BrandConfig, 'starterTokens'>): boolean {
+  return config.starterTokens !== false
 }
 
 /** /setup availability: always served in dev; production default-ON unless `setupStudio: false`. */
@@ -109,12 +152,19 @@ export const MAX_SITE_NAME = 32
 /** Required kit attribution shown in the footer of every generated site. */
 export const ATTRIBUTION_TEXT = 'powered by Spectrum Mini'
 
-/** Name guard — mirrors the Mini kit: non-empty, ≤32 chars, and never contains "Spectrum". */
+/** Name check: non-empty and within the wordmark's length budget.
+ *
+ *  The "may not contain Spectrum" rejection was REMOVED (owner 2026-07-29:
+ *  "if someone launches I'd like it to be called Spectrum, in fact it should be
+ *  the default recommendation"). Spectrum is the PROTOCOL; a site built on this
+ *  kit is an interface to it, and naming the interface after the protocol is the
+ *  owner's intended posture — the same way many interfaces to one protocol share
+ *  its name. The footer attribution (ATTRIBUTION_TEXT) and the operator's public
+ *  fee wallet remain the honest signals of who runs a given deployment. */
 export function validateSiteName(name: string): { ok: boolean; error?: string } {
   const n = (name || '').trim()
   if (!n) return { ok: false, error: 'Site name is required' }
   if (n.length > MAX_SITE_NAME)
     return { ok: false, error: `Site name must be ${MAX_SITE_NAME} characters or fewer` }
-  if (/spectrum/i.test(n)) return { ok: false, error: 'Site name may not contain "Spectrum"' }
   return { ok: true }
 }

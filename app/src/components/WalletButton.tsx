@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
 import { useActiveChain } from '../lib/chain/active-chain'
 import { hasInjectedProvider, isMobileUA, walletAppLinks } from '../lib/wallet/mobile'
@@ -105,6 +106,14 @@ export function WalletButton() {
   const { connectors, connect, isPending } = useConnect()
   const [open, setOpen] = useState(false)
 
+  // Any surface can summon the connect dialog (the swap console's CTA does) —
+  // on a phone "top right" is nothing to point at (mobile UX review 4).
+  useEffect(() => {
+    const onConnect = () => setOpen(true)
+    window.addEventListener('spectrum:connect', onConnect)
+    return () => window.removeEventListener('spectrum:connect', onConnect)
+  }, [])
+
   if (isConnected && address) {
     return <ConnectedMenu address={address} />
   }
@@ -151,9 +160,14 @@ export function WalletButton() {
       <button onClick={() => setOpen(true)} className={btn}>
         Connect
       </button>
-      {open && (
+      {/* PORTALED to body (audit): this button also mounts inside the sticky
+          nav, whose backdrop-blur makes the header the CONTAINING BLOCK for
+          fixed descendants in Chromium/Firefox — inline, `fixed inset-0`
+          resolved to the 64px header strip (dialog top unreachable) and the
+          header's stacking context pinned the overlay below the z-40 bands. */}
+      {open && createPortal(
         <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
           onClick={() => setOpen(false)}
         >
           <div
@@ -217,7 +231,8 @@ export function WalletButton() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

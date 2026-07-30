@@ -30,7 +30,7 @@ export const DEPLOYER_ANCHOR_ENS = '0xsolazy.eth'
 export type AddressVerdict = 'canonical' | 'override' | 'unset'
 
 export interface VerifiedField {
-  key: 'factory' | 'swapRouter' | 'usdc'
+  key: 'factory' | 'swapRouter' | 'usdc' | 'uniV3SwapRouter' | 'uniV3Quoter' | 'weth' | 'poolManager'
   label: string
   /** The address THIS BUILD actually uses (env override else the shipped book). */
   effective: Address | null
@@ -42,10 +42,12 @@ export interface VerifiedField {
 const eqAddr = (a?: string | null, b?: string | null): boolean =>
   !!a && !!b && a.toLowerCase() === b.toLowerCase()
 
-function canonicalFor(chainId: number, key: 'factory' | 'swapRouter' | 'usdc'): Address | null {
-  const entry = (canonicalBook as Record<string, Record<string, string>>)[String(chainId)]
+function canonicalFor(chainId: number, key: 'factory' | 'swapRouter' | 'usdc' | 'uniV3SwapRouter' | 'uniV3Quoter' | 'weth' | 'poolManager'): Address | null {
+  // string | boolean | number: an entry may carry the v4qLineage flag and
+  // leagueShareBps beside its addresses
+  const entry = (canonicalBook as Record<string, Record<string, string | boolean | number>>)[String(chainId)]
   const v = entry?.[key]
-  return v && /^0x[0-9a-fA-F]{40}$/.test(v) ? (v as Address) : null
+  return typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v) ? (v as Address) : null
 }
 
 /** Pure verdict for one field: what this build wires vs the shipped canonical book. */
@@ -57,16 +59,36 @@ export function verdictFor(effective: Address | null | undefined, canonical: Add
 /** The three user-facing contract fields /verify authenticates, for one chain. */
 export function verifyChainConfig(
   chainId: number,
-  effective: { factory: Address | null; swapRouter: Address | null; usdc: Address | null },
+  effective: {
+    factory: Address | null
+    swapRouter: Address | null
+    usdc: Address | null
+    uniV3SwapRouter?: Address | null
+    uniV3Quoter?: Address | null
+    weth?: Address | null
+    poolManager?: Address | null
+  },
 ): VerifiedField[] {
+  // Every address a money path CALLS or APPROVES belongs here. Until the
+  // 2026-07-29 redteam this authenticated 3 of the 14 overridable fields, so a
+  // build could point the hub leg (uniV3SwapRouter — the app approves WETH to
+  // it) at an attacker while /verify showed three green canonical rows.
+  // NOTE the structural limit, stated rather than implied: the any-token pay
+  // side's spender comes from a LiFi response at execution time, so it can
+  // never appear here. It is pinned in lifi.ts (LIFI_TARGETS) instead.
   return (
     [
       ['factory', 'Basket factory'],
       ['swapRouter', 'Swap router'],
-      ['usdc', 'USDC'],
+      ['usdc', 'Settlement asset'],
+      ['uniV3SwapRouter', 'Hub swap router'],
+      ['uniV3Quoter', 'Hub quoter'],
+      ['weth', 'Wrapped ether'],
+      ['poolManager', 'Pool manager'],
     ] as const
   ).map(([key, label]) => {
     const canonical = canonicalFor(chainId, key)
-    return { key, label, effective: effective[key], canonical, verdict: verdictFor(effective[key], canonical) }
+    const eff = effective[key] ?? null
+    return { key, label, effective: eff, canonical, verdict: verdictFor(eff, canonical) }
   })
 }

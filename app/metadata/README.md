@@ -33,3 +33,19 @@ deployer signature before anything renders.
   host instead (`VITE_METADATA_BASE_URL` / `VITE_METADATA_WRITE_URL`) — see
   `OPERATORS.md`. The site-bundled rung takes precedence over the host for the same
   basket.
+
+## Creator PROFILE blobs (`creators/<chainId>/<creator>.json`)
+
+A creator's self-signed PROFILE (their /creator page identity: name, bio, banner,
+"bullish on" picks — signed on /creators, `creator-identity.ts`) commits here the
+same way, under the `creators/` namespace:
+
+```
+app/metadata/creators/8453/0xabc…def.json
+```
+
+Same rules as basket blobs: lowercased address in the filename, the signature is
+the only trust source (it must recover to the profile's own creator address — a
+file claiming someone else's address is ignored), and a committed file is visible
+to every visitor with no backend. The creator downloads this exact file from the
+/creators sign-up flow and hands it to you.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { decodeAbiParameters, zeroAddress } from 'viem'
 import { encodeMintHookData, encodeRedeemHookData } from './hook-data'
+import { INTERFACE_TAG_ADDRESS } from '../config/operator'
 
 const TAG = '0x00000000000000000000000000000000000000A1' as const
 
@@ -27,9 +28,12 @@ describe('encodeMintHookData (BUY — per-leg floors)', () => {
     // a 1-wei quote at 1% slippage floor-rounds to 0 → must abort, not ship a zero floor
     expect(() => encodeMintHookData({ quotedLegAmounts: [1n], slippageBps: 100, minOut: 1n })).toThrow()
   })
-  it('defaults the frontend tag to address(0) when none is given', () => {
+  it("defaults the frontend tag to the BUILD's tag, else address(0)", () => {
+    // The fallback chain is input.interfaceTag ?? the build's configured tag ??
+    // zero — pinning a bare zero made this fail on any checkout whose
+    // .env.local sets VITE_INTERFACE_TAG_ADDRESS (vitest loads vite env).
     const r = encodeMintHookData({ quotedLegAmounts: [1000n], slippageBps: 100, minOut: 1n })
-    expect(r.frontend).toBe(zeroAddress)
+    expect(r.frontend).toBe(INTERFACE_TAG_ADDRESS ?? zeroAddress)
   })
 })
 

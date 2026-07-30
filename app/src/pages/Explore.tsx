@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+
+// The teaching walkthrough (Colby 2026-07-29: on every good surface) — lazy,
+// loads only on ask.
+const LearnWalkthrough = lazy(() =>
+  import('../components/LearnWalkthrough').then((m) => ({ default: m.LearnWalkthrough })),
+)
 import { useAllBaskets, useBasketSectors, useCreatorMeta } from '../lib/spectrum/hooks'
 import {
   buildCreatorLeaderboard,
@@ -19,6 +25,7 @@ import { useFollows } from '../lib/spectrum/follows'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { AssetLogo } from '../components/AssetLogo'
 import { BasketBento } from '../components/BasketBento'
+import { BasketSpark } from '../components/BasketSpark'
 import { BasketListRow } from '../components/BasketListRow'
 import { BasketWash } from '../components/BasketWash'
 import { LaunchCta } from '../components/LaunchCta'
@@ -37,6 +44,8 @@ import { DEFAULT_CHAIN_ID } from '../lib/chain/chains'
 import { SpectralSearch } from '../components/SpectralSearch'
 import { BasketChart } from '../components/BasketChart'
 import { BlueprintBasket } from '../components/BlueprintBasket'
+import { BundleGrid } from '../components/BundleGrid'
+import { useActiveChainId } from '../lib/chain/active-chain'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /explore — the site's flagship social page. Three lenses on one catalogue:
@@ -50,7 +59,7 @@ import { BlueprintBasket } from '../components/BlueprintBasket'
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ChainFilter = 'all' | 1 | 8453
-type View = 'thesis' | 'baskets' | 'creators'
+type View = 'thesis' | 'baskets' | 'creators' | 'bundles'
 
 function pctColor(p: number | null | undefined): string {
   return (p ?? 0) >= 0 ? 'var(--color-cyan)' : 'var(--color-magenta)'
@@ -80,7 +89,9 @@ function useCreatorIdentity(entry: CreatorEntry) {
   return { meta, identity }
 }
 
-function Disclaimer() {
+// Exported: Home's preview tabs render the same ranked surfaces and must carry
+// the same disclaimer WITH the claim (house rule — audit).
+export function Disclaimer() {
   return (
     <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
       Ranked by on-chain value and performance to date (a basket's current NAV against its ~$1.00 launch), not a
@@ -207,6 +218,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
           <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-3 sm:p-3.5 ${compact ? 'min-h-[200px] sm:min-h-[250px]' : 'min-h-[230px] sm:min-h-[340px]'}`}>
             <BasketChart
               chainId={ix.chainId}
+              address={ix.address}
               assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
               navPerToken={ix.navPerToken}
               ageSec={null}
@@ -217,9 +229,27 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
             />
           </div>
         ) : (
-        <Link to={`/token?addr=${ix.address}&chain=${ix.chainId}`} className="relative block overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25 sm:p-3.5">
-          <BasketBento items={bentoItems(ix)} fill className={compact ? 'min-h-[200px] sm:min-h-[250px]' : 'min-h-[230px] sm:min-h-[340px]'} reveal={{ delayMs: 150, stepMs: 60 }} show={active && booted} />
-        </Link>
+        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25 sm:p-3.5">
+          <Link to={`/token?addr=${ix.address}&chain=${ix.chainId}`} className="relative block">
+            <BasketBento items={bentoItems(ix)} fill className={compact ? 'min-h-[160px] sm:min-h-[200px]' : 'min-h-[180px] sm:min-h-[270px]'} reveal={{ delayMs: 150, stepMs: 60 }} show={active && booted} />
+          </Link>
+          {/* the dither trend rides the DEFAULT face too (owner 2026-07-29:
+              "still don't see the chart on the spotlight") — constituent
+              gradient, hoverable, under the bento */}
+          <div className="mt-2.5 h-24 sm:h-28">
+            <BasketSpark
+              chainId={ix.chainId}
+              assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
+              navPerToken={ix.navPerToken}
+              fallback={ix.navSeries}
+              range="7D"
+              address={ix.address}
+              symbol={ix.symbol}
+              legs={ix.top.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct }))}
+              withRanges
+            />
+          </div>
+        </div>
         )}
         {/* compact: the Basket/Graph pill rides the bento's TOP-RIGHT (owner
             19:24) — a sibling of the card link, so it never navigates */}
@@ -450,7 +480,9 @@ export function CreatorLine({ entry, rank, w = 'value' }: { entry: CreatorEntry;
   const best = entry.bestBasket
   const perf = perfToDate(best) * 100
   const avatarSymbol = identity.kind === 'address' ? 'x' : identity.label.replace(/^@/, '')
-  const dayRet = best.change24hPct ?? null
+  // Day figure only for TVL-measurable baskets — a dust basket's 24h is seed
+  // noise, not a leaderboard fact (the perf sort already sinks dust; audit)
+  const dayRet = perfMeasurable(best) ? best.change24hPct ?? null : null
 
   return (
     <div className="relative rounded-2xl border border-white/10 bg-white/[0.025] p-3 transition-colors hover:border-white/20 sm:p-4">
@@ -544,6 +576,7 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
         <div className="relative overflow-hidden rounded-xl border border-white/10 bg-black/25 p-3">
           <BasketChart
             chainId={ix.chainId}
+            address={ix.address}
             assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
             navPerToken={ix.navPerToken}
             ageSec={null}
@@ -759,6 +792,8 @@ export function Explore() {
   const [onlyFollowing, setOnlyFollowing] = useState(false)
   const [asset, setAsset] = useState<string | null>(null)
   const [tag, setTag] = useState<string | null>(null)
+  const [learnOpen, setLearnOpen] = useState(false)
+  const activeChainId = useActiveChainId()
   const { follows, count: followCount } = useFollows()
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -797,7 +832,10 @@ export function Explore() {
   const keyOfB = (b: BasketSummary) => `${b.chainId}:${b.address.toLowerCase()}`
   const trendingTags = useMemo(() => {
     const score = new Map<string, { label: string; n: number; tvl: number }>()
-    for (const b of heads) {
+    // Count only LISTABLE baskets: clicking a tag filters lists that hide
+    // sub-floor baskets, so a badge counting them promised results the click
+    // couldn't show ("#ai 3" → 1 result — audit)
+    for (const b of heads.filter(listable)) {
       for (const t of sectorsByBasket.get(keyOfB(b)) ?? []) {
         if (!tagAllowed(t)) continue // creator tags are free-form; the site won't render banned ones
         const k = t.toLowerCase()
@@ -868,7 +906,13 @@ export function Explore() {
     if (asset) list = list.filter((c) => c.baskets.some((b) => basketHasAsset(b, asset)))
     if (tag) list = list.filter((c) => c.baskets.some(basketHasTag))
     if (qTerms.length) list = list.filter((c) => matchesTerms([c.address, ...c.baskets.map((b) => `${b.symbol} ${b.name} ${b.top.map((t) => t.symbol).join(' ')}`)].join(' '), qTerms))
-    if (lbWindow === 'day') list = [...list].sort((a, b) => (b.bestBasket.change24hPct ?? -Infinity) - (a.bestBasket.change24hPct ?? -Infinity))
+    if (lbWindow === 'day')
+      list = [...list].sort((a, b) => {
+        // dust baskets can't top the Today board on seed-size noise (audit)
+        const da = perfMeasurable(a.bestBasket) ? a.bestBasket.change24hPct ?? -Infinity : -Infinity
+        const db = perfMeasurable(b.bestBasket) ? b.bestBasket.change24hPct ?? -Infinity : -Infinity
+        return db - da
+      })
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainScoped, onlyFollowing, follows, asset, qTerms, lbWindow, tag, sectorsByBasket])
@@ -893,7 +937,15 @@ export function Explore() {
         size="md"
         title="Explore"
         actions={
-          <div className="flex items-end">
+          <div className="flex items-end gap-6">
+            <button
+              type="button"
+              onClick={() => setLearnOpen(true)}
+              className="press mb-1 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-4 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
+            >
+              <span aria-hidden className="grid h-3.5 w-3.5 place-items-center rounded-full border border-current text-[8px] leading-none">?</span>
+              How this works
+            </button>
             <HeadlineStat value={String(creatorCount)} label="creators" />
             <HeadlineStat value={String(basketTotal)} label="baskets" divider />
             <HeadlineStat value={formatUsdCompact(tvlTotal)} label="TVL" divider accent />
@@ -901,6 +953,12 @@ export function Explore() {
         }
       />
       </div>
+
+      {learnOpen && (
+        <Suspense fallback={null}>
+          <LearnWalkthrough onClose={() => setLearnOpen(false)} />
+        </Suspense>
+      )}
 
       {/* ── the top-three slideshow (hidden on the leaderboard + while filtering);
              when NO basket clears the criteria the blueprint ghost holds the
@@ -913,10 +971,14 @@ export function Explore() {
 
       {/* ── tabs (big, left) + search (right) — one row, saves vertical space ── */}
       <div className="enter flex flex-wrap items-center justify-between gap-3 border-y border-white/10 py-2.5" style={{ '--enter-i': 2 } as CSSProperties}>
-        <div className="flex items-center gap-1">
+        {/* one scrollable row on phone (tab-like), never a two-line wrap; the
+            rail-fade edge hints at the off-screen tabs (mobile UX review 10) */}
+        <div className="no-scrollbar rail-fade -mx-1 flex min-w-0 items-center gap-1 overflow-x-auto px-1">
           <TabBtn active={view === 'thesis'} onClick={() => setView('thesis')}>Top performers</TabBtn>
           <TabBtn active={view === 'baskets'} onClick={() => setView('baskets')}>Baskets</TabBtn>
           <TabBtn active={view === 'creators'} onClick={() => setView('creators')}>Creators</TabBtn>
+          {/* bundles: several baskets held as one allocation (owner 2026-07-29) */}
+          <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
         </div>
         {view !== 'thesis' && (
         <label className="relative flex min-w-0 flex-1 items-center sm:max-w-xs">
@@ -937,7 +999,7 @@ export function Explore() {
 
       {/* ── secondary filters: chain · following · (leaderboard) timeframe ──── */}
       {(hasBoth || followCount > 0 || onlyFollowing || view === 'creators') && (
-        <div className="no-scrollbar flex items-center gap-2 overflow-x-auto">
+        <div className="no-scrollbar rail-fade flex items-center gap-2 overflow-x-auto">
           {hasBoth && (
             <>
               <Pill active={chain === 'all'} onClick={() => setChain('all')}>All</Pill>
@@ -1031,7 +1093,15 @@ export function Explore() {
 
       {/* ── content — keyed by tab so each switch replays the row cascade ── */}
       <div key={view}>
-      {view === 'thesis' ? (
+      {view === 'bundles' ? (
+        <div className="space-y-4">
+          <p className="max-w-2xl text-sm leading-relaxed text-ink-dim">
+            A bundle is several baskets, across chains, held as one allocation. Following one means
+            buying each basket on its own chain, into your own wallet — it is not a new token.
+          </p>
+          <BundleGrid chainId={activeChainId} />
+        </div>
+      ) : view === 'thesis' ? (
         <div className="space-y-8">
           {/* the search hero: search + tags LEFT, quick swap RIGHT (owner
               15:1x), the search and the swap card sharing ONE grid row so

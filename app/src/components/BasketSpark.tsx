@@ -1,9 +1,13 @@
-import { useId, useMemo } from 'react'
-import { Area, AreaChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
+import { useMemo, useState } from 'react'
+import { availableRanges } from '../lib/spectrum/history'
 import { useNavHistory } from '../lib/spectrum/hooks'
 import type { ChartRange, NavInput } from '../lib/spectrum/history'
 import type { NavPoint } from '../lib/spectrum/basket-data'
+import { AreaChart } from './dither-kit/area-chart'
+import { Area } from './dither-kit/area'
+import { Tooltip } from './dither-kit/tooltip'
 import { formatNav } from '../lib/spectrum/format'
+import { tokenVisual } from '../lib/spectrum/token-meta'
 
 interface Props {
   chainId: number
@@ -13,22 +17,35 @@ interface Props {
   /** Cheap series shown while the real history loads / if it fails. */
   fallback?: NavPoint[]
   range?: ChartRange
+  /** Gliding NAV tooltip on hover (owner 2026-07-29) — on by default. */
   interactive?: boolean
+  /** Identity: the basket the spark belongs to — seeds its colour. */
+  address?: string
+  symbol?: string
+  /** Constituents WITH symbols — the fill becomes a weight-proportioned
+   *  gradient across their colours (owner 2026-07-29: the chart wears the
+   *  bento's colours). Falls back to `assets` (address-hash colours). */
+  legs?: { symbol?: string; address: string; weightPct: number }[]
+  /** Compact timeframe pills, top-right (the larger spark surfaces). */
+  withRanges?: boolean
+  /** Parent-driven hover (a card's group hover lifts the fill). */
+  hovered?: boolean
+  /** Bloom override — the hero showcase runs 'aura' always-on. */
+  bloom?: 'off' | 'low' | 'high' | 'aura'
+  animate?: boolean
   className?: string
 }
 
-function MiniTooltip({ active, payload }: { active?: boolean; payload?: { payload: NavPoint }[] }) {
-  if (!active || !payload || payload.length === 0) return null
-  const p = payload[0].payload
-  return (
-    <div className="rounded-md border border-white/15 bg-void/90 px-2 py-1 font-num text-[11px] font-semibold tabular-nums text-ink shadow-lg backdrop-blur">
-      ${formatNav(p.value, 4)}
-    </div>
-  )
+function timeLabel(t: number, range: ChartRange): string {
+  const d = new Date(t * 1000)
+  if (range === '24H') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-// Small spectral area chart fed by real reconstructed NAV history. Falls back to
-// a cheap series until the real one resolves so it never renders blank.
+// The basket spark, rendered through the DITHER engine (owner 2026-07-29:
+// every chart wears the kit) in the basket's own identity colour, with the
+// kit's gliding tooltip on hover. Falls back to a cheap series until real
+// history resolves so it never renders blank.
 export function BasketSpark({
   chainId,
   assets,
@@ -37,72 +54,94 @@ export function BasketSpark({
   fallback,
   range = '7D',
   interactive = true,
+  address = '',
+  symbol = '',
+  legs,
+  withRanges = false,
+  hovered = false,
+  bloom,
+  animate = false,
   className = '',
 }: Props) {
+  const ranges = useMemo(() => availableRanges(ageSec ?? null), [ageSec])
+  const [rangeSel, setRangeSel] = useState(range)
+  const activeRange = withRanges && ranges.includes(rangeSel) ? rangeSel : range
   // spark: decorative resolution — keyless-first history (see NavHistoryInput).
-  const { data } = useNavHistory({ chainId, assets, navPerToken, ageSec, range, spark: true })
+  const { data } = useNavHistory({ chainId, assets, navPerToken, ageSec, range: activeRange, spark: true })
   const series = data.length >= 2 ? data : fallback ?? []
-
-  const raw = useId().replace(/[^a-zA-Z0-9]/g, '')
-  const strokeId = `ss${raw}`
-  const fillId = `sf${raw}`
-
-  const { domain, accent } = useMemo(() => {
-    if (series.length < 2) return { domain: [0, 1] as [number, number], accent: 'var(--color-cyan)' }
-    const vals = series.map((p) => p.value)
-    const min = Math.min(...vals)
-    const max = Math.max(...vals)
-    const pad = (max - min) * 0.15 || max * 0.05 || 1
-    const chg = series[0].value > 0 ? series[series.length - 1].value - series[0].value : 0
-    return {
-      domain: [min - pad, max + pad] as [number, number],
-      accent: chg < 0 ? 'var(--color-magenta)' : 'var(--color-cyan)',
-    }
-  }, [series])
-
-  if (series.length < 2) return <div className={`h-full w-full rounded bg-white/[0.02] ${className}`} />
-
+  // Rows carry a pre-formatted time label — the kit tooltip's heading reads the
+  // field verbatim, so formatting belongs to the data, not the tooltip.
+  const rows = useMemo(
+    () => series.map((p) => ({ t: timeLabel(p.time, activeRange), v: p.value })),
+    [series, activeRange],
+  )
+  const color = tokenVisual(symbol, address).color
+  const palette = useMemo(() => {
+    const src = legs ?? assets.map((a) => ({ address: a.address, weightPct: a.weight, symbol: undefined }))
+    const stops = src
+      .filter((l) => l.weightPct > 0)
+      .map((l) => ({ color: tokenVisual(l.symbol ?? '', l.address).color, weight: l.weightPct }))
+    return stops.length >= 2 ? stops : undefined
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legs, assets])
+  const config = useMemo(
+    () => ({ v: { label: symbol ? `$${symbol}` : 'NAV', color, palette } }),
+    [symbol, color, palette],
+  )
+  // The move the shown window actually represents. With no y-axis anywhere in
+  // the app this label is the ONLY absolute reference a viewer gets, so it
+  // rides beside the timeframe pills (honesty audit 2026-07-29).
+  const change =
+    rows.length >= 2 && rows[0].v > 0 ? ((rows[rows.length - 1].v - rows[0].v) / rows[0].v) * 100 : null
+  if (rows.length < 2) return <div className={className} aria-hidden />
+  const chart = (
+    <AreaChart
+      data={rows}
+      config={config}
+      yDomain="data"
+      interactive={interactive}
+      animate={animate}
+      hovered={hovered}
+      bloom={bloom ?? 'low'}
+      bloomOnHover={bloom == null}
+      margins={{ top: 0, right: 0, bottom: 0, left: 0 }}
+      className={className}
+    >
+      {interactive && <Tooltip labelKey="t" valueFormatter={(v) => `$${formatNav(v, 4)}`} variant="default" />}
+      <Area dataKey="v" variant="gradient" />
+    </AreaChart>
+  )
+  if (!withRanges) return chart
   return (
-    /* absolute wrapper: recharts' explicit svg width must never become an
-       ancestor track's min-content (mobile overflow), see BasketChart */
-    <div className={`relative h-full w-full ${className}`}>
-      <div className="absolute inset-0">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={series} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id={strokeId} x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="var(--color-amber)" />
-              <stop offset="50%" stopColor="var(--color-magenta)" />
-              <stop offset="100%" stopColor="var(--color-cyan)" />
-            </linearGradient>
-            <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={accent} stopOpacity={0.18} />
-              <stop offset="100%" stopColor={accent} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <YAxis domain={domain} hide />
-          {interactive && (
-            <Tooltip
-              cursor={{ stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1 }}
-              content={<MiniTooltip />}
-              isAnimationActive={false}
-              allowEscapeViewBox={{ x: false, y: true }}
-              position={{ y: -8 }}
-            />
-          )}
-          <Area
-            type="monotone"
-            dataKey="value"
-            stroke={`url(#${strokeId})`}
-            strokeWidth={1.5}
-            fill={`url(#${fillId})`}
-            dot={false}
-            activeDot={interactive ? { r: 2.5, fill: accent, stroke: 'var(--color-void)', strokeWidth: 1.5 } : false}
-            isAnimationActive={false}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="flex h-full w-full flex-col">
+      <div className="mb-1.5 flex items-center justify-end gap-1">
+        {change != null && (
+          <span
+            className={`mr-auto font-num text-[11px] font-semibold tabular-nums ${change >= 0 ? 'text-teal' : 'text-magenta'}`}
+            title={`Change over the shown window (${activeRange})`}
+          >
+            {change >= 0 ? '+' : ''}
+            {change.toFixed(2)}%
+          </span>
+        )}
+        {ranges.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setRangeSel(r)
+            }}
+            className={`press rounded-md px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+              activeRange === r ? 'bg-white/12 text-ink' : 'text-ink-faint hover:text-ink-dim'
+            }`}
+          >
+            {r}
+          </button>
+        ))}
       </div>
+      <div className="min-h-0 flex-1">{chart}</div>
     </div>
   )
 }

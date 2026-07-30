@@ -530,6 +530,29 @@ p {
   display: none;
 }
 
+/* ── Mobile input + rail ergonomics (mobile UX review 2026-07-30) ──────────────
+   iOS Safari auto-zooms the page when a focused input's font-size is under
+   16px — the single most un-native feel on a phone. Floor every text-entry
+   control at 16px on phone widths; desktop sizes are untouched. The big
+   amount fields (text-4xl/5xl) already clear the floor. */
+@media (max-width: 639px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: max(1rem, 1em);
+  }
+}
+
+/* Horizontal rails hide their scrollbar (no-scrollbar) — an edge fade is the
+   affordance that more content exists. Masks only the trailing edge so the
+   leading item stays crisp; pair with overscroll containment so a rail swipe
+   never triggers back-navigation. */
+.rail-fade {
+  overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(90deg, black calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(90deg, black calc(100% - 28px), transparent 100%);
+}
+
 /* ── Deploy acknowledgment — a breathing cyan glow until it's ticked, so it reads
    as a required action the moment the card appears. ─────────────────────────── */
 @keyframes tick-glow {
@@ -607,4 +630,70 @@ p {
    canvas (its --color-void), serif display already via --font-display. */
 [data-style="sylvan"] .card-surface {
   backdrop-filter: none;
+}
+
+
+/* League hero entrance (owner 2026-07-29): the art gently ripples in on load —
+   a soft settle from blur+scale. Motion-safe only. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes league-hero-in {
+    0% { opacity: 0; transform: scale(1.06); filter: blur(18px) saturate(1.15); }
+    60% { opacity: 1; }
+    100% { opacity: 1; transform: scale(1); filter: blur(0) saturate(1); }
+  }
+  .league-hero-in { animation: league-hero-in 1.6s cubic-bezier(0.22, 0.8, 0.3, 1) both; }
+}
+
+/* BlueprintBasket weight cycle: a keyed remount fades IN (a transition on a
+   fresh node never runs — audit 2026-07-29 render #6) */
+@keyframes bp-weight-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.bp-weight-in { animation: bp-weight-in 0.7s ease; }
+
+/* ── the league hero's shimmer (owner 2026-07-29) ──────────────────────────
+   The hero art is a still; these two layers give it life without a video.
+   A wide spectral sheen drifts across it, and a faint bloom breathes under
+   it. Transform + opacity only (GPU-composited, no repaint), long durations
+   so it reads as light moving rather than an animation playing. Both ride the
+   hero's own mask, so they disappear exactly where the art tapers out. */
+@keyframes league-sheen-drift {
+  0%   { transform: translate3d(-38%, 0, 0); }
+  100% { transform: translate3d(38%, 0, 0); }
+}
+@keyframes league-breathe {
+  0%, 100% { opacity: 0.1; }
+  50%      { opacity: 0.28; }
+}
+.league-hero-sheen::before {
+  content: '';
+  position: absolute;
+  inset: -20% -45%;
+  background: linear-gradient(
+    104deg,
+    transparent 38%,
+    rgba(53, 224, 255, 0.07) 45%,
+    rgba(164, 139, 255, 0.11) 50%,
+    rgba(255, 77, 184, 0.07) 55%,
+    transparent 62%
+  );
+  animation: league-sheen-drift 19s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.league-hero-breathe {
+  background: radial-gradient(
+    62% 55% at 26% 42%,
+    rgba(164, 139, 255, 0.5),
+    transparent 72%
+  );
+  animation: league-breathe 13s ease-in-out infinite;
+  will-change: opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .league-hero-sheen::before,
+  .league-hero-breathe {
+    animation: none;
+  }
+  .league-hero-breathe { opacity: 0.14; }
 }

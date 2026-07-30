@@ -8,10 +8,12 @@ import {
   type TypedDataDomain,
 } from 'viem'
 import { chainCfg } from '../chain/chains'
+import { clientFor } from '../chain/rpc'
 import { getDeployer } from './basket-data'
 import { IPFS_GATEWAY_URL, METADATA_BASE_URL, metadataUrlFor } from '../config/operator'
 import { normalizeXHandle } from './creator'
 import { loadLocalMetadata } from './persist-metadata'
+import { fetchOnchainBasketMeta } from './profile-registry'
 import { loadSiteMetadata } from './site-metadata'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,13 +304,19 @@ export async function verifyCreatorMetadata(
 
 // ── Sanitize ────────────────────────────────────────────────────────────────
 
-// Render only https:// (and ipfs:// rewritten to the operator gateway). Reject
-// javascript:/data:/http:/relative — the creator controls this string and it
-// flows into <img src>. A bad value blanks just that field, never the render.
-// Exported so the builder preview and deploy ceremony share one source of truth.
+// Render only https:// (and ipfs:// rewritten to the operator gateway), plus
+// SMALL inline RASTER data URIs (base64 png/jpeg/webp — the on-chain avatar
+// path, owner 2026-07-29: a tiny avatar fits the notes registry's 16KB cap).
+// data:image/svg is REJECTED (scriptable), as are javascript:/http:/relative —
+// the creator controls this string and it flows into <img src>. A bad value
+// blanks just that field, never the render. Exported: one source of truth.
+const DATA_IMG_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/
+const MAX_DATA_IMG_CHARS = 14_000 // ≈10KB of image, inside the 16KB note cap
 export function sanitizeImageUrl(raw: string): string | null {
   const s = (raw || '').trim()
-  if (!s || s.length > CAP.url) return null
+  if (!s) return null
+  if (DATA_IMG_RE.test(s)) return s.length <= MAX_DATA_IMG_CHARS ? s : null
+  if (s.length > CAP.url) return null
   let candidate = s
   if (s.toLowerCase().startsWith('ipfs://')) {
     if (!IPFS_GATEWAY_URL) return null
@@ -442,6 +450,42 @@ export async function resolveCreatorMeta(
   // localStorage rung — the creator's own just-published blob (Phase A).
   const local = await verifyBlobFor(loadLocalMetadata(chainId, basket), basket, chainId, factory)
   if (local) return local
+
+  // ON-CHAIN rung (lab 2026-07-28) — the deployer's thesis note in the
+  // SpectrumNotes registry. Authorship replaces the signature: the read pins
+  // author == the basket's on-chain deployer AND subject == the basket, so
+  // only the deployer's own words can ever come back. Live on every site the
+  // moment the tx confirms — no operator step, no host.
+  const registry = chainCfg(chainId).notesRegistry
+  if (registry) {
+    try {
+      const deployer = await readDeployer(basket, chainId)
+      if (deployer) {
+        const hit = await fetchOnchainBasketMeta(clientFor(chainId), registry, deployer, basket)
+        if (hit) {
+          return toVerified(
+            {
+              basket: getAddress(basket),
+              supersedes: zeroAddress, // lineage stays on the SIGNED channel only
+              handle: '',
+              name: '',
+              avatarUrl: '',
+              bannerUrl: '',
+              tagline: hit.json.tagline ?? '',
+              thesis: hit.json.thesis ?? '',
+              sectors: hit.json.sectors ?? [],
+              timeHorizon: hit.json.timeHorizon ?? '',
+              postUrl: hit.json.postUrl ?? '',
+              issuedAt: Number(hit.blockNumber),
+            },
+            deployer,
+          )
+        }
+      }
+    } catch {
+      /* registry read failed (RPC hiccup) — the bundled/host rungs still apply */
+    }
+  }
 
   // site-bundled rung — blobs the operator committed into the build. This is what
   // makes a published thesis visible to EVERY visitor with no DB / host / server.

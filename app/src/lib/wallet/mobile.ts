@@ -20,9 +20,18 @@ export interface WalletAppLink {
   href: string
 }
 
-/** Coarse phone/tablet check — a UI hint, never a capability gate. */
+/** Coarse phone/tablet check — a UI hint, never a capability gate. iPadOS 13+
+ *  Safari reports a desktop "Macintosh" UA; the multi-touch probe catches it
+ *  (real Macs report maxTouchPoints 0; systems audit). */
 export function isMobileUA(ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent): boolean {
-  return /iphone|ipad|ipod|android/i.test(ua)
+  if (/iphone|ipad|ipod|android/i.test(ua)) return true
+  return /macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1
+}
+
+/** Fine-pointer check (desktop mouse/trackpad): gate `autoFocus` on pickers so
+ *  a phone doesn't pop the keyboard over the list it opened to BROWSE. */
+export function hasFinePointer(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
 }
 
 /** True when the page already has an injected EIP-1193 provider (inside a
@@ -32,10 +41,13 @@ export function hasInjectedProvider(): boolean {
   return typeof window !== 'undefined' && 'ethereum' in window && !!(window as { ethereum?: unknown }).ethereum
 }
 
-/** Deep links that open `url` inside each wallet app's dapp browser. Pure. */
+/** Deep links that open `url` inside each wallet app's dapp browser. Pure.
+ *  The MetaMask path/query tail is percent-encoded and carries the hash —
+ *  a raw `?basket=…&chain=…` rode un-namespaced on the universal link where
+ *  the link parser could eat it (systems audit; Phantom/Trust already encode). */
 export function walletAppLinks(url: string): WalletAppLink[] {
   const u = new URL(url)
-  const schemeless = `${u.host}${u.pathname}${u.search}`
+  const schemeless = `${u.host}${encodeURIComponent(`${u.pathname}${u.search}${u.hash}`)}`
   return [
     { name: 'MetaMask', href: `https://link.metamask.io/dapp/${schemeless}` },
     { name: 'Phantom', href: `https://phantom.app/ul/browse/${encodeURIComponent(url)}?ref=${encodeURIComponent(u.origin)}` },

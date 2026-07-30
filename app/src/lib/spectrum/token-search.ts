@@ -1,6 +1,7 @@
+import { stocksForChain } from '../chain/stocks'
 import { chainCfg } from '../chain/chains'
 import { cacheGet, cacheSet } from './persist-cache'
-import { verifiedTokens, type ListedToken } from './token-list'
+import { normalizeLogo, verifiedTokens, type ListedToken } from './token-list'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Token search by name/symbol for the launch basket builder.
@@ -186,7 +187,8 @@ async function batchDepth(
       cacheSet(`tokdepth:v1:${slug}:${key}`, agg, DEPTH_TTL_MS)
       out.set(key, agg)
     }
-  } catch {
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
     /* rate-limited/offline — cached depths above still serve this search */
   }
   return out
@@ -218,8 +220,62 @@ export async function searchTokens(
   const q = query.trim()
   if (q.length < 2) return []
   const cfg = chainCfg(chainId)
-  const slug = cfg.dexscreenerSlug // 'base' | 'ethereum' — matches DexScreener chainId
   const ql = q.toLowerCase()
+  const slug = cfg.dexscreenerSlug // 'base' | 'ethereum' — matches DexScreener chainId
+  // DexScreener-unindexed chain (Robinhood): the chain's own BLOCKSCOUT is the
+  // name index — its /api/v2/tokens?q= search knows every token on the chain
+  // (owner report 2026-07-29: typing "Pons" found nothing while PONS sat there
+  // with 21k holders; audit #2 caught the first landing of this attempt
+  // silently missing). Ranked by Blockscout's own order (holders); depth stays
+  // the builder's job downstream (findBestPool is the routability judge).
+  if (!slug) {
+    if (!cfg.explorer.includes('blockscout')) return []
+    try {
+      const r = await fetch(`${cfg.explorer}/api/v2/tokens?q=${encodeURIComponent(q)}`, {
+        signal,
+        headers: { Accept: 'application/json' },
+      })
+      if (!r.ok) return []
+      const j = (await r.json()) as {
+        items?: { address_hash?: string; address?: string; symbol?: string | null; name?: string | null; type?: string; icon_url?: string | null; circulating_market_cap?: string | null }[]
+      }
+      // The explorer orders by HOLDER COUNT, which a dust airdrop buys — so an
+      // impostor "USDG" could outrank the real one (redteam 2026-07-29 F-3).
+      // Three defences: the app's OWN curated registry wins identity (a curated
+      // match is the canonical address, marked verified and sorted first), the
+      // same relevance gate the DexScreener rung applies, and hygiene on every
+      // attacker-controlled string (https-only icons, length caps — H-1/H-2).
+      const curated = new Map(
+        stocksForChain(chainId).map((st) => [st.address.toLowerCase(), st.symbol.toUpperCase()]),
+      )
+      const rows = (j.items ?? [])
+        .filter((t) => (t.type ?? 'ERC-20') === 'ERC-20' && (t.address_hash || t.address) && t.symbol)
+        .map((t) => {
+          const address = (t.address_hash || t.address) as string
+          const symbol = (t.symbol as string).slice(0, 24)
+          const name = (t.name ?? (t.symbol as string)).slice(0, 64)
+          return {
+            address,
+            symbol,
+            name,
+            liquidityUsd: 0,
+            marketCapUsd: t.circulating_market_cap ? Number(t.circulating_market_cap) || 0 : 0,
+            volumeH24Usd: 0,
+            // "verified" here means EXACTLY one thing: this address is in the
+            // app's own curated registry for the chain. Never the explorer's word.
+            verified: curated.get(address.toLowerCase()) === symbol.toUpperCase(),
+            logoURI: normalizeLogo(t.icon_url ?? undefined),
+          }
+        })
+        // relevance: the explorer's fuzzy match is not a mandate
+        .filter((t) => t.symbol.toLowerCase().includes(ql) || t.name.toLowerCase().includes(ql))
+      // curated identity first; the rest keep the explorer's order
+      return [...rows.filter((t) => t.verified), ...rows.filter((t) => !t.verified)].slice(0, 6)
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e
+      return []
+    }
+  }
   const hubs = ethHubsFor(chainId)
 
   // ── pass 1: DexScreener search + the verified list, in parallel ────────────

@@ -10,8 +10,11 @@ import type { BasketData } from './basket-data'
 import { buildSwapQuote } from './swap-quote'
 import { encodeMintHookData, encodeRedeemHookData, clampSlippageBps } from './hook-data'
 import { fetchLifiQuote, LIFI_NATIVE } from './lifi'
+import type { HubToken as HubTokenT, PayToken as PayTokenT } from './pay-token'
 import { getStoredRef } from './referral'
 import { erc20ApproveAbi, erc20BalanceAbi, swapRouterAbi } from './abis-v2'
+import { simulateSwapOut } from './swap-sim'
+import type { Side } from './use-basket-swap'
 
 // ERC-20 Transfer event — used to measure what a swap ACTUALLY delivered from its
 // receipt logs (canonical; immune to lagging-RPC balance reads).
@@ -48,9 +51,19 @@ import { friendlyRevert } from './decode-revert'
 // on this deployment — verified against the live bytecode), so multi-leg routes
 // are sequenced transactions with per-step status, simulate-before-sign and
 // named reverts. USDC routes stay the classic approve → swap two-step.
+//
+// ANY-TOKEN pay/receive (owner 2026-07-29, ease-of-buying batch 2): the pay
+// side may also be an arbitrary ERC-20 (`PayToken` kind 'erc20'). Its hub leg
+// always rides the guarded same-chain LiFi path — on every chain, including
+// those with Uniswap infra, because best-route discovery across venues is the
+// aggregator's job — and the delivered settlement is still MEASURED from the
+// receipt's Transfer logs before the untouched, protected basket leg runs. On
+// sell, the mirror: the protected redeem lands settlement, then LiFi converts
+// it to the asked token (a failure there strands nothing — the settlement
+// asset is already in the holder's wallet).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type HubToken = 'ETH' | 'WETH' | 'USDC'
+export type { HubToken, PayToken } from './pay-token'
 export type DexDirection = 'buy' | 'sell'
 
 /** SwapRouter02's ADDRESS_THIS sentinel — keeps the hop's WETH in the router so
@@ -89,9 +102,14 @@ export interface DexStep {
 export function useDexSwap(
   ix: BasketData | null,
   direction: DexDirection,
-  hub: HubToken,
+  pay: PayTokenT,
   chainId: number,
 ) {
+  // The hub-token view of the pay side; null when the pay side is an arbitrary
+  // ERC-20 (every `hub === …` comparison below is then false, which routes the
+  // erc20 branches). All erc20 legs execute through LiFi.
+  const hub: HubTokenT | null = pay.kind === 'hub' ? pay.hub : null
+  const erc20Pay = pay.kind === 'erc20' ? pay : null
   const cfg = chainCfg(chainId)
   const dep = deploymentFor(chainId)
   const { address, isConnected, chainId: walletChainId } = useAccount()
@@ -114,6 +132,35 @@ export function useDexSwap(
   const walletReady = isConnected && walletChainId === chainId
   const spectrumRouter = dep.swapRouter
   const usdc = dep.usdc
+
+  // Price the basket leg by SIMULATING it, so the floors haircut the realised fill
+  // rather than a frictionless spot/NAV figure. The /swap page shares
+  // swap-quote.ts with the token panel and had the identical break: frictionless
+  // floors reverted sells above ~5 shares and buys at EVERY size (see swap-sim.ts).
+  // undefined ⇒ buildSwapQuote degrades to its estimate; never blocks a route.
+  const simRealised = async (side: Side, amountRaw: bigint): Promise<bigint | undefined> => {
+    if (!publicClient || !spectrumRouter || !usdc || !address || !ix || amountRaw <= 0n) return undefined
+    const tokenIn = side === 'buy' ? (usdc as Address) : (ix.address as Address)
+    const allow = (await publicClient
+      .readContract({
+        address: tokenIn,
+        abi: erc20ApproveAbi,
+        functionName: 'allowance',
+        args: [address, spectrumRouter as Address],
+      })
+      .catch(() => 0n)) as bigint
+    const out = await simulateSwapOut(publicClient, {
+      side,
+      basket: ix.address as Address,
+      settlement: usdc as Address,
+      router: spectrumRouter as Address,
+      amountIn: amountRaw,
+      legCount: ix.holdings.length,
+      holder: address,
+      allowanceCovers: allow >= amountRaw,
+    })
+    return out ?? undefined
+  }
   const weth = dep.weth
   const router02 = dep.uniV3SwapRouter
   const quoter = dep.uniV3Quoter
@@ -122,7 +169,10 @@ export function useDexSwap(
   // ETH ↔ settlement hop quotes/executes through LiFi's source-verified diamond
   // (lifi.ts, guards included). Only ever active where uni infra is absent.
   const lifiHub = cfg.externalHubRouter === 'lifi' && !hubConfigured
-  const configured = SWAP_ENABLED && !!spectrumRouter && !!usdc && (hub === 'USDC' || hubConfigured || lifiHub)
+  // An erc20 pay/receive side needs no on-chain router config — its hub leg is
+  // the LiFi HTTP path (offer-gated per chain by cfg.hasLifi in the UI).
+  const configured =
+    SWAP_ENABLED && !!spectrumRouter && !!usdc && (!!erc20Pay || hub === 'USDC' || hubConfigured || lifiHub)
 
   const patchTx = useCallback((key: string, p: Partial<DexTxState>) => {
     setTxs((s) => ({ ...s, [key]: { ...(s[key] ?? TX_IDLE), ...p } }))
@@ -151,7 +201,7 @@ export function useDexSwap(
         })
       }
       if (hub === 'ETH') return client.getBalance({ address })
-      const token = hub === 'WETH' ? weth : usdc
+      const token = erc20Pay ? erc20Pay.address : hub === 'WETH' ? weth : usdc
       if (!token) return 0n
       return client.readContract({ address: token, abi: erc20BalanceAbi, functionName: 'balanceOf', args: [address] })
     }
@@ -165,7 +215,7 @@ export function useDexSwap(
     return () => {
       stale = true
     }
-  }, [address, chainId, direction, hub, ix, usdc, weth, done])
+  }, [address, chainId, direction, hub, erc20Pay, ix, usdc, weth, done])
 
   // ── quoting (debounced by the caller; abortable by sequence) ───────────────
   const refreshQuote = useCallback(
@@ -174,6 +224,9 @@ export function useDexSwap(
       setQuoteError(null)
       if (!ix || amountInRaw <= 0n || !Number.isFinite(feeFrac)) {
         setQuote(null)
+        // the seq bump orphans any in-flight call's finally — clear the flag
+        // here or the "…" pulse sticks until the next successful quote (audit #5)
+        setQuoting(false)
         return
       }
       setQuoting(true)
@@ -186,7 +239,27 @@ export function useDexSwap(
           let usdcLegRaw = amountInRaw
           let hubFee: number | null = null
           if (hub !== 'USDC') {
-            if (hubConfigured) {
+            if (erc20Pay) {
+              // Any-token pay: the guarded same-chain LiFi leg prices the token
+              // → settlement hop; the basket leg quotes off its output as usual.
+              if (!address) throw new Error('Connect a wallet to quote this route.')
+              const lq = await fetchLifiQuote({
+                chainId,
+                fromToken: erc20Pay.address,
+                toToken: usdc!,
+                fromAmount: amountInRaw,
+                fromAddress: address,
+                slippageBps: slip,
+              })
+              if (seq !== quoteSeq.current) return
+              // Chain FLOOR→FLOOR, never estimate→floor (audit 2026-07-29):
+              // "Minimum received" has to be a number the user is actually
+              // guaranteed, so the basket leg's floor is derived from the hub's
+              // router-enforced minimum. Execution re-measures the delivered
+              // amount anyway, so this only makes the pre-click figure honest
+              // (and conservative, which errs the user's way).
+              usdcLegRaw = lq.toAmountMin
+            } else if (hubConfigured) {
               const q = await bestExactInTier(client, quoter!, weth!, usdc!, amountInRaw)
               if (!q) throw new Error('No WETH/USDC route quoted.')
               usdcLegRaw = q.amount
@@ -201,7 +274,7 @@ export function useDexSwap(
                 slippageBps: slip,
               })
               if (seq !== quoteSeq.current) return
-              usdcLegRaw = lq.toAmount
+              usdcLegRaw = lq.toAmountMin // floor→floor, as above
             } else if (lifiHub) {
               throw new Error('Connect a wallet to quote this route.')
             } else {
@@ -209,8 +282,10 @@ export function useDexSwap(
             }
           }
           const usdcFloat = Number(formatUnits(usdcLegRaw, USDC_DECIMALS))
+          const realisedBuy = await simRealised('buy', usdcLegRaw)
           const bq = buildSwapQuote({
             side: 'buy',
+            realisedOutRaw: realisedBuy,
             amount: usdcFloat,
             navPerToken: ix.navPerToken,
             feeFrac,
@@ -220,9 +295,14 @@ export function useDexSwap(
           })
           if (seq !== quoteSeq.current) return
           if (!bq) throw new Error('Basket quote unavailable (a leg is unpriced or the amount rounds to zero).')
-          // Display estimate: pre-slippage expected shares off NAV; the floor is minOutRaw.
+          // Display estimate: the SIMULATED realised fill when the sim delivered
+          // one — NAV math is fee-only and arithmetically cannot show impact, so
+          // it reads "paid minus fee" at any size (audit R5). NAV shares stay as
+          // the degrade path; the signed floor is minOutRaw either way, and the
+          // shown figure never dips below it.
           const estShares = (usdcFloat * (1 - feeFrac)) / ix.navPerToken
-          const outRaw = BigInt(Math.floor(estShares * 10 ** Math.min(ix.decimals, 18)))
+          const navOutRaw = BigInt(Math.floor(estShares * 10 ** Math.min(ix.decimals, 18)))
+          const outRaw = realisedBuy != null && realisedBuy > 0n ? realisedBuy : navOutRaw
           setQuote({
             amountInRaw,
             outRaw: outRaw > bq.minOutRaw ? outRaw : bq.minOutRaw,
@@ -234,8 +314,10 @@ export function useDexSwap(
         } else {
           // basket → USDC, then optionally USDC → WETH/ETH
           const sharesFloat = Number(formatUnits(amountInRaw, Math.min(ix.decimals, 18)))
+          const realisedSell = await simRealised('sell', amountInRaw)
           const bq = buildSwapQuote({
             side: 'sell',
+            realisedOutRaw: realisedSell,
             amount: sharesFloat,
             navPerToken: ix.navPerToken,
             feeFrac,
@@ -247,7 +329,21 @@ export function useDexSwap(
           let outRaw = bq.minOutRaw
           let hubFee: number | null = null
           if (hub !== 'USDC') {
-            if (hubConfigured) {
+            if (erc20Pay) {
+              // Any-token receive: settlement → asked token through LiFi; the
+              // shown figure is the router-enforced floor, never the estimate.
+              if (!address) throw new Error('Connect a wallet to quote this route.')
+              const lq = await fetchLifiQuote({
+                chainId,
+                fromToken: usdc!,
+                toToken: erc20Pay.address,
+                fromAmount: bq.minOutRaw,
+                fromAddress: address,
+                slippageBps: slip,
+              })
+              if (seq !== quoteSeq.current) return
+              outRaw = lq.toAmountMin
+            } else if (hubConfigured) {
               const q = await bestExactInTier(client, quoter!, usdc!, weth!, bq.minOutRaw)
               if (!q) throw new Error('No USDC/WETH route quoted.')
               outRaw = minOutFor(q.amount, BigInt(slip))
@@ -287,7 +383,7 @@ export function useDexSwap(
         if (seq === quoteSeq.current) setQuoting(false)
       }
     },
-    [address, chainId, direction, hub, hubConfigured, lifiHub, ix, quoter, usdc, weth],
+    [address, chainId, direction, pay, hubConfigured, lifiHub, ix, quoter, usdc, weth],
   )
 
   // ── the executable steps for the CTA/progress display ──────────────────────
@@ -298,6 +394,11 @@ export function useDexSwap(
     (sym: string): DexStep[] => {
       if (direction === 'buy') {
         const list: DexStep[] = []
+        if (erc20Pay)
+          list.push(
+            { key: 'approve-in', label: `Approve ${erc20Pay.symbol}` },
+            { key: 'hub-in', label: `Swap ${erc20Pay.symbol} → ${usdcSym}` },
+          )
         if (hub === 'ETH') list.push({ key: 'hub-in', label: `Swap ETH → ${usdcSym}` })
         if (hub === 'WETH')
           list.push({ key: 'approve-in', label: 'Approve WETH' }, { key: 'hub-in', label: `Swap WETH → ${usdcSym}` })
@@ -308,14 +409,19 @@ export function useDexSwap(
         { key: 'approve-in', label: `Approve $${sym}` },
         { key: 'spectrum', label: `Sell $${sym} → ${usdcSym}` },
       ]
-      if (hub !== 'USDC')
+      if (erc20Pay)
+        list.push(
+          { key: 'approve-usdc', label: `Approve ${usdcSym}` },
+          { key: 'hub-out', label: `Swap ${usdcSym} → ${erc20Pay.symbol}` },
+        )
+      else if (hub !== 'USDC')
         list.push(
           { key: 'approve-usdc', label: `Approve ${usdcSym}` },
           { key: 'hub-out', label: hub === 'ETH' ? `Swap ${usdcSym} → ETH` : `Swap ${usdcSym} → WETH` },
         )
       return list
     },
-    [direction, hub, usdcSym],
+    [direction, hub, erc20Pay, usdcSym],
   )
 
   // ── execution ───────────────────────────────────────────────────────────────
@@ -373,9 +479,34 @@ export function useDexSwap(
           // ── hub leg: ETH/WETH → settlement (Uniswap where present, LiFi where not) ──
           let usdcIn = amountInRaw
           if (hub !== 'USDC') {
-            if (!hubConfigured && !lifiHub) throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
+            if (!erc20Pay && !hubConfigured && !lifiHub)
+              throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
             let hubReceipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>
-            if (lifiHub && !hubConfigured) {
+            if (erc20Pay) {
+              // Any-token pay leg: fresh guarded LiFi route at execution; approve
+              // EXACTLY the pay amount to the spender (parseLifiQuote pinned
+              // target == spender and value == 0 for ERC-20 pay), send verbatim.
+              // Delivery is measured from the receipt below, like every hub leg.
+              const lq = await fetchLifiQuote({
+                chainId,
+                fromToken: erc20Pay.address,
+                toToken: usdc,
+                fromAmount: amountInRaw,
+                fromAddress: holder,
+                slippageBps: slip,
+              })
+              await approveIfNeeded('approve-in', erc20Pay.address, lq.approvalAddress, amountInRaw)
+              patchTx('hub-in', { status: 'signing', error: null })
+              const h = await sendTransactionAsync({
+                to: lq.tx.to,
+                data: lq.tx.data,
+                value: lq.tx.value,
+                gas: lq.tx.gasLimit ?? undefined,
+                chainId,
+              })
+              patchTx('hub-in', { status: 'confirming', hash: h })
+              hubReceipt = await publicClient.waitForTransactionReceipt({ hash: h })
+            } else if (lifiHub && !hubConfigured) {
               // LiFi: re-quote at execution (fresh route + floor), approve only for
               // ERC-20 pay (ETH rides tx.value), send the guarded transactionRequest
               // verbatim. parseLifiQuote already enforced target==spender, echoed
@@ -460,8 +591,10 @@ export function useDexSwap(
 
           // ── basket leg: floors recomputed off the MEASURED USDC ──
           const usdcFloat = Number(formatUnits(usdcIn, USDC_DECIMALS))
+          const realisedBuyExec = await simRealised('buy', usdcIn)
           const bq = buildSwapQuote({
             side: 'buy',
+            realisedOutRaw: realisedBuyExec,
             amount: usdcFloat,
             navPerToken: ix.navPerToken,
             feeFrac,
@@ -549,8 +682,10 @@ export function useDexSwap(
         } else {
           // ── SELL: basket → USDC (protected), then optional USDC → WETH/ETH ──
           const sharesFloat = Number(formatUnits(amountInRaw, Math.min(ix.decimals, 18)))
+          const realisedSell = await simRealised('sell', amountInRaw)
           const bq = buildSwapQuote({
             side: 'sell',
+            realisedOutRaw: realisedSell,
             amount: sharesFloat,
             navPerToken: ix.navPerToken,
             feeFrac,
@@ -587,6 +722,35 @@ export function useDexSwap(
 
           if (hub === 'USDC' || usdcOut <= 0n) {
             setDone({ hash: h })
+          } else if (erc20Pay) {
+            // Any-token receive: settlement → the asked token through the guarded
+            // LiFi leg. A failure here strands nothing — the settlement asset is
+            // already in the holder's wallet; the error says so plainly.
+            const lq = await fetchLifiQuote({
+              chainId,
+              fromToken: usdc,
+              toToken: erc20Pay.address,
+              fromAmount: usdcOut,
+              fromAddress: holder,
+              slippageBps: slip,
+            }).catch((e) => {
+              throw new Error(
+                `${e instanceof Error ? e.message : 'No route.'} Your ${cfg.usdcSymbol} is in your wallet; convert it manually.`,
+              )
+            })
+            await approveIfNeeded('approve-usdc', usdc, lq.approvalAddress, usdcOut)
+            patchTx('hub-out', { status: 'signing', error: null })
+            const h3 = await sendTransactionAsync({
+              to: lq.tx.to,
+              data: lq.tx.data,
+              value: lq.tx.value,
+              gas: lq.tx.gasLimit ?? undefined,
+              chainId,
+            })
+            patchTx('hub-out', { status: 'confirming', hash: h3 })
+            await publicClient.waitForTransactionReceipt({ hash: h3 })
+            patchTx('hub-out', { status: 'success' })
+            setDone({ hash: h3 })
           } else if (lifiHub && !hubConfigured) {
             // LiFi hub-out: settlement → native ETH through the verified diamond.
             // A failure here strands nothing — the settlement asset is already in
@@ -711,7 +875,7 @@ export function useDexSwap(
         setRunning(false)
       }
     },
-    [address, cfg.name, cfg.usdcSymbol, chainId, configured, direction, hub, hubConfigured, lifiHub, ix, patchTx, publicClient, quoter, queryClient, router02, sendTransactionAsync, spectrumRouter, usdc, usdcSym, walletReady, weth, writeContractAsync],
+    [address, cfg.name, cfg.usdcSymbol, chainId, configured, direction, pay, hubConfigured, lifiHub, ix, patchTx, publicClient, quoter, queryClient, router02, sendTransactionAsync, spectrumRouter, usdc, usdcSym, walletReady, weth, writeContractAsync],
   )
 
   return {

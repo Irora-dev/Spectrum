@@ -33,11 +33,7 @@ export function ShareEarnNudge({
     'press inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan'
   return (
     <div className={className}>
-      <p className="font-mono text-[10px] leading-relaxed text-teal/90">
-        Your link earns ~5% of the fee on buys through it.{' '}
-        <a href="/refer" className="underline underline-offset-2 hover:text-cyan">Refer &amp; earn</a>
-      </p>
-      <div className={`mt-2 flex gap-2 ${center ? 'justify-center' : ''}`}>
+      <div className={`flex gap-2 ${center ? 'justify-center' : ''}`}>
         <a href={share.xHref} target="_blank" rel="noreferrer" className={btn}>
           Share on X
           <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

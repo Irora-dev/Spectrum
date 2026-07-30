@@ -6,6 +6,7 @@ import { KIT_VERSION, KIT_UPDATE_MANIFEST_URL, type KitUpdateManifest } from '..
 import type { BrandConfig, DesignStyle, PageKey } from '../theme/brand'
 import { PAGE_KEYS, validateSiteName } from '../theme/brand'
 import { applyBrand } from '../theme/theme'
+import { AnnounceComposer } from '../components/AnnounceComposer'
 import { GRADIENT_CATALOG } from '../theme/catalog'
 import { brandConfigToTs } from '../theme/export-brand'
 import type { DeployConfig, DeployIssues } from '../theme/export-env'
@@ -112,7 +113,8 @@ const STYLES: { id: DesignStyle; blurb: string }[] = [
 const PAGE_LABELS: Record<PageKey, string> = {
   discover: 'Discover / Explore', launch: 'Launch + Composer', trade: 'Swap (buy / sell)',
   fees: 'Flush (fee console)', portfolio: 'Portfolio', creators: 'Creators',
-  refer: 'Refer & earn', integrate: 'Integrate', docs: 'Docs / FAQ / Learn',
+  refer: 'Refer & earn', league: 'Creator league', bundle: 'Bundles (cross-chain)',
+  claim: 'PRISM claim (community airdrop)', integrate: 'Integrate', docs: 'Docs / FAQ / Learn',
 }
 
 // Live design studio: the operator customizes the site's look + pages ON the site and
@@ -331,6 +333,13 @@ export function Setup() {
         </div>
       )}
 
+      {/* operator-only: the on-chain site banner (zero-backend CMS) */}
+      {isOperator && (
+        <div className="mb-5">
+          <AnnounceComposer />
+        </div>
+      )}
+
       <section className="space-y-6 rounded-3xl border border-line card-surface p-6">
         {/* Identity */}
         <div className="space-y-3">
@@ -392,6 +401,57 @@ export function Setup() {
               </label>
             ))}
           </div>
+          {/* stock surfaces (owner 2026-07-29): default ON; off hides the
+              launcher stock shelf + the stocks banner + stock badges. It hides
+              SURFACES only — a pasted stock address still resolves honestly. */}
+          <label className="mt-1 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-sm text-ink-dim">
+            <input
+              type="checkbox"
+              checked={draft.stocks !== false}
+              onChange={() => setDraft((d) => ({ ...d, stocks: d.stocks === false ? undefined : false }))}
+              className="accent-cyan"
+            />
+            Tokenized-stock surfaces
+            <InfoDot>
+              On Robinhood Chain the launcher offers the official tokenized stocks (NVDA, SPY, …) and the
+              site shows stocks-and-tokens messaging. Turn off to hide every stock surface; this does not
+              block a pasted stock address, routability stays the chain&rsquo;s own truth.
+            </InfoDot>
+          </label>
+
+          {/* curated launch starters — third-party token addresses suggested on
+              YOUR site, so operator-droppable (2026-07-30) */}
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-dim">
+            <input
+              type="checkbox"
+              checked={draft.starterTokens !== false}
+              onChange={() => setDraft((d) => ({ ...d, starterTokens: d.starterTokens === false ? undefined : false }))}
+              className="accent-cyan"
+            />
+            Suggested starter tokens
+            <InfoDot>
+              A small curated seed set the launch shelves fall back to before a chain has baskets of its
+              own to learn from. These are third-party tokens suggested on your site; turn off and the
+              shelf is purely organic, the most-used constituents of live baskets.
+            </InfoDot>
+          </label>
+
+          {/* the Prism ecosystem credit — an OUTBOUND third-party link on the
+              operator's own site, so it has to be droppable (2026-07-30) */}
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-dim">
+            <input
+              type="checkbox"
+              checked={draft.prismCredit !== false}
+              onChange={() => setDraft((d) => ({ ...d, prismCredit: d.prismCredit === false ? undefined : false }))}
+              className="accent-cyan"
+            />
+            &ldquo;Powered by Prism&rdquo; banner
+            <InfoDot>
+              A small pill on the home, basket, swap and fee pages linking out to Prism Beat. Turn off to
+              remove every instance. The protocol&rsquo;s PRISM buy-and-burn leg is contract-side and is
+              unaffected either way.
+            </InfoDot>
+          </label>
         </div>
       </section>
 
@@ -537,8 +597,11 @@ export function Setup() {
 
       {applied === 'done' && (
         // The baton-pass popup: the click's job is done here; the terminal
-        // continues the setup. Survives the post-apply reload via the sessionStorage flag.
-        <div className="fixed inset-0 z-50 grid place-items-center bg-void/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Setup applied">
+        // continues the setup. Survives the post-apply reload via the
+        // sessionStorage flag. z-[90] = the site's modal tier: at z-50 this
+        // TIED the mobile tab bar, which followed in DOM order and painted
+        // over the dialog, fully interactive (mobile audit M).
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-void/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Setup applied">
           <div className="w-full max-w-md rounded-3xl border border-teal/40 card-surface p-6 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.9)]">
             <p className="font-mono text-xs uppercase tracking-[0.16em] text-teal">✓ Applied, your site is running this setup</p>
             <h2 className="mt-2 font-display text-2xl font-bold uppercase">Great, now head back to your terminal</h2>

@@ -11,11 +11,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { encodeAbiParameters, formatUnits, keccak256, toHex, type Address } from 'viem'
-import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
+import { clientFor, hasPrivateRpc, publicWideLogsRisky } from '../chain/rpc'
 import { chainCfg } from '../chain/chains'
 import { V4_POOLS_SLOT } from '../chain/constants'
 import { cacheGet, cacheSet } from '../spectrum/persist-cache'
 import { poolManagerExtsloadAbi, v4InitializeEvent } from './abis'
+import { V4_PROBE_TIERS } from './types'
 import { DYNAMIC_FEE_FLAG, NATIVE_ETH, type PoolKey } from './types'
 
 const POOL_KEY_ABI = [
@@ -36,16 +37,29 @@ export function v4PoolId(key: PoolKey): `0x${string}` {
   return keccak256(encodeAbiParameters(POOL_KEY_ABI, [key]))
 }
 
+/** One retry for transient RPC blips — the parallel V2/V3 paths retry every
+ *  read; these anchor ETH/USD + every leg's USD, so a blip must not null them. */
+async function retryOnce<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch {
+    await new Promise((r) => setTimeout(r, 150))
+    return fn()
+  }
+}
+
 /** slot0 price as raw-currency1 per raw-currency0 ((sqrtP/2^96)^2), or null. */
 async function slot0Price1Per0(chainId: number, poolManager: Address, id: `0x${string}`): Promise<number | null> {
   try {
     const base = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [id, V4_POOLS_SLOT]))
-    const word = await clientFor(chainId).readContract({
-      address: poolManager,
-      abi: poolManagerExtsloadAbi,
-      functionName: 'extsload',
-      args: [base],
-    })
+    const word = await retryOnce(() =>
+      clientFor(chainId).readContract({
+        address: poolManager,
+        abi: poolManagerExtsloadAbi,
+        functionName: 'extsload',
+        args: [base],
+      }),
+    )
     const sqrtP = BigInt(word) & ((1n << 160n) - 1n)
     if (sqrtP === 0n) return null
     const ratio = Number(sqrtP) / 2 ** 96
@@ -56,23 +70,42 @@ async function slot0Price1Per0(chainId: number, poolManager: Address, id: `0x${s
   }
 }
 
-/** ETH-side virtual depth (same math as the detector) — hub-pool ranking only. */
+/** ETH-side virtual depth (same math as the detector) — hub-pool ranking only.
+ *  -1 = READ FAILURE (post-retry), the same sentinel as the detector's
+ *  v4DepthEth: a failed read must be distinguishable from an empty pool, or a
+ *  blip on the deepest tier crowns a dust pool as the ETH/USD anchor. */
 async function depthEth(chainId: number, poolManager: Address, id: `0x${string}`): Promise<number> {
   try {
     const base = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [id, V4_POOLS_SLOT]))
     const liquiditySlot = toHex(BigInt(base) + 3n, { size: 32 })
     const client = clientFor(chainId)
-    const [slot0Word, liqWord] = await Promise.all([
-      client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [base] }),
-      client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [liquiditySlot] }),
-    ])
+    const [slot0Word, liqWord] = await retryOnce(() =>
+      Promise.all([
+        client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [base] }),
+        client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [liquiditySlot] }),
+      ]),
+    )
     const sqrtP = BigInt(slot0Word) & ((1n << 160n) - 1n)
     const liquidity = BigInt(liqWord) & ((1n << 128n) - 1n)
     if (sqrtP === 0n || liquidity === 0n) return 0
     return Number(formatUnits((liquidity << 96n) / sqrtP, 18))
   } catch {
-    return 0
+    return -1
   }
+}
+
+/** Rank candidate hub pools by depth: the deepest POSITIVE wins; any -1 marks
+ *  the sweep incomplete (a possibly-deeper pool went unread). */
+function pickDeepest(ids: `0x${string}`[], depths: number[]): { id: `0x${string}` | null; incomplete: boolean } {
+  let best: `0x${string}` | null = null
+  let bestDepth = 0
+  ids.forEach((id, i) => {
+    if (depths[i] > bestDepth) {
+      bestDepth = depths[i]
+      best = id
+    }
+  })
+  return { id: best, incomplete: depths.some((d) => d === -1) }
 }
 
 interface HubPoolCache {
@@ -96,7 +129,29 @@ async function hubPoolId(chainId: number): Promise<`0x${string}` | null> {
   const inflight = hubInflight.get(chainId)
   if (inflight) return inflight
   const run = (async (): Promise<`0x${string}` | null> => {
-    if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return cached?.id ?? null
+    if (!hasPrivateRpc(chainId) && publicWideLogsRisky(chainId)) return cached?.id ?? null
+    // Logs-free candidate set FIRST (owner sweep 2026-07-29): the hub key shape
+    // is fully known ({ETH, settlement} hookless at a handful of tiers), so a
+    // direct storage probe finds it on ANY endpoint — the full-range Initialize
+    // scan on the capped public RPC was failing and zeroing EVERY depth/price
+    // downstream (ethUsd null → depthUsd null across the launcher).
+    const probeBest = async (): Promise<{ id: `0x${string}` | null; incomplete: boolean }> => {
+      const ids = V4_PROBE_TIERS.map((t) =>
+        v4PoolId({ currency0: NATIVE_ETH, currency1: cfg.usdc!, fee: t.fee, tickSpacing: t.tickSpacing, hooks: '0x0000000000000000000000000000000000000000' }),
+      )
+      const depths = await Promise.all(ids.map((id) => depthEth(chainId, cfg.poolManager!, id)))
+      return pickDeepest(ids, depths)
+    }
+    // An INCOMPLETE sweep (some depth reads failed) must not overwrite the
+    // anchor: the failed read may be the deepest tier, and a wrong crown is
+    // cached 6h and skews every USD figure on the chain. Prefer the stale
+    // cache; with none, use the best-of-what-read WITHOUT caching (next call
+    // re-ranks). Only a complete sweep persists. (Sentinel sweep, F7.)
+    const settle = (pick: { id: `0x${string}` | null; incomplete: boolean }): `0x${string}` | null => {
+      if (pick.incomplete) return cached?.id ?? pick.id ?? null
+      if (pick.id) cacheSet(cacheKey, { id: pick.id, pickedAt: Date.now() } satisfies HubPoolCache, 0)
+      return pick.id ?? cached?.id ?? null
+    }
     try {
       const client = clientFor(chainId)
       const latest = await client.getBlockNumber()
@@ -113,20 +168,15 @@ async function hubPoolId(chainId: number): Promise<`0x${string}` | null> {
       // Bounded + CONCURRENT: rank the first 24 eligible pools by ETH-side depth
       // in one batched pass (Multicall3 coalesces) — sequential reads against the
       // rate-limited public RPC were a visible stall (owner 2026-07-11).
-      const ranked = eligible.slice(0, 24)
-      const depths = await Promise.all(ranked.map((a) => depthEth(chainId, cfg.poolManager!, a.id as `0x${string}`)))
-      let best: `0x${string}` | null = null
-      let bestDepth = 0
-      ranked.forEach((a, i) => {
-        if (depths[i] > bestDepth) {
-          bestDepth = depths[i]
-          best = a.id as `0x${string}`
-        }
-      })
-      if (best) cacheSet(cacheKey, { id: best, pickedAt: Date.now() } satisfies HubPoolCache, 0)
-      return best ?? cached?.id ?? null
+      const ranked = eligible.map((a) => a.id as `0x${string}`).slice(0, 24)
+      const depths = await Promise.all(ranked.map((id) => depthEth(chainId, cfg.poolManager!, id)))
+      const scanned = pickDeepest(ranked, depths)
+      if (scanned.id || scanned.incomplete) return settle(scanned)
+      return settle(await probeBest()) // scan empty → the known-shape probe
     } catch {
-      return cached?.id ?? null
+      // scan refused (range caps) → the logs-free probe, else the stale cache
+      const probed = await probeBest().catch(() => ({ id: null, incomplete: true }))
+      return settle(probed)
     }
   })()
   hubInflight.set(chainId, run)

@@ -7,6 +7,226 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.07.30
+
+Sacred: launch, swap — the launch page's suggestion shelf changed, the swap console's
+**displayed** receive estimate now comes from a simulated fill instead of NAV arithmetic,
+and the canonical address book gained Robinhood Chain's new launch-ceremony contracts.
+The signed **minimum received** is untouched on both paths and every per-leg minimum still
+commits exactly as before. `impact: config` because there are new `brand.config.ts` keys —
+all default-ON, so an existing config keeps behaving identically.
+
+### Robinhood Chain contracts are LIVE in the canonical book
+
+The 4663 entry now carries the launch-ceremony deployment, every address read back
+on-chain before seating and proven by a real basket launch through this kit the same
+night: the basket factory (flat **0.003 ETH** launch fee; baskets are community-created —
+this kit is the creation surface), the swap router, the creator-league pool (the 5%
+league carve now shows in every fee split there), and the notes registry (theses,
+bundles and the social layer work on 4663). Launches respect the factory's 10-block
+cooldown: while it's closed the builder shows **"next slot opens in ~N blocks"** read
+from the chain, never a stale price, and launch-path reverts (`SlotNotOpen`,
+`MaxCostExceeded`, `InsufficientPayment`) all decode to plain language. The launch copy
+no longer says "auction" anywhere — the fee is read live either way. Base and Ethereum
+stay on their existing live contracts until their ceremony legs land. Also new:
+`npm run verify:deployments` reads the whole book back from the live chains (code at
+every address, factory/league/notes invariants) so nobody ever trusts a pasted address.
+
+### PRISM trading holds up when aggregator coverage blinks
+
+The PRISM trade card quotes and fills the {ETH, PRISM} v4 pool **directly** (canonical
+quoter + Universal Router, minimum enforced on-chain, Permit2 for sells) whenever the
+routing service has no route — its coverage of the young pool proved transient within a
+day. Every route, aggregator or pool, now simulates the exact transaction bytes before
+your wallet sees them, the card gained the swap console's slippage knob, and the claim
+page's network-fee estimate follows the wallet that actually pays.
+
+### Fee pots under a chain's crank floor say so
+
+On Ethereum the contracts refuse frontend-fee flushes at or under 10 USDC (the crank
+bounty floor). Everywhere such a pot appears — /earn's claimable headline, claim-all,
+the nav badges, both flush-console lists, the crank-all sweep — it now reads
+**"accruing · flushes over $10"** instead of posing as claimable, and the sweep skips it
+the way sub-threshold burns are skipped. Base and Robinhood have no floor; nothing
+changes there.
+
+### Mobile is a first-class surface now
+
+Nothing to configure.
+
+- **A bottom tab bar is the phone navigation** (Home · Explore · Swap · Portfolio · More),
+  replacing the top burger menu. It reads the same gated link model as the desktop menu, so
+  your `pages` choices govern both, and it hides once the full top menu fits. It steps out
+  of the way while the on-screen keyboard is up, and re-tapping the active tab scrolls to
+  top. More opens a bottom sheet with drag-to-dismiss.
+- **The basket page grows a mini-buy bar** once the swap console scrolls out of reach — one
+  tap back to the single console, never a second one.
+- **Overlays are reachable on a phone.** A dialog taller than the viewport used to overflow
+  off *both* ends with nowhere to scroll — the buy-success **Done** button was unreachable
+  on most phones. Fixed for the buy overlay, the walkthrough and the share card, with
+  safe-area padding so the last row clears the home indicator.
+- Text inputs sit at the 16px floor iOS needs to stop auto-zooming on focus; numeric fields
+  raise a Done key; token pickers no longer open the keyboard over the list you meant to
+  browse; hidden-scrollbar rails carry an edge fade; the launch builder's rows breathe at
+  375px; the quick-buy strip is container-queried so its controls can never overlap at any
+  embedded width.
+- **The animated background stops drawing** under `prefers-reduced-motion` (it used to
+  redraw an identical frame ~60×/second) and in the flat design styles that hide it, and it
+  no longer reallocates its buffer while the mobile URL bar collapses mid-scroll.
+- **Hero art ships phone-sized variants**, so a phone stops decoding 4K images (the home
+  hero drops ~1.2 MB → ~125 KB) and the below-fold league banner loads lazily.
+- **Your PWA manifest is branded.** It said "Baskets" on every operator's Android install
+  prompt regardless of your name, and its absolute URLs 404'd under IPFS/ENS gateway paths,
+  which killed installability. Both fixed; the manifest is generated at build time.
+- **Your browser tab carries your name.** Every route title hardcoded "Spectrum",
+  overwriting the build-time branding one frame after load.
+
+### New product knobs in `brand.config.ts`
+
+All default-ON — omit a key and you get it; only an explicit `false` turns it off. The
+`/setup` studio and the CLI wizard both set them. Full table: `app/OPERATORS.md` →
+"Product knobs".
+
+- `prismCredit` — a small "Powered by Prism" banner on the home, basket, swap and fee
+  pages, linking out to Prism Beat. `false` removes every instance; the protocol's PRISM
+  buy-and-burn leg is contract-side and unaffected either way.
+- `starterTokens` — a small curated starter set the launch shelves fall back to before your
+  chain has baskets of its own to learn from. `false` leaves the shelf purely organic.
+- **`stocks: false` now also drops stock suggestions** from the launch shelf. It hid every
+  stock *surface* while the shelf still suggested tokenized stocks.
+- **The CLI wizard reached parity with the studio.** `--no-stocks` was parsed as a page name
+  and silently ignored; `bundle` was missing from its page list; and it could not write
+  `stocks` / `setupStudio` / `defaultChainId` at all, which the studio could. All fixed, and
+  `--default-chain-id` is new. Both drift hazards are now pinned by tests.
+- **The `/setup` studio's Apply no longer rejects the default site name.** The dev-server
+  middleware still refused any name containing "Spectrum" after that rule was dropped and
+  "Spectrum" became the shipped default — so following the documented onboarding with the
+  default name failed with "invalid site name". The name is yours: up to 32 characters,
+  "Spectrum" included.
+- An operator who locked their site with `--no-setup-studio` and then pressed Apply on a dev
+  build silently got `/setup` back on the next production build. The studio's exporter now
+  round-trips that key.
+
+### Drop-in setup for AI IDEs
+
+Dropping this repo into an AI IDE is now enough on its own — no prompt needed. Trae reads
+`.trae/rules/project_rules.md`, other agents read the new root `AGENTS.md`, and Claude Code
+already read `CLAUDE.md`. All three point at `START-HERE.md`'s runbook rather than copying
+it, and all three carry the red lines inline.
+
+### Deploy: your own domain
+
+`START-HERE.md`, `app/SETUP.md` and the wizard's own printed guide now spell out custom
+domains per host, because one buried clause read as if it weren't supported. On **Cloudflare
+Pages**, `npx wrangler pages domain add <project> <domain>` writes the DNS record and issues
+HTTPS itself when the domain is already in that Cloudflare account — no registrar step.
+**Then re-set your site URL to the custom domain and rebuild**, or link previews and the
+sitemap keep advertising the host subdomain. Also: the sitemap now lists all 15 public
+routes (it had drifted six behind) and drops any page you switched off.
+
+### Displayed numbers say what they actually are
+
+A full honesty pass. No math changed — the captions and the failure states did.
+
+- **Earnings copy was overstating by 33–100×.** The `/earn` tiles read "~5% of every trade";
+  the slice is ~5% of each trade's **fee**. Same class on the creators page: "30% of the fee
+  pool" is 30% of what remains *after* the burn and interface/launcher slices, roughly a
+  quarter of every fee — the split diagram beside it already said so.
+- **A failed read no longer poses as a real zero.** The fee console showed "$0.00 · Nothing
+  to claim" when an RPC merely blipped, and a failed lookup dropped a creator's pending row
+  entirely. Likewise a chain whose basket list failed was indistinguishable from an empty
+  chain, silently understating your portfolio total and earnings; those totals now say
+  "1 network unavailable".
+- **Partial sums are marked partial**: bundle "combined TVL" counts unpriced legs
+  (`$40K+ · 1 leg unpriced`), and holder and follower counts read `N+` when the scan was
+  windowed.
+- **Dust can't fake performance**: a sub-floor basket could top the Today leaderboard on
+  seed-size noise, and a drained superseded version showed absurd percentages on creator
+  pages. Tag counts only count listable baskets, so a chip never promises results the click
+  can't show.
+- The swap console's receive estimate now moves with price impact (it was fee-only NAV
+  arithmetic, mathematically incapable of it); a basket card's spark matches the 24h figure
+  beside it; "earned" became "pending" for a balance that zeroes on claim.
+- `check:config` now warns on a `defaultChainId` that no scaffolded chain matches — the app
+  silently fell back to Base, so a typo looked like it worked.
+
+### The creator league is a live stream (only where you configure a pool)
+
+`leaguePool` is unset in the shipped deployment book, so **no league surfaces exist unless
+you configure one** — this section only matters if you do.
+
+The mechanism changed: there is **no prize pot and no season-end settlement**. Every basket
+skims a league slice off each fee and cranks it to the pool, and whoever holds the crown
+when a slice arrives is entitled to it immediately and can withdraw at any time. Seasons
+still exist, but only as the **scoring window** — scores reset every 30 days while the crown
+carries over, so the countdown reads "scores reset in", never "payout in". The page shows
+the score to beat, a pixel crown on the current holder, and the gap each challenger must
+close; crown earnings are withdrawable from `/earn` and the creator page too. Delivery is a
+pull by design and there is deliberately no auto-payout.
+
+Copy that is now false and was removed everywhere: pro-rata shares, √-weighted shares,
+"your fees, your share", prize pools, claim-at-season-end, and any wash-proof or Sybil-proof
+framing.
+
+### Also
+
+- The animated spectrum bands now render in the **foreground** over content, with their
+  bright lanes stopping at the content gutter so cards clear them at every width; the main
+  column is 1000px to match. The nav sits above the bands, and the bands no longer ship into
+  third-party `/embed` iframes.
+- The holder-wall reaction read is bounded by a block window. It was the one read shape that
+  pins no author, so its result set grew without limit; the `kind` topic narrows by shape,
+  not volume, and the holder checks bound what renders, not what downloads.
+- The `/swap` page's what-you're-buying panel now renders on phones (it was desktop-only, so
+  phone buyers got no thesis or composition context), and the console's connect button
+  actually opens the wallet dialog instead of pointing at "top right".
+
+### New page: `/claim` — PRISM v2 community-airdrop claim tool (+ the PRISM trade card)
+
+The PRISM community's v2 launch includes a make-good allocation for 1,203 v1 holder
+addresses in a permissionless Ethereum vault. `/claim` (page key `claim`, default-ON,
+toggleable like every page, linked from the More menu) checks the public snapshot, shows
+claimed/unclaimed state and a live network-fee estimate before any signature, claims for any
+address (delivery always goes to the snapshot address), and walks large holders through the
+fee-share NFT mirror top-up (`syncNFTs`) their claim needs. The page wears the site's hero
+treatment (masked art, wordmark-sweep title) with a live vault-balance strip. A site-wide
+banner points every visitor at the claim (generic line; personal once a snapshot wallet
+connects; gone once that wallet is paid; session-dismissible). The snapshot rides in the
+build as lazy chunks (53KB eligibility index; the 1MB proofs file loads on `/claim` alone).
+
+Alongside it: a **PRISM trade card** — "the token that powers Spectrum" — on Home and under
+the `/swap` console as a buy, and on `/claim` as a full buy/sell mini console (slippage knob,
+route-enforced minimum, and a success line measured from the transaction rather than the
+quote; selling approves the route exact-amount first). It rides the same guarded routing leg
+as the any-token pay side and never touches the basket swap console. Gated by the
+`prismCredit` knob + the swap flag, so operators who drop the ecosystem credit ship none of
+it. The tool is neutral by design: the token is community-launched, and the page says so.
+
+### Ship-readiness pass (a stranger's first deploy)
+
+- **The social card (`public/og.png`) is name-neutral now.** The shipped art carried the
+  package authors' wordmark, an outdated tagline and a chain list — every operator's shared
+  links unfurled with it. The new card is neutral spectral art; your `og:title`/description
+  text (branded from `brand.name` at build) carries your name. Replace the PNG for your own
+  art (1200×630).
+- **`sitemap.xml` can't go stale anymore.** It's regenerated by every build from your site
+  URL — an origin-less build now writes the stub instead of leaving a previous build's
+  origin in place — and it's no longer a tracked file.
+- **`/bundle/<creator>/<slug>` deep links load** on Netlify/Vercel: the shipped
+  `_redirects`/`vercel.json` gained the bundle asset remap (a hard refresh used to get
+  `index.html` served as the page's JavaScript — a blank page).
+- **`--tier info` now means what it says**: browse/read with no wallet. The wizard used to
+  emit `wallet: true` for it.
+- The fee-split shown on `/creators`, in the walkthrough and in the launch builder is
+  league-aware on chains that carve the creator league (the split bar gained the league
+  slice; FeePanel lists it as a row) — on every other chain the numbers are unchanged.
+- Docs squared with reality: a missing site URL is a warning (not fatal), `docs/deploy/
+  netlify.md` exists (with the per-URL OG cards it enables), dead anchors fixed, the two
+  host docs stop telling you to overwrite the shipped SPA-fallback files with bare
+  catch-alls, `.env.example` lists all real vars, README no longer forbids the default
+  site name, and `npm run doctor` cross-checks "up to date" against the kit repo's actual
+  commits, not just the version string.
+
 ## 2026.07.13
 
 Sacred: launch — the launch page's pool discovery and token screening changed (coverage and

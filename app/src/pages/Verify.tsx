@@ -123,6 +123,10 @@ export function Verify() {
           factory: dep.factory,
           swapRouter: dep.swapRouter,
           usdc: dep.usdc,
+          uniV3SwapRouter: dep.uniV3SwapRouter,
+          uniV3Quoter: dep.uniV3Quoter,
+          weth: dep.weth,
+          poolManager: dep.poolManager,
         })
         return (
           <section key={chainId} className="mt-8 rounded-2xl card-surface p-6">

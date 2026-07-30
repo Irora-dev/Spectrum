@@ -42,6 +42,10 @@ export interface FeeState {
   claimableUsdc: number
   /** Known interface/launcher/creator accruals with a pending balance > 0. */
   frontend: FrontendAccrual[]
+  /** True when a best-effort read failed (claimable, a recipient address, or a
+   *  recipient's pending row) — the zeros above may be an RPC blip, not real
+   *  absence, and the console must not present them as definitive (audit). */
+  degraded: boolean
 }
 
 const isZero = (a?: string | null) => !a || a.toLowerCase() === zeroAddress
@@ -79,12 +83,25 @@ export async function fetchFeeState(
     return null
   }
 
+  // Best-effort reads mark `degraded` on failure instead of silently posing as
+  // zero/absent — a failed claimableFees used to render "$0.00 · Nothing to
+  // claim", and a failed creatorPayout read dropped the creator's row entirely.
+  let degraded = false
   const [claimable, creatorPayout, launcher] = await Promise.all([
     holder
-      ? client.readContract({ ...base, functionName: 'claimableFees', args: [holder] }).then(toUsdc).catch(() => 0)
+      ? client.readContract({ ...base, functionName: 'claimableFees', args: [holder] }).then(toUsdc).catch(() => {
+          degraded = true
+          return 0
+        })
       : Promise.resolve(0),
-    client.readContract({ ...base, functionName: 'creatorPayout' }).then((a) => (isZero(a) ? null : a)).catch(() => null),
-    client.readContract({ ...base, functionName: 'launcher' }).then((a) => (isZero(a) ? null : a)).catch(() => null),
+    client.readContract({ ...base, functionName: 'creatorPayout' }).then((a) => (isZero(a) ? null : a)).catch(() => {
+      degraded = true
+      return null
+    }),
+    client.readContract({ ...base, functionName: 'launcher' }).then((a) => (isZero(a) ? null : a)).catch(() => {
+      degraded = true
+      return null
+    }),
   ])
 
   // De-dup recipients (a self-deployer may name themselves launcher == creator),
@@ -104,12 +121,15 @@ export async function fetchFeeState(
         client
           .readContract({ ...base, functionName: 'pendingFrontendFees', args: [c.address] })
           .then((v): FrontendAccrual => ({ ...c, pendingUsdc: toUsdc(v) }))
-          .catch((): FrontendAccrual => ({ ...c, pendingUsdc: 0 })),
+          .catch((): FrontendAccrual => {
+            degraded = true
+            return { ...c, pendingUsdc: 0 }
+          }),
       ),
     )
   ).filter((a) => a.pendingUsdc > 0)
 
-  return { feeReserveUsdc, pendingBurnUsdc, pendingClaimsTokens, claimableUsdc: claimable, frontend }
+  return { feeReserveUsdc, pendingBurnUsdc, pendingClaimsTokens, claimableUsdc: claimable, frontend, degraded }
 }
 
 /** Live fee state for the /flush console — short-lived cache (figures move on every trade). */

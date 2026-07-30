@@ -5,11 +5,13 @@ import { useQueries } from '@tanstack/react-query'
 import { Area, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { setActiveChainId, useActiveChain } from '../lib/chain/active-chain'
 import { CHAINS, SUPPORTED_CHAIN_IDS, chainCfg } from '../lib/chain/chains'
+import { starterSuggestionsFor } from '../lib/chain/starter-suggestions'
 import { fetchAssetHistory, type ChartRange } from '../lib/spectrum/history'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { formatNav, formatPct, formatPrice, formatUsdCompact } from '../lib/spectrum/format'
 import { tokenVisual } from '../lib/spectrum/token-meta'
 import { BasketBuilder, resolveAsset, seedLaunchDraft, type BuilderAsset } from '../components/launch/BasketBuilder'
+import { isRetryableDetection } from '../lib/pools'
 import { AssetSearch } from '../components/launch/AssetSearch'
 import { PopularAssets } from '../components/launch/PopularAssets'
 import { AssetLogo } from '../components/AssetLogo'
@@ -278,7 +280,9 @@ export function Composer({ embedded = false }: { embedded?: boolean } = {}) {
     setLaunchOpen(false)
   }, [chainId])
 
-  // the launch page's own popular-assets suggestions: constituents of live baskets
+  // the launch page's own popular-assets suggestions: constituents of live
+  // baskets, backstopped by the live-proven per-chain starter set (owner
+  // 2026-07-30; lib/chain/starter-suggestions.ts) so a young chain still shelves
   const suggestions = useMemo(() => {
     const freq = new Map<string, { address: string; symbol: string; n: number }>()
     const usdc = cfg.usdc?.toLowerCase()
@@ -293,7 +297,12 @@ export function Composer({ embedded = false }: { embedded?: boolean } = {}) {
         else freq.set(k, { address: t.address, symbol: t.symbol, n: 1 })
       }
     }
-    return [...freq.values()].sort((a, b) => b.n - a.n).slice(0, 10)
+    const organic = [...freq.values()].sort((a, b) => b.n - a.n)
+    const seen = new Set(organic.map((s) => s.address.toLowerCase()))
+    const starters = starterSuggestionsFor(chainId)
+      .filter((s) => !seen.has(s.address.toLowerCase()))
+      .map((s) => ({ ...s, n: 0 }))
+    return [...organic, ...starters].slice(0, 10)
   }, [allBaskets, chainId, cfg.usdc, cfg.weth])
 
   async function addAsset(address: string, knownSymbol?: string) {
@@ -325,11 +334,17 @@ export function Composer({ embedded = false }: { embedded?: boolean } = {}) {
       const resolved = await Promise.all(
         cands.map((c) =>
           resolveAsset(c.address, chainId, c.symbol)
-            .then((r): ComposedAsset => ({ ...r, color: tokenVisual(r.symbol, r.address).color }))
-            .catch(() => null),
+            .then((r): ComposedAsset | 'retry' => ({ ...r, color: tokenVisual(r.symbol, r.address).color }))
+            // retryable ≠ unlisted: an RPC blip must ask for another click, not
+            // silently shrink the template (verify pass F5)
+            .catch((e) => (isRetryableDetection(e) ? ('retry' as const) : null)),
         ),
       )
-      const ok = resolved.filter((r): r is ComposedAsset => r != null)
+      if (resolved.includes('retry')) {
+        setAddError(`Couldn’t check every ${t.label} token (RPC error) — try again.`)
+        return
+      }
+      const ok = resolved.filter((r): r is ComposedAsset => r != null && r !== 'retry')
       const uniq = ok.filter((a, i, arr) => arr.findIndex((x) => x.address.toLowerCase() === a.address.toLowerCase()) === i)
       if (uniq.length === 0) {
         setAddError(`None of the ${t.label} set is listed on ${cfg.name} yet — try search.`)
@@ -362,11 +377,17 @@ export function Composer({ embedded = false }: { embedded?: boolean } = {}) {
       const resolved = await Promise.all(
         addrs.map((a) =>
           resolveAsset(a, chain)
-            .then((r): ComposedAsset => ({ ...r, color: tokenVisual(r.symbol, r.address).color }))
-            .catch(() => null),
+            .then((r): ComposedAsset | 'retry' => ({ ...r, color: tokenVisual(r.symbol, r.address).color }))
+            // same honesty as templates: "couldn't check" must not be reported
+            // as "not tradeable" (verify pass F5)
+            .catch((e) => (isRetryableDetection(e) ? ('retry' as const) : null)),
         ),
       )
-      const ok = resolved.filter((r): r is ComposedAsset => r != null)
+      if (resolved.includes('retry')) {
+        setAddError('Couldn’t check every token in that link (RPC error) — reload to try again.')
+        return
+      }
+      const ok = resolved.filter((r): r is ComposedAsset => r != null && r !== 'retry')
       if (ok.length === 0) {
         setAddError(`None of those tokens are tradeable on ${chainCfg(chain).name} yet.`)
         return

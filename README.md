@@ -41,7 +41,8 @@ rolling back, recall notices — is one page: **[`docs/RELEASES.md`](docs/RELEAS
 
 You supply a handful of values (the wizard asks for them in plain language):
 
-- your **site name** (can't contain "Spectrum") and look (colours / style),
+- your **site name** ("Spectrum" is the shipped default; use your own wordmark if you
+  prefer) and look (colours / style),
 - which **pages** to show (launch / discover / trade),
 - **your own fee wallet**, and optionally an RPC endpoint,
 - and only if you serve your **own** deployment: its factory / router addresses —
@@ -67,9 +68,9 @@ arrangement, stated so you understand it before you decide to run a site — see
   it never silently defaults to anyone.
 - **Discovery is global.** Every site lists every basket via the factory's on-chain enumeration —
   no per-site allowlist or curation.
-- **"Powered by Spectrum Mini"** stays on generated sites, and **no site may be named "Spectrum…"**
-  (that's the protocol brand). Your site is your own; it is not official, endorsed, or operated by
-  anyone but you.
+- **"Powered by Spectrum Mini"** stays on generated sites. Name yours whatever you like —
+  "Spectrum" is the shipped default — but your site is your own; it is not official, endorsed,
+  or operated by anyone but you, and it must never claim to be.
 
 ## Not advice
 

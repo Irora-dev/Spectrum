@@ -8,6 +8,7 @@ import { clientFor } from '../chain/rpc'
 import { SWAP_ENABLED, TRADING_ENABLED } from '../config/features'
 import { getBasketData } from './basket-data'
 import { erc20ApproveAbi, erc20BalanceAbi, swapRouterAbi } from './abis-v2'
+import { simulateSwapOut } from './swap-sim'
 import { bestExactInTier, encodeV3Path, minOutFor, quoteBuyLegFills, swapRouter02Abi } from './delta-trade'
 import { approvalPlan } from './migrate-math'
 import { gasWithHeadroom } from './gas'
@@ -304,8 +305,25 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
       const ix = await getBasketData(basket, chainId)
       const feeFrac = Number.isFinite(feeBps) ? feeBps / 10_000 : 0.01
       const usdcFloat = Number(formatUnits(sweptUsdc, 6))
+      // Aggregate floor must haircut the REALISED mint, not usdcNet/NAV. The per-leg
+      // realism below is gated on a V3 quoter, which some chains (Robinhood) do not
+      // deploy — this simulate needs only the router, so it works everywhere and also
+      // deflates the per-leg floors inside buildSwapQuote. undefined ⇒ old estimate.
+      const realisedShares = publicClient && address && spectrumRouter && usdc
+        ? ((await simulateSwapOut(publicClient, {
+            side: 'buy',
+            basket: basket as Address,
+            settlement: usdc as Address,
+            router: spectrumRouter as Address,
+            amountIn: sweptUsdc,
+            legCount: ix.holdings.length,
+            holder: address,
+            allowanceCovers: false,
+          })) ?? undefined)
+        : undefined
       const bq = buildSwapQuote({
         side: 'buy',
+        realisedOutRaw: realisedShares,
         amount: usdcFloat,
         navPerToken: ix.navPerToken,
         feeFrac,

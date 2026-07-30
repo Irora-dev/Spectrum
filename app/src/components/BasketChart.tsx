@@ -1,16 +1,23 @@
 import { useId, useMemo, useState } from 'react'
-import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useUnderlyingSeries } from '../lib/spectrum/use-underlying-series'
 import { useNavHistory } from '../lib/spectrum/hooks'
 import { availableRanges, type ChartRange, type NavInput } from '../lib/spectrum/history'
 import type { NavPoint } from '../lib/spectrum/basket-data'
 import { formatNav, formatPct, formatPrice } from '../lib/spectrum/format'
+import { AreaChart } from './dither-kit/area-chart'
+import { Area as DitherArea } from './dither-kit/area'
+import { XAxis as DXAxis } from './dither-kit/x-axis'
+import { Tooltip as DTooltip } from './dither-kit/tooltip'
+import { tokenVisual } from '../lib/spectrum/token-meta'
 
 const UP = 'var(--color-cyan)'
 const DOWN = 'var(--color-magenta)'
 
 interface Props {
   chainId: number
+  /** Basket address — seeds the chart's identity colour (owner 2026-07-29). */
+  address?: string
   assets: NavInput[]
   navPerToken: number
   ageSec?: number | null
@@ -102,6 +109,7 @@ function ChartTooltip({
 
 export function BasketChart({
   chainId,
+  address = '',
   assets,
   navPerToken,
   ageSec,
@@ -127,9 +135,10 @@ export function BasketChart({
   const underLines = useUnderlyingSeries(chainId, underlyingAssets, under && underlyingAssets.length > 0, series, active)
   type Row = NavPoint & Record<string, number>
   const rows = useMemo<Row[]>(() => {
-    if (!under || underLines.length === 0) return series as Row[]
+    if (!under || underLines.length === 0)
+      return series.map((p) => ({ time: p.time, value: p.value, tl: fmtFull(p.time) as unknown as number }) as Row)
     return series.map((p, i) => {
-      const r: Row = { time: p.time, value: p.value } as Row
+      const r: Row = { time: p.time, value: p.value, tl: fmtFull(p.time) as unknown as number } as Row
       underLines.forEach((u, k) => {
         r[`u${k}`] = u.points[i]
         r[`p${k}`] = u.prices[i]
@@ -140,7 +149,6 @@ export function BasketChart({
 
   const raw = useId().replace(/[^a-zA-Z0-9]/g, '')
   const strokeId = `cs${raw}`
-  const fillId = `cf${raw}`
 
   const { domain, accent, change } = useMemo(() => {
     if (series.length < 2) return { domain: [0, 1] as [number, number], accent: UP, change: null as number | null }
@@ -239,66 +247,96 @@ export function BasketChart({
              and lock the layout wider than the viewport (mobile overflow),
              absolutely-positioned content can't size the track */
           <div className="absolute inset-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={rows} margin={{ top: 6, right: 2, bottom: 0, left: 2 }}>
-              <defs>
-                <linearGradient id={strokeId} x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="var(--color-amber)" />
-                  <stop offset="50%" stopColor="var(--color-magenta)" />
-                  <stop offset="100%" stopColor="var(--color-cyan)" />
-                </linearGradient>
-                <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={accent} stopOpacity={0.22} />
-                  <stop offset="100%" stopColor={accent} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="time"
-                type="number"
-                scale="time"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={(t) => fmtAxis(t as number, active)}
-                tick={{ fill: 'var(--color-ink-faint)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
-                axisLine={false}
-                tickLine={false}
-                minTickGap={48}
-              />
-              <YAxis domain={domain} hide />
-              <Tooltip
-                cursor={{ stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1, strokeDasharray: '3 4' }}
-                content={<ChartTooltip symbol={symbol} lines={under ? underLines : undefined} basketChange={change24hPct} />}
-                isAnimationActive={false}
-              />
-              {/* INVERTED emphasis with Underlying on (R 2026-07-07 17:19):
-                  the constituents become the highlighted solid colored lines,
-                  the basket steps back to a dashed reference line. */}
-              {under &&
-                underLines.map((u, k) => (
-                  <Line
-                    key={u.symbol}
-                    type="monotone"
-                    dataKey={`u${k}`}
-                    stroke={u.color}
-                    strokeWidth={2}
-                    strokeOpacity={1}
-                    dot={false}
-                    activeDot={{ r: 3, fill: u.color, stroke: 'var(--color-void)', strokeWidth: 1.5 }}
-                    isAnimationActive={false}
-                  />
-                ))}
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke={under ? 'rgba(232,232,240,0.65)' : `url(#${strokeId})`}
-                strokeWidth={under ? 1.6 : 3}
-                strokeDasharray={under ? '6 5' : undefined}
-                fill={under ? 'transparent' : `url(#${fillId})`}
-                dot={false}
-                activeDot={{ r: 3.5, fill: accent, stroke: 'var(--color-void)', strokeWidth: 2 }}
-                isAnimationActive={false}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
+          {under ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={rows} margin={{ top: 6, right: 2, bottom: 0, left: 2 }}>
+                <defs>
+                  <linearGradient id={strokeId} x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="var(--color-amber)" />
+                    <stop offset="50%" stopColor="var(--color-magenta)" />
+                    <stop offset="100%" stopColor="var(--color-cyan)" />
+                  </linearGradient>
+                </defs>
+                <XAxis
+                  dataKey="time"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={(t) => fmtAxis(t as number, active)}
+                  tick={{ fill: 'var(--color-ink-faint)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={48}
+                />
+                <YAxis domain={domain} hide />
+                <Tooltip
+                  cursor={{ stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1, strokeDasharray: '3 4' }}
+                  content={<ChartTooltip symbol={symbol} lines={under ? underLines : undefined} basketChange={change24hPct} />}
+                  isAnimationActive={false}
+                />
+                {/* INVERTED emphasis with Underlying on (R 2026-07-07 17:19):
+                    the constituents become the highlighted solid colored lines,
+                    the basket steps back to a dashed reference line. */}
+                {under &&
+                  underLines.map((u, k) => (
+                    <Line
+                      key={u.symbol}
+                      type="monotone"
+                      dataKey={`u${k}`}
+                      stroke={u.color}
+                      strokeWidth={2}
+                      strokeOpacity={1}
+                      dot={false}
+                      activeDot={{ r: 3, fill: u.color, stroke: 'var(--color-void)', strokeWidth: 1.5 }}
+                      isAnimationActive={false}
+                    />
+                  ))}
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={under ? 'rgba(232,232,240,0.65)' : `url(#${strokeId})`}
+                  strokeWidth={under ? 1.6 : 3}
+                  strokeDasharray={under ? '6 5' : undefined}
+                  dot={false}
+                  activeDot={{ r: 3.5, fill: accent, stroke: 'var(--color-void)', strokeWidth: 2 }}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            /* the DITHER chart (owner 2026-07-29): the vendored dither-kit
+               canvas engine, worn in the basket's own identity colour */
+            <AreaChart
+              data={rows}
+              yDomain="data"
+              margins={{ top: 6, right: 2, bottom: 22, left: 2 }}
+              config={{
+                value: {
+                  label: symbol,
+                  color: tokenVisual(symbol, address).color,
+                  // the constituent gradient (owner 2026-07-29): weight-
+                  // proportioned stops across the basket's asset colours;
+                  // symbols come from underlyingAssets when the host passes them
+                  palette:
+                    assets.length >= 2
+                      ? assets.map((a) => ({
+                          color: tokenVisual(
+                            underlyingAssets.find((u) => u.address.toLowerCase() === a.address.toLowerCase())?.symbol ?? '',
+                            a.address,
+                          ).color,
+                          weight: a.weight,
+                        }))
+                      : undefined,
+                },
+              }}
+              bloom="low"
+              className="h-full w-full"
+            >
+              <DXAxis dataKey="time" tickFormatter={(t) => fmtAxis(Number(t), active)} />
+              <DTooltip labelKey="tl" valueFormatter={(v) => `$${formatNav(v, 4)}`} />
+              <DitherArea dataKey="value" variant="gradient" />
+            </AreaChart>
+          )}
           </div>
         )}
       </div>

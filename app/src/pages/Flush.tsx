@@ -8,7 +8,7 @@ import { DEFAULT_CHAIN_ID, chainCfg } from '../lib/chain/chains'
 import { usePortfolio, useBasketData, useAllBaskets } from '../lib/spectrum/hooks'
 import { fetchFeeState, useFeeState, type FrontendAccrual } from '../lib/spectrum/use-fee-state'
 import { useFeeActions, CLAIM_KEY, BURN_KEY, REDEEM_KEY, frontendKey, type TxState } from '../lib/spectrum/use-fee-actions'
-import { PROTOCOL_FEE_MODEL } from '../lib/spectrum/fee-model'
+import { PROTOCOL_FEE_MODEL, frontendFlushFloorUsdc, frontendPotFlushable } from '../lib/spectrum/fee-model'
 import { basketAbi } from '../lib/spectrum/abis-v2'
 import { fetchBurnEligible, useBurnEligibility } from '../lib/spectrum/flush-eligibility'
 import { useQueries } from '@tanstack/react-query'
@@ -19,6 +19,7 @@ import { BasketWash } from '../components/BasketWash'
 import { AuctionBurnCanvas } from '../components/AuctionBurnCanvas'
 import { PageHeader } from '../components/PageHeader'
 import { WalletButton } from '../components/WalletButton'
+import { PoweredByPrism } from '../components/PoweredByPrism'
 import { formatGrouped, shortAddr } from '../lib/spectrum/format'
 
 // The Created-basket admin bar (Portfolio) and the standalone /flush nav both
@@ -119,8 +120,13 @@ function FlushPicker() {
         </div>
 
         {/* the protocol-level crank — permissionless, its own column */}
-        <div className="min-w-0 lg:sticky lg:top-24">
+        <div className="min-w-0 space-y-4 lg:sticky lg:top-24">
           <AuctionBurnCanvas />
+          {/* the auction buys and burns PRISM — credit sits where that leg is
+              visible (owner 2026-07-30) */}
+          <div className="flex justify-center">
+            <PoweredByPrism />
+          </div>
         </div>
       </div>
     </div>
@@ -225,6 +231,11 @@ function BasketFeeCard({ b, holder, mine = false }: { b: BasketSummary; holder?:
         </div>
       ) : (
         <div className="relative mt-4 space-y-2.5">
+          {fees.degraded && (
+            <p className="font-mono text-[10px] text-amber">
+              Some balances could not be read just now (RPC), figures may be incomplete.
+            </p>
+          )}
           <div className="grid gap-2.5 sm:grid-cols-2">
             <FeeLine
               label="Your accrued fees"
@@ -298,6 +309,9 @@ function BasketFeeCard({ b, holder, mine = false }: { b: BasketSummary; holder?:
               <ul className="divide-y divide-white/8">
                 {fees.frontend.map((r) => {
                   const state = actions.stateOf(frontendKey(r.address))
+                  // A pot at or under the chain's crank floor is REFUSED by the
+                  // contract (F-1) — never offer a button that no-ops.
+                  const flushable = frontendPotFlushable(b.chainId, r.pendingUsdc)
                   return (
                     <li key={r.address} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-2.5">
                       <div className="flex min-w-0 items-center gap-2">
@@ -306,14 +320,23 @@ function BasketFeeCard({ b, holder, mine = false }: { b: BasketSummary; holder?:
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="font-num text-sm tabular-nums text-ink">{usd(r.pendingUsdc)}</span>
-                        <button
-                          type="button"
-                          className={BTN_PRIMARY}
-                          disabled={!actions.enabled || busy(state)}
-                          onClick={() => actions.flushFrontend(r.address)}
-                        >
-                          {busy(state) ? '…' : 'Flush'}
-                        </button>
+                        {flushable ? (
+                          <button
+                            type="button"
+                            className={BTN_PRIMARY}
+                            disabled={!actions.enabled || busy(state)}
+                            onClick={() => actions.flushFrontend(r.address)}
+                          >
+                            {busy(state) ? '…' : 'Flush'}
+                          </button>
+                        ) : (
+                          <span
+                            className="rounded-full border border-amber/30 bg-amber/10 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-amber"
+                            title={`This chain refuses frontend-fee flushes at or under $${frontendFlushFloorUsdc(b.chainId)} — the pot keeps accruing and flushes once it clears the floor.`}
+                          >
+                            accruing · flushes over ${frontendFlushFloorUsdc(b.chainId)}
+                          </span>
+                        )}
                       </div>
                       <TxFeedback state={state} explorer={cfg.explorer} idleHint={null} />
                     </li>
@@ -408,6 +431,14 @@ function FeeConsole({ basket, chainId }: { basket: Address; chainId: number }) {
         </div>
       ) : (
         <>
+          {/* a failed best-effort read must not pose as a real zero on the
+              console people sign against (honesty audit) */}
+          {fees.degraded && (
+            <p className="rounded-xl border border-amber/25 bg-amber/[0.05] px-4 py-2.5 font-mono text-[11px] text-amber">
+              Some balances could not be read just now (RPC), so figures on this console may be
+              incomplete. They retry automatically.
+            </p>
+          )}
           <ClaimCard
             claimable={fees.claimableUsdc}
             reserve={fees.feeReserveUsdc}
@@ -416,11 +447,13 @@ function FeeConsole({ basket, chainId }: { basket: Address; chainId: number }) {
             state={actions.stateOf(CLAIM_KEY)}
             explorer={cfg.explorer}
             onClaim={actions.claim}
+            degraded={fees.degraded}
           />
 
           <CrankSection
             fees={fees}
             symbol={bd?.symbol ?? 'tokens'}
+            chainId={chainId}
             chainName={cfg.name}
             explorer={cfg.explorer}
             actions={actions}
@@ -434,10 +467,10 @@ function FeeConsole({ basket, chainId }: { basket: Address; chainId: number }) {
 // ── Holder claim ─────────────────────────────────────────────────────────────
 
 function ClaimCard({
-  claimable, reserve, holderConnected, enabled, state, explorer, onClaim,
+  claimable, reserve, holderConnected, enabled, state, explorer, onClaim, degraded = false,
 }: {
   claimable: number; reserve: number; holderConnected: boolean; enabled: boolean
-  state: TxState; explorer: string; onClaim: () => void
+  state: TxState; explorer: string; onClaim: () => void; degraded?: boolean
 }) {
   const busy = state.status === 'signing' || state.status === 'confirming'
   return (
@@ -469,7 +502,9 @@ function ClaimCard({
         )}
       </div>
       {holderConnected && claimable <= 0 && state.status === 'idle' && (
-        <p className="mt-2 text-right font-mono text-[10px] text-ink-faint">Nothing to claim right now.</p>
+        <p className={`mt-2 text-right font-mono text-[10px] ${degraded ? 'text-amber' : 'text-ink-faint'}`}>
+          {degraded ? 'Your balance could not be read just now, retrying.' : 'Nothing to claim right now.'}
+        </p>
       )}
       <TxFeedback state={state} explorer={explorer} idleHint={null} />
     </section>
@@ -479,10 +514,10 @@ function ClaimCard({
 // ── Permissionless cranks ────────────────────────────────────────────────────
 
 function CrankSection({
-  fees, symbol, chainName, explorer, actions,
+  fees, symbol, chainId, chainName, explorer, actions,
 }: {
   fees: { pendingBurnUsdc: number; pendingClaimsTokens: number; frontend: FrontendAccrual[] }
-  symbol: string; chainName: string; explorer: string
+  symbol: string; chainId: number; chainName: string; explorer: string
   actions: ReturnType<typeof useFeeActions>
 }) {
   return (
@@ -507,6 +542,7 @@ function CrankSection({
 
       <FrontendFlushCard
         rows={fees.frontend}
+        chainId={chainId}
         chainName={chainName}
         explorer={explorer}
         actions={actions}
@@ -606,7 +642,7 @@ function BurnCrankCard({
           <input
             value={minEth}
             onChange={(e) => setMinEth(e.target.value)}
-            inputMode="decimal"
+            inputMode="decimal" enterKeyHint="done" autoComplete="off"
             placeholder="0.0"
             className="w-full rounded-lg border border-white/12 bg-black/20 px-3 py-2 font-mono text-sm text-ink outline-none transition-colors focus:border-cyan/50"
           />
@@ -630,9 +666,9 @@ function BurnCrankCard({
 }
 
 function FrontendFlushCard({
-  rows, chainName, explorer, actions,
+  rows, chainId, chainName, explorer, actions,
 }: {
-  rows: FrontendAccrual[]; chainName: string; explorer: string; actions: ReturnType<typeof useFeeActions>
+  rows: FrontendAccrual[]; chainId: number; chainName: string; explorer: string; actions: ReturnType<typeof useFeeActions>
 }) {
   const [other, setOther] = useState('')
   const otherValid = isAddress(other.trim())
@@ -655,6 +691,8 @@ function FrontendFlushCard({
         {rows.map((r) => {
           const state = actions.stateOf(frontendKey(r.address))
           const busy = state.status === 'signing' || state.status === 'confirming'
+          // Refused by the contract at or under the chain's crank floor (F-1).
+          const flushable = frontendPotFlushable(chainId, r.pendingUsdc)
           return (
             <li key={r.address} className="py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -666,9 +704,18 @@ function FrontendFlushCard({
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="font-num text-sm tabular-nums text-ink">{usd(r.pendingUsdc)}</span>
-                  <button type="button" className={BTN_GHOST} disabled={!actions.enabled || busy} onClick={() => actions.flushFrontend(r.address)}>
-                    {busy ? '…' : 'Flush'}
-                  </button>
+                  {flushable ? (
+                    <button type="button" className={BTN_GHOST} disabled={!actions.enabled || busy} onClick={() => actions.flushFrontend(r.address)}>
+                      {busy ? '…' : 'Flush'}
+                    </button>
+                  ) : (
+                    <span
+                      className="rounded-full border border-amber/30 bg-amber/10 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-amber"
+                      title={`This chain refuses frontend-fee flushes at or under $${frontendFlushFloorUsdc(chainId)} — the pot keeps accruing and flushes once it clears the floor.`}
+                    >
+                      accruing · flushes over ${frontendFlushFloorUsdc(chainId)}
+                    </span>
+                  )}
                 </div>
               </div>
               <TxFeedback state={state} explorer={explorer} idleHint={null} />
@@ -700,7 +747,11 @@ function FrontendFlushCard({
           </button>
         </div>
         <p className="mt-1.5 font-mono text-[10px] text-ink-faint">
-          A flush on an address with nothing pending is a harmless no-op. Wallet must be on {chainName}.
+          A flush on an address with nothing pending is a harmless no-op
+          {frontendFlushFloorUsdc(chainId) > 0
+            ? `, and this chain refuses flushes on pots at or under $${frontendFlushFloorUsdc(chainId)} (they keep accruing)`
+            : ''}
+          . Wallet must be on {chainName}.
         </p>
         {otherValid && <TxFeedback state={actions.stateOf(frontendKey(other.trim()))} explorer={explorer} idleHint={null} />}
       </details>
@@ -784,8 +835,12 @@ function GlobalCrankButton({ baskets }: { baskets: BasketSummary[] }) {
       // basket is SKIPPED here, not sent to revert (owner 16:06).
       if (fs.pendingBurnUsdc > 0 && (await fetchBurnEligible(b.address as Address, b.chainId)))
         jobs.push({ ...base, label: `$${b.symbol} · PRISM burn (${usd(fs.pendingBurnUsdc)})`, fn: 'flushPrismBurn', args: [0n] })
+      // Sub-floor pots are SKIPPED like below-threshold burns — the contract
+      // refuses them (F-1), and on the incumbent mainnet lineage a sub-floor
+      // flush would pay the whole pot to the CRANKER instead of the recipient.
       for (const fe of fs.frontend)
-        jobs.push({ ...base, label: `$${b.symbol} · ${fe.role} fees (${usd(fe.pendingUsdc)})`, fn: 'flushFrontendFees', args: [fe.address] })
+        if (frontendPotFlushable(b.chainId, fe.pendingUsdc))
+          jobs.push({ ...base, label: `$${b.symbol} · ${fe.role} fees (${usd(fe.pendingUsdc)})`, fn: 'flushFrontendFees', args: [fe.address] })
       if (fs.pendingClaimsTokens > 0)
         jobs.push({ ...base, label: `$${b.symbol} · settle claim queue`, fn: 'redeemClaims', args: [] })
     }

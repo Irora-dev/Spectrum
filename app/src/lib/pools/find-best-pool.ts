@@ -6,8 +6,8 @@ import {
   zeroAddress,
   type Address,
 } from 'viem'
-import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
-import { chainCfg, isPoolReady, type ChainCfg, type PoolReadyChainCfg } from '../chain/chains'
+import { clientFor, hasPrivateRpc, publicWideLogsRisky } from '../chain/rpc'
+import { chainCfg, isPoolReady, isV2Ready, isV3Ready, type ChainCfg, type PoolReadyChainCfg, type V2ReadyChainCfg, type V3ReadyChainCfg } from '../chain/chains'
 import { nativeEthUsdOnChain, v4PoolId } from './v4-usd'
 import { cacheGet, cacheSet } from '../spectrum/persist-cache'
 import { V4_POOLS_SLOT } from '../chain/constants'
@@ -24,6 +24,7 @@ import {
   DYNAMIC_FEE_FLAG,
   NATIVE_ETH,
   PoolDetectionError,
+  V4_PROBE_TIERS,
   VENUE_LABEL,
   Venue,
   ZERO_POOL_KEY,
@@ -67,7 +68,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 // `checkFailed: true` = we could not KNOW — the caller must not rank without it.
 async function findV2(
   client: Client,
-  cfg: PoolReadyChainCfg,
+  cfg: V2ReadyChainCfg,
   asset: Address,
 ): Promise<{ candidate: PoolCandidate | null; checkFailed: boolean }> {
   let pair: Address
@@ -113,7 +114,7 @@ async function findV2(
 // ── V3 (sweep all standard fee tiers) ─────────────────────────────────────────
 async function findV3(
   client: Client,
-  cfg: PoolReadyChainCfg,
+  cfg: V3ReadyChainCfg,
   asset: Address,
 ): Promise<{ candidates: PoolCandidate[]; checkFailed: boolean }> {
   let checkFailed = false
@@ -207,44 +208,58 @@ function mergeInits(prev: V4Init[], next: V4Init[]): V4Init[] {
 // spectrumbaskets.xyz report, 2026-07-12). false = complete.
 export type V4ScanGap = false | 'skipped' | 'rpc-error'
 
-// V4 ETH pools are native-ETH (currency0 = address(0), currency1 = asset). Discovery
-// is by Initialize logs. Alchemy serves one filtered FULL-RANGE call; most other
-// providers cap getLogs spans and public RPCs choke — those paths degrade to the
-// direct standard-tier probe in findV4 (real coverage, minus exotic tick spacings).
+// V4-family pools have no factory getPool — discovery is by Initialize logs over
+// the full range, filtered on the pool's currency PAIR: native-ETH-paired for V4
+// legs ({0x0, asset}) and settlement-paired for V4Q legs ({USDG, asset} sorted).
+// Alchemy serves one filtered FULL-RANGE call; most other providers cap getLogs
+// spans and public RPCs choke — those paths degrade to the callers' direct
+// standard-tier probes (real coverage, minus exotic tick spacings).
 async function scanV4Initialize(
   client: Client,
   chainId: number,
   poolManager: Address,
-  asset: Address,
+  pair: { currency0: Address; currency1: Address },
+  cacheKey: string,
 ): Promise<{ inits: V4Init[]; partial: V4ScanGap }> {
-  // V4 has no factory getPool — discovery is by Initialize logs over the full range.
-  // Only Alchemy-class endpoints serve a wide filtered getLogs quickly; public RPCs
+  // Only private-class endpoints serve a wide filtered getLogs quickly; public RPCs
   // on Base/Ethereum rate-limit/time out, so keyless there skips the scan (the
-  // probe fallback still runs). A chain with NO Alchemy tier at all (Robinhood) is
-  // different: its own RPC serves the filtered full-range call fast (young chain)
-  // — attempt it; the catch below still degrades on error.
-  if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return { inits: [], partial: 'skipped' }
-  const cacheKey = `v4scan:v1:${chainId}:${asset.toLowerCase()}`
+  // probe fallback still runs). Robinhood is different: its OWN public endpoint
+  // serves the filtered full-range call fast (young chain) — keyless RH keeps
+  // attempting it (publicWideLogsRisky excludes 4663 even though Alchemy now
+  // serves the chain); the catch below still degrades on error.
+  if (!hasPrivateRpc(chainId) && publicWideLogsRisky(chainId)) return { inits: [], partial: 'skipped' }
   const cachedRaw = cacheGet<V4ScanCache>(cacheKey)
   const cached = cachedRaw && isV4ScanCache(cachedRaw) ? cachedRaw : null
-  try {
-    const latest = await client.getBlockNumber()
-    const fromBlock = cached ? BigInt(cached.upToBlock) + 1n : 0n
-    if (cached && fromBlock > latest) return { inits: cached.inits, partial: false }
-    const logs = await client.getLogs({
-      address: poolManager,
-      event: v4InitializeEvent,
-      args: { currency0: NATIVE_ETH, currency1: asset },
-      fromBlock,
-      toBlock: latest,
-    })
-    const inits = mergeInits(cached?.inits ?? [], toRecs(logs))
-    cacheSet(cacheKey, { upToBlock: latest.toString(), inits } satisfies V4ScanCache, 0)
-    return { inits, partial: false }
-  } catch {
-    // A cached prior full scan is still complete UP TO its block — usable, but
-    // flagged so the caller's coverage warning shows.
-    return cached ? { inits: cached.inits, partial: 'rpc-error' } : { inits: [], partial: 'rpc-error' }
+  // One quiet retry before declaring partial coverage: the launch flow bursts
+  // many concurrent RPC calls, and a single transient 429 used to pin the
+  // "coverage is partial" warning onto the asset until it was re-added by hand
+  // — while the identical query succeeded a second later (owner hit this live
+  // on 4663, 2026-07-29; the pair-filtered full-range query itself is fine
+  // there). A short backoff lets the limiter window pass.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const latest = await client.getBlockNumber()
+      const fromBlock = cached ? BigInt(cached.upToBlock) + 1n : 0n
+      if (cached && fromBlock > latest) return { inits: cached.inits, partial: false }
+      const logs = await client.getLogs({
+        address: poolManager,
+        event: v4InitializeEvent,
+        args: { currency0: pair.currency0, currency1: pair.currency1 },
+        fromBlock,
+        toBlock: latest,
+      })
+      const inits = mergeInits(cached?.inits ?? [], toRecs(logs))
+      cacheSet(cacheKey, { upToBlock: latest.toString(), inits } satisfies V4ScanCache, 0)
+      return { inits, partial: false }
+    } catch {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 800))
+        continue
+      }
+      // A cached prior full scan is still complete UP TO its block — usable, but
+      // flagged so the caller's coverage warning shows.
+      return cached ? { inits: cached.inits, partial: 'rpc-error' } : { inits: [], partial: 'rpc-error' }
+    }
   }
 }
 
@@ -253,12 +268,7 @@ async function scanV4Initialize(
 // of the PoolKey, and depth reads by id (extsload) are cheap single calls every
 // endpoint serves — including public ones. Real coverage for the overwhelmingly
 // common case; only exotic custom tick spacings stay invisible without a scan.
-const V4_STANDARD_TIERS: { fee: number; tickSpacing: number }[] = [
-  { fee: 100, tickSpacing: 1 },
-  { fee: 500, tickSpacing: 10 },
-  { fee: 3000, tickSpacing: 60 },
-  { fee: 10000, tickSpacing: 200 },
-]
+const V4_STANDARD_TIERS = V4_PROBE_TIERS
 
 function probeStandardV4(asset: Address): V4Init[] {
   return V4_STANDARD_TIERS.map(({ fee, tickSpacing }) => ({
@@ -270,21 +280,26 @@ function probeStandardV4(asset: Address): V4Init[] {
 }
 
 // Virtual ETH-side reserve from PoolManager storage: amount0 ≈ L · 2^96 / sqrtPriceX96.
+// Returns -1 on a READ FAILURE (post-retry) — the sweep's catch: a bare `return 0`
+// made an RPC blip indistinguishable from an empty pool, silently dropping a
+// possibly-deepest V4 candidate (the MOG-class mis-route, V4 edition).
 async function v4DepthEth(client: Client, poolManager: Address, id: `0x${string}`): Promise<number> {
   try {
     const base = keccak256(encodePacked(['bytes32', 'uint256'], [id, V4_POOLS_SLOT]))
     const liquiditySlot = toHex(BigInt(base) + 3n, { size: 32 }) // StateLibrary: liquidity at base+3
-    const [slot0Word, liqWord] = await Promise.all([
-      client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [base] }),
-      client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [liquiditySlot] }),
-    ])
+    const [slot0Word, liqWord] = await withRetry(() =>
+      Promise.all([
+        client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [base] }),
+        client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [liquiditySlot] }),
+      ]),
+    )
     const sqrtP = BigInt(slot0Word) & ((1n << 160n) - 1n)
     const liquidity = BigInt(liqWord) & ((1n << 128n) - 1n)
     if (sqrtP === 0n || liquidity === 0n) return 0
     const ethWei = (liquidity << 96n) / sqrtP
     return Number(formatUnits(ethWei, 18))
   } catch {
-    return 0
+    return -1
   }
 }
 
@@ -292,8 +307,14 @@ async function findV4(
   client: Client,
   cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address },
   asset: Address,
-): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap }> {
-  const scan = await scanV4Initialize(client, cfg.chainId, cfg.poolManager, asset)
+): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap; depthCheckFailed?: boolean }> {
+  const scan = await scanV4Initialize(
+    client,
+    cfg.chainId,
+    cfg.poolManager,
+    { currency0: NATIVE_ETH, currency1: asset },
+    `v4scan:v1:${cfg.chainId}:${asset.toLowerCase()}`,
+  )
   // Scan incomplete (skipped or refused)? Probe the standard tiers directly —
   // depth reads by computed pool id work on ANY endpoint, so builds without a
   // full-scan-capable RPC still see the standard-tier V4 pools instead of none.
@@ -312,6 +333,7 @@ async function findV4(
     return true
   })
   const depths = await Promise.all(eligible.map((i) => v4DepthEth(client, cfg.poolManager, i.id)))
+  const depthCheckFailed = depths.some((d) => d === -1)
   const out: PoolCandidate[] = []
   eligible.forEach((init, idx) => {
     const depthEth = depths[idx]
@@ -334,7 +356,100 @@ async function findV4(
       depthUsd: null,
     })
   })
-  return { candidates: out, partial }
+  return { candidates: out, partial, depthCheckFailed }
+}
+
+// ── V4Q (settlement-quoted hookless V4 — the stocks-fork lineage) ─────────────
+// Emitted ONLY where the chain config declares `v4qLineage` (the fork factory's
+// Venue enum adds V4Q=3; deployed V2-lineage factories reject venue 3 in the
+// token constructor, so this sweep must stay dark there). Discovery mirrors
+// findV4 with the SETTLEMENT asset in place of native ETH — pair sorted by
+// address like any V4 PoolKey. Depth is read settlement-side: the settlement
+// token is 6dp and $1 by construction, so the in-range settlement amount IS
+// the USD figure — no ETH anchor, no indexer, cross-venue comparable as-is.
+
+/** Settlement-side in-range depth in dollars. -1 = read failure (post-retry),
+ *  the sweep sentinel — same doctrine as v4DepthEth. */
+async function v4qDepthUsd(
+  client: Client,
+  poolManager: Address,
+  id: `0x${string}`,
+  settlementIsCurrency0: boolean,
+): Promise<number> {
+  try {
+    const base = keccak256(encodePacked(['bytes32', 'uint256'], [id, V4_POOLS_SLOT]))
+    const liquiditySlot = toHex(BigInt(base) + 3n, { size: 32 })
+    const [slot0Word, liqWord] = await withRetry(() =>
+      Promise.all([
+        client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [base] }),
+        client.readContract({ address: poolManager, abi: poolManagerExtsloadAbi, functionName: 'extsload', args: [liquiditySlot] }),
+      ]),
+    )
+    const sqrtP = BigInt(slot0Word) & ((1n << 160n) - 1n)
+    const liquidity = BigInt(liqWord) & ((1n << 128n) - 1n)
+    if (sqrtP === 0n || liquidity === 0n) return 0
+    // amount0 = L·2^96/√P (currency0 side) · amount1 = L·√P/2^96 (currency1 side)
+    const raw = settlementIsCurrency0 ? (liquidity << 96n) / sqrtP : (liquidity * sqrtP) >> 96n
+    return Number(formatUnits(raw, 6))
+  } catch {
+    return -1
+  }
+}
+
+// Exported for the live ground-truth probe scripts (scripts/rh-*.ts), which
+// force the sweep against mainnet before any V4Q factory is configured.
+export async function findV4Q(
+  client: Client,
+  cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address; usdc: Address },
+  asset: Address,
+): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap; depthCheckFailed?: boolean }> {
+  const settlementIsC0 = BigInt(cfg.usdc) < BigInt(asset)
+  const pair = settlementIsC0
+    ? { currency0: cfg.usdc, currency1: asset }
+    : { currency0: asset, currency1: cfg.usdc }
+  const scan = await scanV4Initialize(
+    client,
+    cfg.chainId,
+    cfg.poolManager,
+    pair,
+    `v4qscan:v1:${cfg.chainId}:${asset.toLowerCase()}`,
+  )
+  // Same degradation as findV4: scan incomplete → probe the known hookless tiers
+  // directly (pool id is a pure hash; nonexistent pools read zero and drop out).
+  const probed: V4Init[] = V4_PROBE_TIERS.map(({ fee, tickSpacing }) => ({
+    id: v4PoolId({ ...pair, fee, tickSpacing, hooks: zeroAddress }),
+    fee,
+    tickSpacing,
+    hooks: zeroAddress,
+  }))
+  const inits = scan.partial === false ? scan.inits : [...scan.inits, ...probed]
+  const seen = new Set<string>()
+  const eligible = inits.filter((init) => {
+    if (seen.has(init.id)) return false
+    seen.add(init.id)
+    if (init.hooks.toLowerCase() !== zeroAddress) return false
+    if (init.fee === DYNAMIC_FEE_FLAG) return false
+    return true
+  })
+  const depths = await Promise.all(eligible.map((i) => v4qDepthUsd(client, cfg.poolManager, i.id, settlementIsC0)))
+  const depthCheckFailed = depths.some((d) => d === -1)
+  const out: PoolCandidate[] = []
+  eligible.forEach((init, idx) => {
+    const usd = depths[idx]
+    if (usd <= 0) return
+    out.push({
+      venue: Venue.V4Q,
+      label: VENUE_LABEL[Venue.V4Q],
+      fee: init.fee,
+      tickSpacing: init.tickSpacing,
+      poolAddress: null,
+      poolId: init.id,
+      ethPoolKey: { ...pair, fee: init.fee, tickSpacing: init.tickSpacing, hooks: zeroAddress },
+      depthEth: 0, // not ETH-comparable by construction; ranking rides depthUsd
+      depthUsd: usd,
+    })
+  })
+  return { candidates: out, partial: scan.partial, depthCheckFailed }
 }
 
 // ── Aerodrome (Base) — detect so we can warn (can't host hooks) ───────────────
@@ -397,6 +512,9 @@ async function fetchPoolLiquidity(slug: string, asset: Address): Promise<Map<str
 
 function toRoute(c: PoolCandidate): BasketRoute {
   if (c.venue === Venue.V4) return { venue: Venue.V4, ethPool: c.ethPoolKey!, v3Fee: 0, v2Pair: zeroAddress }
+  // V4Q: the struct's ethPool slot carries the SETTLEMENT-paired key (fork
+  // BasketEntry doc: "{settlement, asset} sorted by address — hookless either way").
+  if (c.venue === Venue.V4Q) return { venue: Venue.V4Q, ethPool: c.ethPoolKey!, v3Fee: 0, v2Pair: zeroAddress }
   if (c.venue === Venue.V3) return { venue: Venue.V3, ethPool: ZERO_POOL_KEY, v3Fee: c.fee, v2Pair: zeroAddress }
   return { venue: Venue.V2, ethPool: ZERO_POOL_KEY, v3Fee: 0, v2Pair: c.poolAddress! }
 }
@@ -418,13 +536,19 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
       'NO_POOL',
     )
   }
-  const v23Ready = isPoolReady(cfg) // weth + V2/V3 factories present
+  const v23Ready = isPoolReady(cfg) // weth + BOTH factories (full coverage)
+  const v2Ready = isV2Ready(cfg)
+  const v3Ready = isV3Ready(cfg) // V3 alone (Robinhood: canonical V3, no V2)
   const client = clientFor(chainId)
 
   const lower = asset.toLowerCase()
   if ((cfg.weth && lower === cfg.weth.toLowerCase()) || lower === NATIVE_ETH) {
     throw new PoolDetectionError('Asset cannot be ETH/WETH.', 'BAD_ASSET')
   }
+  // V4Q sweep only on a declared V4Q-lineage factory, and never for the
+  // settlement asset itself (a {USDG, USDG} pair is malformed; a settlement leg
+  // is the fork's buffer case and still resolves its ETH hub pool via findV4).
+  const v4qReady = !!cfg.v4qLineage && !!cfg.usdc && lower !== cfg.usdc.toLowerCase()
 
   // Identity screen (contract exists / decimals sane / not 777 / not a nested
   // basket / not denylisted) runs IN PARALLEL with venue discovery — but its
@@ -436,12 +560,15 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   // fails inside the token constructor as CREATE2Failed() (proven on Robinhood
   // 2026-07-12: the working basket's legs are ETH-paired; USDG-paired keys from
   // the removed settlement scan bricked every deploy at simulate).
-  const [screen, v2, v3s, v4, aero] = await Promise.all([
+  const [screen, v2, v3s, v4, v4q, aero] = await Promise.all([
     screenTokenIdentity(client, cfg, asset),
-    v23Ready ? findV2(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve({ candidate: null, checkFailed: false }),
-    v23Ready ? findV3(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve({ candidates: [], checkFailed: false }),
+    v2Ready ? findV2(client, cfg as V2ReadyChainCfg, asset) : Promise.resolve({ candidate: null, checkFailed: false }),
+    v3Ready ? findV3(client, cfg as V3ReadyChainCfg, asset) : Promise.resolve({ candidates: [], checkFailed: false }),
     findV4(client, cfg as Pick<ChainCfg, 'chainId'> & { poolManager: Address }, asset),
-    v23Ready ? aerodromeExists(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve(false),
+    v4qReady
+      ? findV4Q(client, cfg as Pick<ChainCfg, 'chainId'> & { poolManager: Address; usdc: Address }, asset)
+      : Promise.resolve({ candidates: [] as PoolCandidate[], partial: false as V4ScanGap, depthCheckFailed: false }),
+    v23Ready ? aerodromeExists(client, cfg as PoolReadyChainCfg, asset) : Promise.resolve(false), // aero detection stays full-coverage-only
   ])
   if (screen.hardFail) throw new PoolDetectionError(screen.hardFail.message, screen.hardFail.code)
   const decimals = screen.decimals
@@ -449,7 +576,7 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   // Incomplete V2/V3 coverage is a HARD stop, not a shrug: ranking without a
   // venue silently routes the leg into whatever survived (MOG once landed on an
   // $11k V3 pool while its $4.6M V2 pair sat unchecked). Retry beats wrong.
-  if (v2.checkFailed || v3s.checkFailed) {
+  if (v2.checkFailed || v3s.checkFailed || v4.depthCheckFailed || v4q.depthCheckFailed) {
     throw new PoolDetectionError(
       'Could not check every Uniswap venue for this token (RPC error) — refusing to pick a pool from an incomplete sweep. Add the token again to retry.',
       'VENUE_CHECK_FAILED',
@@ -458,7 +585,7 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
 
   const candidates: PoolCandidate[] = []
   if (v2.candidate) candidates.push(v2.candidate)
-  candidates.push(...v3s.candidates, ...v4.candidates)
+  candidates.push(...v3s.candidates, ...v4.candidates, ...v4q.candidates)
 
   if (candidates.length === 0) {
     if (aero) {
@@ -467,10 +594,11 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
         'ONLY_AERODROME',
       )
     }
+    // Name exactly the venues that were swept (the gate split made these
+    // independent — a 4663 user was told "v4 only" while V3 WAS searched).
+    const swept = v23Ready ? 'v2/v3/v4' : v3Ready ? 'v3/v4' : v2Ready ? 'v2/v4' : 'v4'
     throw new PoolDetectionError(
-      v23Ready
-        ? 'No Uniswap v2/v3/v4 ETH pool found for this asset.'
-        : 'No Uniswap v4 ETH pool found for this asset on this chain.',
+      `No Uniswap ${swept} ETH pool found for this asset on this chain.`,
       'NO_POOL',
     )
   }
@@ -499,13 +627,41 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
     fetchPoolLiquidity(cfg.dexscreenerSlug, asset),
   ])
   for (const c of candidates) {
-    const key = (c.venue === Venue.V4 ? c.poolId : c.poolAddress)?.toLowerCase()
+    const key = (c.venue === Venue.V4 || c.venue === Venue.V4Q ? c.poolId : c.poolAddress)?.toLowerCase()
     const listedUsd = key ? liqByPool.get(key) : undefined
     c.dexListed = listedUsd != null
-    // DexScreener TVL when the pool is indexed; otherwise an on-chain ETH-side
-    // estimate (ethUsd comes from the chain's own settlement pool where no
-    // indexer covers it — see nativeEthUsdOnChain).
-    c.depthUsd = listedUsd != null ? listedUsd : ethUsd != null ? c.depthEth * ethUsd : null
+    // DexScreener TVL when the pool is indexed; otherwise a V4Q candidate KEEPS
+    // its settlement-side read (already real dollars — overwriting it with
+    // depthEth×ethUsd would zero it); everything else gets the on-chain
+    // ETH-side estimate (ethUsd comes from the chain's own settlement pool
+    // where no indexer covers it — see nativeEthUsdOnChain).
+    c.depthUsd =
+      listedUsd != null
+        ? listedUsd
+        : c.venue === Venue.V4Q
+          ? c.depthUsd
+          : ethUsd != null
+            ? c.depthEth * ethUsd
+            : null
+  }
+
+  // A PARTIAL V4 scan must never crown a depthless pool: with the scan degraded
+  // (capped public RPC) a real V4 pool can be invisible while a dust V2/V3 pool
+  // "wins" — the exact mis-route the V2/V3 hard-stop doctrine forbids. If the
+  // would-be best has no measurable depth AND V4 coverage was partial, refuse
+  // and let the user retry (the scan is flaky, not permanently broken).
+  // Either V4-family scan cut short counts: a partial sweep must never crown a
+  // depthless pool (the same doctrine for ETH-paired and settlement-paired).
+  const v4Partial: V4ScanGap = v4.partial !== false ? v4.partial : v4q.partial
+  {
+    const sorted = [...candidates].sort((a, b) => (b.depthUsd ?? 0) - (a.depthUsd ?? 0) || b.depthEth - a.depthEth)
+    const top = sorted[0]
+    if (v4Partial !== false && top && (top.depthUsd ?? 0) < 100 && top.depthEth < 0.05) {
+      throw new PoolDetectionError(
+        'Could not establish real pool depth for this token (the V4 scan was cut short by this RPC) — add it again to retry.',
+        'VENUE_CHECK_FAILED',
+      )
+    }
   }
 
   // DexScreener-listed pools (real, comparable TVL) always rank above unlisted dust;
@@ -521,14 +677,15 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   const warnings: string[] = []
   // Only meaningful where DexScreener SHOULD have answered: on settlement-hub
   // chains (no slug) the depth figures are exact on-chain settlement-side reads.
-  if (cfg.dexscreenerSlug && liqByPool.size === 0 && candidates.length > 1) {
+  const allUnpriced = candidates.length > 1 && candidates.every((c) => c.depthUsd == null)
+  if ((cfg.dexscreenerSlug && liqByPool.size === 0 && candidates.length > 1) || allUnpriced) {
     warnings.push(
       'Live pool-depth data was unavailable — venues were ranked by on-chain reserves for this add (V4 depth is virtual and can over-rank).',
     )
   }
   if (best.depthUsd != null && best.depthUsd < SHALLOW_USD_THRESHOLD) {
     warnings.push(
-      `Deepest pool is shallow (~$${Math.round(best.depthUsd).toLocaleString()} ETH-side) — sizable trades may slip.`,
+      `Deepest pool is shallow (~$${Math.round(best.depthUsd).toLocaleString()} ${best.dexListed ? 'listed TVL' : best.venue === Venue.V4 ? 'virtual in-range' : best.venue === Venue.V4Q ? 'settlement-side in-range' : 'ETH-side'}) — sizable trades may slip.`,
     )
     // A shallow Uniswap side + a live Aerodrome pool usually means the token's real
     // depth lives on Aerodrome — which Spectrum can't route (it can't host the hook).
@@ -538,13 +695,14 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
       )
     }
   }
-  if (v4.partial) {
+  if (v4Partial) {
     // The text states the CAUSE, not the chain tier (a failed scan on a
     // QuickNode-configured site used to print "no private RPC" — wrong). Either
-    // way the standard V4 tiers WERE probed directly; only exotic tick
-    // spacings are invisible without the full log scan.
+    // way the standard V4 tiers WERE probed directly (both the ETH-paired and,
+    // on a V4Q chain, the settlement-paired shapes); only exotic tick spacings
+    // are invisible without the full log scan.
     warnings.push(
-      v4.partial === 'skipped'
+      v4Partial === 'skipped'
         ? 'V4 coverage is partial: standard fee tiers were checked directly, but a full V4 scan needs a private RPC this build does not have — an exotic-tier V4 pool may be missed. Set an origin-restricted key (VITE_ALCHEMY_API_KEY) or your own provider URL (VITE_BASE_RPC_URL / VITE_MAINNET_RPC_URL).'
         : 'V4 coverage is partial: the full V4 scan failed on this RPC (provider log-range caps are the usual cause), so standard fee tiers were checked directly — an exotic-tier V4 pool may be missed. Re-add the token to retry the full scan.',
     )

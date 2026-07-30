@@ -74,7 +74,7 @@ export function referMeta(origin: string): OgMeta {
     title: 'Refer & earn · Spectrum',
     description: 'Share Spectrum and earn a slice of the protocol fee, onchain in USDC, on every trade and launch through your link. No signup.',
     image: `${origin}/og.png`,
-    url: `${origin}/refer`,
+    url: `${origin}/earn`,
     imageAlt: 'Refer & earn on Spectrum',
   }
 }

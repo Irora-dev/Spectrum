@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { encodeFunctionData, formatEther, parseAbi, parseUnits } from 'viem'
+import { encodeFunctionData, formatEther, parseUnits } from 'viem'
 import { useAccount, useBalance, usePublicClient, useSendTransaction, useSwitchChain } from 'wagmi'
 import { deploymentFor } from '../lib/chain/deployments'
 import { chainCfg } from '../lib/chain/chains'
+import { BURNER, BURNER_V2, BURNER_V2_SLICE_WEI, BURN_PRICE_TOKEN, burnerV2Abi, incumbentBurnerAbi } from '../lib/prism/burn'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The AUCTION BURN canvas (owner 2026-07-07 15:32: "a big canvas that anyone
@@ -10,28 +11,27 @@ import { chainCfg } from '../lib/chain/chains'
 // don't display that anywhere"). Two permissionless cranks, Ethereum mainnet:
 //
 //   1. factory.flushAuctionProceeds()  — sends the factory's held auction ETH
-//      to the PrismBurner.
-//   2. burner.flush(minPrismOut)       — swaps that ETH for PRISM in the V4
-//      pool and transfers it to 0x…dEaD.
+//      to the PrismBurner (which burner = the factory's own constant).
+//   2. the burner's flush — swaps that ETH for PRISM in the V4 pool and sends
+//      it to 0x…dEaD. WHICH burner + WHICH call comes from lib/prism/burn.ts:
+//      the incumbent takes whole-balance flush(minPrismOut); the v2 burner
+//      (live, flips in with the new factory book) sizes via
+//      flushAmount(slice, minPrismOut) and REFUSES floorless/oversized burns —
+//      the canvas drains it in slices, syncNFTs-style.
 //
-// Both verified by traced simulation 2026-07-07 (burner selector surface is
-// minimal: no owner/withdraw/upgrade). minPrismOut is the burner's own
-// sandwich floor — prefilled ~10% under a DexScreener estimate, editable.
-// Facts only in the copy; no value claims (§9).
+// The floor is an OFF-CHAIN quote (DexScreener × 0.9) in both modes — that is
+// the real anti-sandwich guard; v2's on-chain minOutFloor is spot-derived and
+// deliberately not used as the quote. Facts only in the copy; no value claims.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Typed `number`, not the literal 1: the wagmi config registers chains as
 // Chain[] (ids: number), and a literal chainId makes SelectChains Extract to
 // `never`, collapsing every mutation overload in this file.
 const CHAIN: number = 1 // verified on Ethereum mainnet; Base's burn path isn't wired here
-// PrismBurner + PRISM token (both read back from the live chain, 13:52 sim).
-const BURNER = '0x9d2b5f051074cfdfc14da4430779857529739837' as const
-const PRISM = '0xbd3ab5859f244cc9f51ee0ca755c5cf663d80040' as const
 const DEAD = '0x000000000000000000000000000000000000dEaD'
 
 // Sent as raw calldata via sendTransaction — wagmi v2's writeContract
 // generics collapse on these single-function ABIs; the bytes are identical.
-const burnerAbi = parseAbi(['function flush(uint256 minPrismOut)'])
 const FLUSH_AUCTION_SELECTOR = '0x8240efb2' as const // flushAuctionProceeds()
 
 const BTN =
@@ -68,7 +68,7 @@ export function AuctionBurnCanvas() {
     let gone = false
     void (async () => {
       try {
-        const r = await fetch(`https://api.dexscreener.com/tokens/v1/ethereum/${PRISM}`, { headers: { Accept: 'application/json' } })
+        const r = await fetch(`https://api.dexscreener.com/tokens/v1/ethereum/${BURN_PRICE_TOKEN}`, { headers: { Accept: 'application/json' } })
         if (!r.ok) return
         const pairs = (await r.json()) as { priceNative?: string; quoteToken?: { symbol?: string }; liquidity?: { usd?: number } }[]
         const best = (Array.isArray(pairs) ? pairs : [])
@@ -84,9 +84,14 @@ export function AuctionBurnCanvas() {
       gone = true
     }
   }, [])
-  const burnerEth = burnerBal ? Number(formatEther(burnerBal.value)) : 0
-  const estPrism = prismPerEth != null && burnerEth > 0 ? burnerEth * prismPerEth : null
+  // v2 burns in slices (the pool refuses oversized burns); the incumbent takes
+  // the whole balance. The floor prices the SLICE actually being burned.
+  const sliceWei =
+    BURNER_V2 && burnerBal ? (burnerBal.value < BURNER_V2_SLICE_WEI ? burnerBal.value : BURNER_V2_SLICE_WEI) : (burnerBal?.value ?? 0n)
+  const sliceEth = Number(formatEther(sliceWei))
+  const estPrism = prismPerEth != null && sliceEth > 0 ? sliceEth * prismPerEth : null
   const autoFloor = estPrism != null ? estPrism * 0.9 : null
+  const slicesLeft = BURNER_V2 && burnerBal && burnerBal.value > 0n ? Number((burnerBal.value + BURNER_V2_SLICE_WEI - 1n) / BURNER_V2_SLICE_WEI) : 0
 
   const [phase, setPhase] = useState<{ step: 1 | 2; p: Phase } | null>(null)
   const [lastTx, setLastTx] = useState<string | null>(null)
@@ -99,14 +104,13 @@ export function AuctionBurnCanvas() {
     try {
       if (walletChain !== CHAIN) await switchChainAsync({ chainId: CHAIN })
       setPhase({ step, p: 'signing' })
+      const floor = parseUnits((autoFloor ?? 0).toFixed(6), 18)
       const data =
         step === 1
           ? FLUSH_AUCTION_SELECTOR
-          : encodeFunctionData({
-              abi: burnerAbi,
-              functionName: 'flush',
-              args: [parseUnits((autoFloor ?? 0).toFixed(6), 18)],
-            })
+          : BURNER_V2
+            ? encodeFunctionData({ abi: burnerV2Abi, functionName: 'flushAmount', args: [sliceWei, floor] })
+            : encodeFunctionData({ abi: incumbentBurnerAbi, functionName: 'flush', args: [floor] })
       const hash = await sendTransactionAsync({ to: step === 1 ? factory : BURNER, data, chainId: CHAIN })
       setPhase({ step, p: 'confirming' })
       await client.waitForTransactionReceipt({ hash })
@@ -195,14 +199,19 @@ export function AuctionBurnCanvas() {
               onClick={() => void crank(2)}
               className={`${BTN} mt-4 w-full`}
             >
-              {busy(2) ?? 'Buy & burn PRISM'}
+              {busy(2) ??
+                (BURNER_V2 && slicesLeft > 1
+                  ? `Buy & burn next ${sliceEth.toLocaleString('en-US', { maximumFractionDigits: 2 })} ETH (${slicesLeft} slices left)`
+                  : 'Buy & burn PRISM')}
             </button>
             {/* the slippage guard is AUTOMATIC — one honest line, no field */}
             <p className="mt-2 text-center font-mono text-[10px] text-ink-faint">
               {burnerBal && burnerBal.value === 0n
                 ? 'Nothing to burn yet — run step 1 first.'
                 : autoFloor != null
-                  ? `Sandwich-protected: reverts under ≈ ${autoFloor.toLocaleString('en-US', { maximumFractionDigits: 2 })} PRISM.`
+                  ? BURNER_V2
+                    ? `Sandwich-protected: this slice reverts under ≈ ${autoFloor.toLocaleString('en-US', { maximumFractionDigits: 2 })} PRISM. A revert is the contract refusing a bad burn — repeat with a fresh quote; the pool absorbs the balance in slices.`
+                    : `Sandwich-protected: reverts under ≈ ${autoFloor.toLocaleString('en-US', { maximumFractionDigits: 2 })} PRISM.`
                   : 'Waiting for a live price to set the protection floor…'}
             </p>
           </div>
@@ -223,9 +232,13 @@ export function AuctionBurnCanvas() {
           </div>
         )}
         {!isConnected && (
-          <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-            Connect a wallet to crank (top right).
-          </p>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event('spectrum:connect'))}
+            className="press mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan underline underline-offset-2 hover:text-ink"
+          >
+            Connect a wallet to crank
+          </button>
         )}
       </div>
     </section>

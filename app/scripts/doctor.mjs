@@ -16,12 +16,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const ROOT = resolve(APP, '..')
+// The public kit repo — the same upstream create/update.mjs merges from.
+const UPSTREAM_URL = 'https://github.com/Irora-dev/Spectrum'
+
+// How many kit commits this checkout is behind upstream/main, or -1 when the
+// question doesn't apply (zip install with no .git, no network, or a checkout
+// whose history is unrelated to the mirror — e.g. the source repo). Fetches by
+// URL so no remote is added or changed; FETCH_HEAD is the only side effect.
+function gitBehindUpstream() {
+  if (!existsSync(resolve(ROOT, '.git'))) return -1
+  const git = (...a) => spawnSync('git', a, { cwd: ROOT, encoding: 'utf8', timeout: 15000 })
+  if (git('fetch', '--quiet', UPSTREAM_URL, 'main').status !== 0) return -1
+  if (git('merge-base', 'HEAD', 'FETCH_HEAD').status !== 0) return -1
+  const count = git('rev-list', '--count', 'HEAD..FETCH_HEAD')
+  if (count.status !== 0) return -1
+  const n = Number(String(count.stdout).trim())
+  return Number.isFinite(n) ? n : -1
+}
 
 const C = { red: '\x1b[31m', yellow: '\x1b[33m', green: '\x1b[32m', dim: '\x1b[2m', bold: '\x1b[1m', reset: '\x1b[0m' }
 const tty = process.stdout.isTTY
@@ -88,7 +105,22 @@ if (!local?.version) {
             `${care.length ? ` It ${care.join('; ')}.` : ''} Run node create/update.mjs, or the runbook's Updating section walks the merge.`,
         )
       } else {
-        console.log(c('green', '  ✓ ') + `Kit version ${local.version} — up to date.`)
+        // A matching version string is NOT "no newer commits" (kit audit:
+        // doctor said "up to date" while update.mjs counted 11 behind —
+        // commits can land upstream without a version bump). For git clones,
+        // corroborate with the same commit count update.mjs uses.
+        const behind = gitBehindUpstream()
+        if (behind > 0) {
+          console.log(
+            c('yellow', '  ⚠ ') +
+              `Kit version ${local.version} matches the latest release manifest, but the kit repo has ` +
+              `${behind} newer commit${behind === 1 ? '' : 's'} — run node create/update.mjs to review and pull them.`,
+          )
+        } else if (behind === 0) {
+          console.log(c('green', '  ✓ ') + `Kit version ${local.version} — up to date (release manifest + kit repo agree).`)
+        } else {
+          console.log(c('green', '  ✓ ') + `Kit version ${local.version} — matches the latest release manifest.`)
+        }
       }
     } catch (e) {
       // Network-flake tolerance: report, never block.

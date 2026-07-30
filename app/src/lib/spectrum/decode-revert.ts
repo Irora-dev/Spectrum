@@ -31,6 +31,10 @@ const HINTS: Record<string, string> = {
   'MissingHookData()': 'the trade was sent without its protection payload — refresh and retry',
   'NothingToBurn()': 'nothing is pending for this crank',
   'BelowBridgeThreshold()': 'the pending amount is below the bridge threshold — let more fees accrue first',
+  'SlotNotOpen()':
+    'another basket just launched — the factory takes a 10-block breather between launches (about two minutes); try again shortly',
+  'MaxCostExceeded()': 'the launch price moved past your guard — refresh and retry',
+  'InsufficientPayment()': 'the transaction carried less ETH than the launch price — refresh and retry',
 }
 
 const ERROR_SIGS = [
@@ -47,10 +51,12 @@ const ERROR_SIGS = [
   'FirstMintUnderValued()',
   'ForbiddenTokenStandard()',
   'InsufficientFirstDeposit()',
+  'InsufficientPayment()',
   'InvalidAsset()',
   'InvalidCanonicalKey()',
   'InvalidEthPool()',
   'LegMinNotMet()',
+  'MaxCostExceeded()',
   'MetadataAlreadySet()',
   'MissingHookData()',
   'NoOutput()',
@@ -60,6 +66,7 @@ const ERROR_SIGS = [
   'OnlySelf()',
   'PoolAlreadyInitialized()',
   'SlippageExceeded()',
+  'SlotNotOpen()',
   'UnknownAction()',
   'WeightsNotFull()',
   'WrongPool()',

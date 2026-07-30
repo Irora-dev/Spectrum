@@ -7,6 +7,7 @@ export {
   VENUE_LABEL,
   Venue,
   ZERO_POOL_KEY,
+  isRetryableDetection,
   type BasketRoute,
   type BestPoolResult,
   type PoolCandidate,

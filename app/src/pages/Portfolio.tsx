@@ -1,13 +1,23 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
+
+// The teaching walkthrough — a fresh wallet's empty portfolio is a natural
+// "what even is this" moment (Colby 2026-07-29: every good surface). Lazy.
+import { BundleShelf } from '../components/BundleShelf'
+import { useActiveChainId } from '../lib/chain/active-chain'
+const LearnWalkthrough = lazy(() =>
+  import('../components/LearnWalkthrough').then((m) => ({ default: m.LearnWalkthrough })),
+)
 import { AddToWalletButton } from '../components/AddToWalletButton'
-import { PageHeader } from '../components/PageHeader'
-import { PortfolioClaims } from '../components/PortfolioClaims'
-import { ReferralCard } from '../components/ReferralCard'
+import { usePortfolioClaimables } from '../components/PortfolioClaims'
+import { useReferralEarned } from '../components/ReferralCard'
+import { refLinkFor } from '../lib/spectrum/referral'
+import { useClaimAll } from '../lib/spectrum/use-fee-actions'
+import { TRADING_ENABLED as TRADING_ON } from '../lib/config/features'
 import { ShareEarnNudge } from '../components/ShareEarnNudge'
 import { BasketBento } from '../components/BasketBento'
 import { BasketWash } from '../components/BasketWash'
 import { Link, Navigate } from 'react-router-dom'
-import { useAccount } from 'wagmi'
+import { useAccount, useEnsName } from 'wagmi'
 import { DEPLOY_ENABLED, TRADING_ENABLED, WALLET_ENABLED } from '../lib/config/features'
 import { usePortfolio, useLiveExposure, type Portfolio as PortfolioData, type PortfolioHolding } from '../lib/spectrum/hooks'
 import { BasketCard } from '../components/BasketCard'
@@ -17,10 +27,11 @@ import { ChainBadge } from '../components/ChainBadge'
 import { WalletButton } from '../components/WalletButton'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { chainCfg } from '../lib/chain/chains'
-import { computeExposure, type AssetExposure, type WeightBasis } from '../lib/spectrum/exposure'
+import { computeExposure, type WeightBasis } from '../lib/spectrum/exposure'
 import { basketSignatureColor } from '../lib/spectrum/signature'
-import { tokenVisual } from '../lib/spectrum/token-meta'
 import { formatGrouped, formatPct, formatUsdCompact, shortAddr } from '../lib/spectrum/format'
+import portfolioHeroArt from '../assets/portfolio-hero.jpg'
+import portfolioHeroArt1280 from '../assets/portfolio-hero.1280.jpg'
 
 // Portfolio / "my positions": a summary rail (total balance, an allocation donut of
 // the look-through, and stat tiles) beside the held baskets' asset-exposure bento
@@ -75,16 +86,6 @@ function ViewToggle({ view, setView, held, created }: { view: View; setView: (v:
   )
 }
 
-// Compact summary stat: label over value (value styled by the caller).
-function StatTile({ label, value, className = '' }: { label: string; value: ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-white/10 bg-white/[0.03] p-5 ${className}`}>
-      <div className="font-mono text-xs uppercase tracking-[0.15em] text-ink-dim">{label}</div>
-      <div className="mt-2">{value}</div>
-    </div>
-  )
-}
-
 // Total balance, with the $ and the K/M/B suffix dropped to a muted, smaller size.
 function Balance({ usd }: { usd: number }) {
   const s = formatUsdCompact(usd)
@@ -99,86 +100,215 @@ function Balance({ usd }: { usd: number }) {
   )
 }
 
-// Allocation ring of the look-through — a conic-gradient of the real per-asset
-// brand colours, with the asset count in the hole. Wears the bento tiles' slow
-// hue sheen + a drop shadow so it pops off the summary card (owner 16:48).
-function AllocationDonut({ assets }: { assets: AssetExposure[] }) {
-  let acc = 0
-  const stops = assets.length
-    ? assets
-        .map((a) => {
-          const start = acc
-          acc += a.pct
-          return `${tokenVisual(a.symbol, a.address).color} ${start.toFixed(3)}% ${Math.min(acc, 100).toFixed(3)}%`
-        })
-        .join(', ')
-    : 'rgba(255,255,255,0.06) 0% 100%'
+
+// The MASTHEAD (owner 2026-07-29, "massive beautification"): the balance is
+// the hero, full width, in the site's hero language — spectral hairline, corner
+// glow, mono eyebrow with the live address, stat chips drawn by spacing. The
+// earn stack (claims + referral) docks as a right column on lg.
+function SummaryPanel({ p, shareArmed, onToggleShare, chainsFailed = 0 }: { p: PortfolioData; shareArmed: boolean; onToggleShare: () => void; chainsFailed?: number }) {
+  // The greeting name: mainnet ENS when one resolves (ENS lives on chain 1
+  // regardless of the wallet's active chain), the condensed address otherwise.
+  const { data: ens } = useEnsName({ address: p.address as `0x${string}`, chainId: 1 })
+  const claimBaskets = (() => {
+    const seen = new Set<string>()
+    return [...p.holdings.map((h) => h.basket), ...p.created].filter((b) => {
+      const k = `${b.chainId}:${b.address.toLowerCase()}`
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+  })()
   return (
-    <div className="relative grid h-60 w-60 max-w-full place-items-center">
-      <div
-        className="absolute inset-0 rounded-full"
+    <section className="relative left-1/2 -mt-8 w-screen -translate-x-1/2 overflow-hidden">
+      {/* the prismatic-knight art (owner 2026-07-29): full bleed under the nav,
+          every edge masked into the page so the site's bands ride above it —
+          the home/league hero treatment. Knight centre-right, so the text
+          block owns the left over the rainbow beam. */}
+      <img
+        src={portfolioHeroArt}
+        srcSet={`${portfolioHeroArt1280} 1280w, ${portfolioHeroArt} 2400w`}
+        sizes="100vw"
+        alt=""
+        aria-hidden
+        className="league-hero-in absolute inset-0 h-full w-full object-cover object-[center_22%]"
         style={{
-          background: `conic-gradient(${stops})`,
-          opacity: 0.9,
-          boxShadow: '0 26px 60px -18px rgba(123,92,255,0.55), 0 0 50px rgba(123,92,255,0.22)',
+          WebkitMaskImage: 'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.4) 6%, black 14%, black 87%, rgba(0,0,0,0.45) 94%, transparent 100%), linear-gradient(180deg, black 0%, black 88%, transparent 100%)',
+            WebkitMaskComposite: 'source-in',
+            maskImage: 'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.4) 6%, black 14%, black 87%, rgba(0,0,0,0.45) 94%, transparent 100%), linear-gradient(180deg, black 0%, black 88%, transparent 100%)',
+            maskComposite: 'intersect',
         }}
       />
-      {/* the bento sheen, clipped to the ring */}
-      <div aria-hidden className="absolute inset-0 overflow-hidden rounded-full">
-        <div
-          className="bento-sheen absolute inset-0"
-          style={{
-            backgroundImage: 'linear-gradient(115deg, transparent 42%, rgba(255,255,255,0.16) 50%, transparent 58%)',
-            animationDuration: '11s',
-          }}
-        />
-      </div>
-      <div className="absolute inset-[16px] grid place-items-center rounded-full border border-white/10 bg-void/90 backdrop-blur-sm">
-        <div className="text-center">
-          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Assets</div>
-          <div className="font-num text-4xl font-light leading-none tabular-nums text-ink">{assets.length}</div>
+      <div className="relative z-10 mx-auto grid min-h-[50svh] w-full max-w-6xl items-center gap-7 px-4 pb-2 pt-6 sm:px-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:gap-10">
+        {/* ── the hero: eyebrow → balance → context chips, on a SOLID card
+               (owner: the vignette alone still read see-through) ── */}
+        <div className="flex flex-col justify-center">
+          <section className="rounded-2xl border border-white/15 bg-panel p-6 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)]">
+          {/* the greeting leads (owner 2026-07-30): the wallet IS the person —
+              "Welcome <ens or condensed address>", the portfolio facts below */}
+          <h1 className="flex flex-wrap items-baseline gap-x-2.5 font-display text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+            <span>Welcome</span>
+            {ens ? (
+              <span className="min-w-0 break-all">{ens}</span>
+            ) : (
+              <span className="font-mono text-[0.8em] font-semibold">{shortAddr(p.address)}</span>
+            )}
+          </h1>
+          <div className="mt-4 font-mono text-[11px] uppercase tracking-[0.3em] text-ink-dim">
+            Portfolio · total balance
+          </div>
+          <div className="mt-2">
+            <Balance usd={p.totalValueUsd} />
+          </div>
+          {/* a failed chain used to vanish from this total silently (audit R7) */}
+          {chainsFailed > 0 && (
+            <p className="mt-2 font-mono text-[10px] text-amber">
+              {chainsFailed} network{chainsFailed === 1 ? '' : 's'} unavailable right now — this total may
+              exclude holdings there.
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-2.5">
+            <span className="inline-flex items-baseline gap-2 rounded-xl border border-white/15 bg-void/75 px-5 py-2.5 backdrop-blur-sm">
+              <span className="font-num text-lg font-light tabular-nums text-ink">{p.heldCount}</span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">holding</span>
+            </span>
+            <span className="inline-flex items-baseline gap-2 rounded-xl border border-white/15 bg-void/75 px-5 py-2.5 backdrop-blur-sm">
+              <span className="font-num text-lg font-light tabular-nums text-ink">{p.createdCount}</span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">created</span>
+            </span>
+            {p.createdCount > 0 && (
+              <Link
+                to={`/creator/${p.address}`}
+                className="press inline-flex items-center gap-2 rounded-xl border border-cyan/40 bg-void/75 px-5 py-2.5 font-mono text-[11px] uppercase tracking-[0.16em] text-cyan backdrop-blur-sm transition-colors hover:border-cyan/70"
+              >
+                Your creator page <span aria-hidden>→</span>
+              </Link>
+            )}
+          </div>
+          </section>
+        </div>
+
+        {/* ── the ONE earn card, CONDENSED (owner 2026-07-29 "a complete
+               mess"): one number, one Claim all, one earned line, two compact
+               actions. Per-basket rows and mechanics live on /earn. */}
+        <div className="flex flex-col justify-center">
+          <EarnCard p={p} baskets={claimBaskets} shareArmed={shareArmed} onToggleShare={onToggleShare} />
         </div>
       </div>
-    </div>
+    </section>
   )
 }
 
-function SummaryPanel({ p, assets }: { p: PortfolioData; assets: AssetExposure[] }) {
+// The condensed Earn card (owner 2026-07-29): everything earnable in four
+// quiet lines — total claimable + Claim all, referral earned to date, copy
+// link, activate. The breakdown and the mechanics live on /earn.
+function EarnCard({ p, baskets, shareArmed, onToggleShare }: { p: PortfolioData; baskets: BasketSummary[]; shareArmed: boolean; onToggleShare: () => void }) {
+  const ca = useClaimAll()
+  const { items, totalUsdc, created, claimable, degraded } = usePortfolioClaimables(baskets)
+  const { total: refEarned } = useReferralEarned()
+  // Claim-all sweeps only the wallet's CURRENT chain (use-fee-actions) — the
+  // condensation dropped the disclosure PortfolioClaims used to carry, so an
+  // all-other-chain total was a dead click with nothing on screen (audit).
+  const { chainId: walletChainId } = useAccount()
+  const hereUsdc = [...claimable, ...created]
+    .filter((x) => x.b.chainId === walletChainId)
+    .reduce((s2, x) => s2 + x.usdc, 0)
+  const elsewhereUsdc = Math.max(0, totalUsdc - hereUsdc)
+  const [copied, setCopied] = useState(false)
+  const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const link = refLinkFor(p.address, window.location.origin, p.createdCount > 0 ? `/creator/${p.address}` : '/explore')
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch { /* clipboard unavailable */ }
+  }
   return (
-    <aside className="relative flex flex-1 flex-col overflow-hidden rounded-3xl card-surface p-8 backdrop-blur-md">
-      <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: 'linear-gradient(90deg,var(--color-amber),var(--color-magenta),var(--color-violet),var(--color-cyan))' }} />
-      <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-56 w-56 rounded-full bg-violet opacity-15 blur-3xl" />
+    <section className="rounded-2xl border border-white/15 bg-panel p-6 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)]">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-teal">Earn</span>
+        <Link to="/earn" className="font-mono text-[10px] uppercase tracking-[0.14em] text-cyan hover:underline">
+          How it works →
+        </Link>
+      </div>
 
-      <div className="relative flex items-center justify-between">
-        <span className="font-mono text-sm uppercase tracking-[0.2em] text-ink-dim">Summary</span>
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-teal" />
-          </span>
-          <span className="font-mono text-xs text-ink-dim">{shortAddr(p.address)}</span>
+      <div className="mt-4 flex items-end justify-between gap-4">
+        <div>
+          <div className="font-num text-4xl font-light tabular-nums text-ink">{TRADING_ON ? fmt(totalUsdc) : '—'}</div>
+          <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+            {/* a blipped read used to be indistinguishable from a real zero here */}
+            {degraded ? 'claimable so far — a balance could not be read' : 'claimable across your baskets'}
+            {elsewhereUsdc > 0.005 && (
+              <span className="text-amber-200/90"> · {fmt(elsewhereUsdc)} on another network</span>
+            )}
+          </div>
         </div>
+        {TRADING_ON && items.length > 0 && (
+          <button
+            type="button"
+            disabled={ca.running}
+            onClick={() => void ca.claimAll(items)}
+            className="press shrink-0 rounded-xl border border-teal/50 bg-teal/15 px-5 py-2.5 font-display text-xs font-bold uppercase tracking-[0.12em] text-teal hover:enabled:border-teal disabled:opacity-60"
+          >
+            {ca.running
+              ? `Claiming ${ca.done + ca.failed}/${ca.total}…`
+              : elsewhereUsdc > 0.005 && hereUsdc > 0.005
+                ? `Claim ${fmt(hereUsdc)}`
+                : 'Claim all'}
+          </button>
+        )}
       </div>
+      {(ca.error || ca.skippedOtherChain > 0) && !ca.running && (
+        <p className="mt-2 font-mono text-[10px] leading-relaxed text-amber-200/90">
+          {ca.error ?? ''}
+          {ca.skippedOtherChain > 0
+            ? ` ${ca.skippedOtherChain} on another network — switch networks to claim those.`
+            : ''}
+        </p>
+      )}
+      {/* audit #4: refEarned reads the SAME pending frontend-fee bucket the
+          claimable total already includes for your own baskets — subtract the
+          overlap, and say "pending" (it zeroes on claim), never "to date". */}
+      {(() => {
+        const overlap = created.reduce((s2, c) => s2 + c.usdc, 0)
+        const linkPending = Math.max(0, refEarned - overlap)
+        return linkPending > 0.005 ? (
+          <div className="mt-2.5 font-num text-sm tabular-nums text-teal">
+            + {fmt(linkPending)} <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-dim">pending through your link</span>
+          </div>
+        ) : null
+      })()}
 
-      <div className="relative mt-8 flex flex-col items-center">
-        <span className="font-mono text-xs uppercase tracking-[0.2em] text-ink-dim">Total balance</span>
-        <div className="mt-2">
-          <Balance usd={p.totalValueUsd} />
-        </div>
+      {/* ONE action per journey stage (owner): before activation the only
+          move is activating; after it, the only move is copying the link. */}
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-white/[0.07] pt-4">
+        {shareArmed ? (
+          <>
+            <button
+              type="button"
+              onClick={copy}
+              className="press rounded-xl border border-violet/40 bg-violet/10 px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-bright hover:border-violet/70"
+            >
+              {copied ? 'Copied ✓' : 'Copy your link'}
+            </button>
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-teal">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-teal" /> active
+            </span>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={onToggleShare}
+            className="press rounded-xl border border-cyan/50 bg-cyan/[0.08] px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan shadow-[0_0_14px_-4px_rgba(53,224,255,0.6)] hover:border-cyan"
+          >
+            Activate your referral link →
+          </button>
+        )}
       </div>
-
-      {/* Networks card removed (owner 16:48) — the pie moves up in its place */}
-      <div className="relative mt-8 grid grid-cols-2 gap-3">
-        <StatTile label="Holding" value={<span className="font-num text-3xl font-light tabular-nums text-ink">{p.heldCount}</span>} />
-        <StatTile label="Created" value={<span className="font-num text-3xl font-light tabular-nums text-ink">{p.createdCount}</span>} />
-      </div>
-
-      {/* mt-auto: the pie rides the card bottom as it stretches level with
-          the holdings rows */}
-      <div className="relative mt-auto flex justify-center pt-6">
-        <AllocationDonut assets={assets} />
-      </div>
-    </aside>
+      <p className="mt-3.5 text-sm leading-relaxed text-ink-dim">
+        Your link pays you {p.createdCount > 0 ? 'your creator fee plus ~5% of' : '~5% of'} the trade fees it brings.
+      </p>
+    </section>
   )
 }
 
@@ -284,7 +414,10 @@ function BasketAdminBar({ ix }: { ix: BasketSummary }) {
   const iconBtn =
     'pointer-events-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/12 text-ink-dim transition-colors hover:border-white/30 hover:text-ink'
   return (
-    <div className="flex items-center gap-2">
+    // flex-wrap: at 375px the two nowrap labels + three icon buttons exceed the
+    // card column and bled out of their pills (mobile audit M) — the label
+    // buttons drop to a second row instead
+    <div className="flex flex-wrap items-center gap-2">
       <AddToWalletButton address={ix.address} symbol={ix.symbol} chainId={ix.chainId} variant="icon" />
       {DEPLOY_ENABLED && (
         <Link
@@ -381,7 +514,7 @@ export function Portfolio() {
   // only `npm run dev` substitutes the preview viewer.
   const effectiveAddress =
     isConnected && address ? address : import.meta.env.DEV ? DEV_PREVIEW_ADDRESS : undefined
-  const { data: p, isLoading, isError } = usePortfolio(effectiveAddress)
+  const { data: p, isLoading, isError, chainsFailed } = usePortfolio(effectiveAddress)
 
   // Read-only holdings view — needs a connected wallet but no trading. Gated on
   // WALLET_ENABLED so it's available in deploy-only mode; direct URLs redirect home
@@ -392,14 +525,14 @@ export function Portfolio() {
   if (isError) return <div className="py-10"><Notice>Couldn’t load your portfolio, the public RPC may be rate-limiting. With your own RPC (a key or your provider’s URL) it’s reliable.</Notice></div>
   if (isLoading || !p) return <PortfolioSkeleton />
 
-  return <PortfolioView p={p} />
+  return <PortfolioView p={p} chainsFailed={chainsFailed} />
 }
 
 // Body, rendered only once the portfolio has loaded — so the view's smart default
 // (start on Created when the wallet only launched and holds nothing) can read the
 // counts. The summary rail persists; the toggle switches the main column between
 // Owned (exposure + holdings) and Created (launched baskets).
-function PortfolioView({ p }: { p: PortfolioData }) {
+function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed?: number }) {
   const [basis, setBasis] = useState<WeightBasis>('target')
   const live = useLiveExposure(p.holdings, basis === 'live')
   const exposure = useMemo(
@@ -407,6 +540,23 @@ function PortfolioView({ p }: { p: PortfolioData }) {
     [p.holdings, basis, live.legsByKey],
   )
   const empty = p.heldCount === 0 && p.createdCount === 0
+  const activeChainId = useActiveChainId()
+  const [learnOpen, setLearnOpen] = useState(false)
+  const [shareArmed, setShareArmed] = useState(() => {
+    try {
+      return window.localStorage.getItem('spectrum:ref-links-armed') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleShare = () => {
+    setShareArmed((v) => {
+      try {
+        window.localStorage.setItem('spectrum:ref-links-armed', v ? '0' : '1')
+      } catch { /* privacy mode — session-only then */ }
+      return !v
+    })
+  }
   const [view, setView] = useState<View>(() =>
     p.heldCount === 0 && p.createdCount > 0 ? 'created' : 'owned',
   )
@@ -425,30 +575,30 @@ function PortfolioView({ p }: { p: PortfolioData }) {
   }
 
   return (
-    <div className="py-4">
+    <div className="pb-4">
       {/* the big masthead (owner 16:48: Explore/Swap-size, eyebrow gone) with
           the claimable-fees panel docked to its right — it self-hides when
           there is nothing to claim, so the row is just the title then */}
-      <PageHeader
-        size="lg"
-        className="mb-6"
-        title="Portfolio"
-        actions={<PortfolioClaims baskets={p.holdings.map((h) => h.basket)} className="max-w-xl" />}
-      />
-      <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="flex flex-col gap-4">
-          {!empty && <ViewToggle view={view} setView={setView} held={p.heldCount} created={p.createdCount} />}
-          <SummaryPanel p={p} assets={exposure.assets} />
-          <ReferralCard />
-        </div>
+      <div className="space-y-2">
+        <SummaryPanel p={p} shareArmed={shareArmed} onToggleShare={toggleShare} chainsFailed={chainsFailed} />
+        {!empty && <ViewToggle view={view} setView={setView} held={p.heldCount} created={p.createdCount} />}
 
         <div className="space-y-10">
           {empty && (
             <Notice>
               No positions yet.{' '}
-              <Link to="/" className="text-cyan hover:underline">Explore baskets</Link> or{' '}
-              <Link to="/launch" className="text-cyan hover:underline">launch your own</Link>.
+              <Link to="/" className="text-cyan hover:underline">Explore baskets</Link>,{' '}
+              <Link to="/launch" className="text-cyan hover:underline">launch your own</Link>, or{' '}
+              <button type="button" onClick={() => setLearnOpen(true)} className="text-cyan hover:underline">
+                learn how Spectrum works
+              </button>.
             </Notice>
+          )}
+
+          {learnOpen && (
+            <Suspense fallback={null}>
+              <LearnWalkthrough onClose={() => setLearnOpen(false)} />
+            </Suspense>
           )}
 
           {!empty && view === 'owned' &&
@@ -459,9 +609,9 @@ function PortfolioView({ p }: { p: PortfolioData }) {
                   <SectionHeader title="Holdings" right={`${p.heldCount} held`} />
                   {/* two per row (owner 12:34) — each card carries its bento,
                       so the pair fills the row and fits nicely */}
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
                     {p.holdings.map((h) => (
-                      <HoldingCard key={`${h.basket.chainId}:${h.basket.address}`} h={h} share={shareFor(h.basket)} />
+                      <HoldingCard key={`${h.basket.chainId}:${h.basket.address}`} h={h} share={shareArmed ? shareFor(h.basket) : null} />
                     ))}
                   </div>
                 </section>
@@ -491,6 +641,15 @@ function PortfolioView({ p }: { p: PortfolioData }) {
                 <Link to="/launch" className="text-cyan hover:underline">Launch one</Link>.
               </Notice>
             ))}
+
+          {/* MANAGE your bundles — the creator-admin surface (owner 2026-07-29).
+              Lives under Created because a bundle packages what you launched:
+              publish, open to edit, retire. Only the wallet's own view — and
+              only once a first basket EXISTS (first-basket-first, owner: a
+              zero-basket creator sees one message, launch, not a bundles ad). */}
+          {view === 'created' && p.createdCount > 0 && (
+            <BundleShelf creator={p.address} chainId={activeChainId} manage basketCount={p.createdCount} />
+          )}
         </div>
       </div>
 

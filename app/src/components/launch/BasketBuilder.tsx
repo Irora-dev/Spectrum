@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { getAddress, isAddress, type Address, parseAbi } from 'viem'
-import { useAccount, useBalance, useEnsName } from 'wagmi'
+import { Link } from 'react-router-dom'
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, getAddress, isAddress, type Address, parseAbi } from 'viem'
+import { useAccount, useBalance, useEnsName, usePublicClient, useWriteContract } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActiveChainId } from '../../lib/chain/active-chain'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
+import { deploymentFor } from '../../lib/chain/deployments'
 import { clientFor, hasPrivateRpc } from '../../lib/chain/rpc'
-import { findBestPool, PoolDetectionError, Venue, ZERO_POOL_KEY, type BasketRoute } from '../../lib/pools'
+import { starterSuggestionsFor } from '../../lib/chain/starter-suggestions'
+import { findBestPool, isRetryableDetection, PoolDetectionError, Venue, ZERO_POOL_KEY, type BasketRoute } from '../../lib/pools'
 import {
   addAsset,
   adjustWeight,
@@ -26,23 +29,26 @@ import { getStoredRef, hasCreatorRefBeenUsed, markCreatorRefUsed } from '../../l
 import { useFeeBounds, useBasketFees } from '../../lib/spectrum/use-basket-fees'
 import { tokenVisual } from '../../lib/spectrum/token-meta'
 import { useTokenColors } from '../../lib/spectrum/use-token-color'
-import { formatUsdCompact, shortAddr } from '../../lib/spectrum/format'
+import { formatPrice, formatUsdCompact, shortAddr } from '../../lib/spectrum/format'
 import { resolveCreator } from '../../lib/spectrum/creator'
 import type { CreatorMetadataInput } from '../../lib/spectrum/creator-metadata'
 import { bumpVersionTicker } from '../../lib/spectrum/versioning'
 import { usePublish } from '../../lib/spectrum/use-publish'
-import { useAllBaskets, useBasketData, useCreatorMeta, useDeployPrice } from '../../lib/spectrum/hooks'
+import { useAllBaskets, useAssetHistory, useBasketData, useCreatorMeta, useDeployPrice } from '../../lib/spectrum/hooks'
+import { honest24hPct } from '../../lib/spectrum/history'
 import { AssetLogo } from '../AssetLogo'
+import { InfoDot } from '../InfoDot'
 import { BasketAvatar } from '../BasketAvatar'
 import { BasketBento, type BentoItem } from '../BasketBento'
 import { DeployPortal } from './DeployPortal'
+import { encodeBasketMetaJson, NOTE_KINDS, notesRegistryAbi } from '../../lib/spectrum/profile-registry'
 import { AssetSearch } from './AssetSearch'
 import { PopularAssets } from './PopularAssets'
 import { MintOrb, type MintStatus } from './MintOrb'
 import { BasketHealth } from './BasketHealth'
 import { LiveTokenCard } from './LiveTokenCard'
 import { HookForge } from './HookForge'
-import { WeightStrip } from './WeightStrip'
+import { CompositionBar, WeightStrip } from './WeightStrip'
 import { useDeployBasket } from '../../lib/spectrum/use-deploy'
 
 export interface BuilderAsset {
@@ -73,8 +79,18 @@ const token0ProbeAbi = parseAbi(['function token0() view returns (address)'])
  *  pools answer token0(); plain ERC-20s revert. People paste the pool address
  *  from the DEX UI instead of the asset itself (R+C walkthrough 2026-07-06). */
 async function isPoolToken(addr: string, chainId: number): Promise<boolean> {
+  const probe = () =>
+    clientFor(chainId).readContract({ address: addr as Address, abi: token0ProbeAbi, functionName: 'token0' })
   try {
-    await clientFor(chainId).readContract({ address: addr as Address, abi: token0ProbeAbi, functionName: 'token0' })
+    // one retry (sweep catch): a transient RPC blip fails OPEN here — likeliest
+    // on the very chain (4663) whose public RPC rate-limits. A CONTRACT REVERT
+    // is the definitive plain-ERC-20 answer though (the common case) — retrying
+    // it just spent 150ms + a read per normal add (verify-pass note).
+    await probe().catch(async (e) => {
+      if (e instanceof BaseError && e.walk((x) => x instanceof ContractFunctionRevertedError || x instanceof ContractFunctionZeroDataError)) throw e
+      await new Promise((r) => setTimeout(r, 150))
+      return probe()
+    })
     return true
   } catch {
     return false
@@ -134,7 +150,11 @@ async function wrongNetworkNote(
 ): Promise<string | null> {
   for (const other of SUPPORTED_CHAIN_IDS) {
     if (other === chainId) continue
-    if (!chainCfg(other).poolManager) continue // detection = V4 baseline (V2/V3 join where present)
+    // Indexed chains only (sweep catch): probing Robinhood from an ordinary
+    // Base/Ethereum thin-add awaited a full V4 log scan against a rate-limited
+    // public RPC — the note's whole point is Base↔Ethereum address confusion,
+    // and cross-chain depth is only comparable where DexScreener prices it.
+    if (!chainCfg(other).poolManager || !chainCfg(other).dexscreenerSlug) continue
     try {
       const p = await findBestPool(addr as Address, other)
       const d = p.best.depthUsd
@@ -404,6 +424,15 @@ function creatorShareBpsOf(pctStr: string, maxBps: number): number {
 // Persist the in-progress basket per chain so a refresh / accidental nav doesn't
 // wipe it. (The legal acknowledgment is intentionally NOT persisted — re-checked
 // each session.)
+/** Shared sector vocabulary (owner 2026-07-29). Chips rather than free text so
+ *  the tag space stays SHARED — free text fragments "AI" / "ai" / "A.I." into
+ *  three dead tags and Explore's trending list never converges. */
+const SECTOR_SUGGESTIONS = [
+  'AI', 'DeFi', 'Infra', 'Memes', 'Gaming', 'RWA', 'Stocks', 'L2s', 'Privacy', 'DePIN',
+] as const
+
+const HORIZONS = ['Long term', '6-12 months', 'Swing', 'Event driven'] as const
+
 interface BuilderDraft {
   assets: BuilderAsset[]
   weights: number[]
@@ -418,6 +447,15 @@ interface BuilderDraft {
   feePct: string
   creatorSharePct: string
   creatorPayout: string
+  /** Optional launch-time thesis (lab 2026-07-28) — published as an on-chain
+   *  note on deploy success when the chain has a notes registry. */
+  thesis?: string
+  /** One-line hook shown above the thesis on the basket page. */
+  tagline?: string
+  /** Creator-declared sectors — THE source for Explore's trending tags. */
+  sectors?: string[]
+  /** How long the creator means to hold the view ('long', '6-12m', …). */
+  timeHorizon?: string
   /** The deliberate "Continue" click at the end of the weights step. */
   weightsConfirmed?: boolean
   basketConfirmed: boolean
@@ -439,6 +477,34 @@ function loadDraft(chainId: number, predecessor?: string): BuilderDraft | null {
     return null
   }
 }
+
+// Live price + 24h for a weights-row asset — one 7D history query (shared
+// cache with hover cards/sparklines; works on Robinhood via the Chainlink +
+// pool-spot rungs). Renders nothing until data lands; no fabricated numbers.
+function RowPrice({ chainId, address }: { chainId: number; address: string }) {
+  const { data } = useAssetHistory(chainId, address, '7D')
+  const series = data ?? []
+  if (series.length < 2) return null
+  const price = series[series.length - 1].value
+  // 24h chip only when honest (real sample near the anchor) — shared guard,
+  // see honest24hPct.
+  const day = honest24hPct(series)
+  return (
+    // hidden below sm: in the ~300px step column this fixed cluster crushed
+    // the identity block (symbol · venue · liquidity — what a phone creator
+    // needs while weighting) toward zero; price still shows in the review step
+    // (mobile UX review 12)
+    <span className="ml-auto hidden shrink-0 items-baseline gap-2 pr-1 sm:flex">
+      <span className="font-num text-sm tabular-nums text-ink">{formatPrice(price)}</span>
+      {day != null && (
+        <span className={`font-num text-[11px] tabular-nums ${day >= 0 ? 'text-cyan' : 'text-magenta'}`}>
+          {day >= 0 ? '+' : ''}{day.toFixed(1)}%
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** One-click handoff from the Composer (owner+R 2026-07-07 17:19): writes a
  *  from-scratch draft the builder restores on /launch — composition + name +
  *  ticker prefilled, fee/share left to self-heal to their defaults, the flow
@@ -485,7 +551,12 @@ function clearDraft(chainId: number, predecessor?: string) {
 export function BasketBuilder({
   predecessor,
   predecessorChainId,
-}: { predecessor?: string; predecessorChainId?: number } = {}) {
+  wizard = false,
+}: { predecessor?: string; predecessorChainId?: number;
+  /** One-step-at-a-time presentation (the Home embed, owner 2026-07-29): a
+   *  fixed card where the next step REPLACES the last, Back bottom-left. Same
+   *  state machine and money path — only which steps RENDER changes. */
+  wizard?: boolean } = {}) {
   const activeChainId = useActiveChainId()
   // Version mode PINS the builder to the predecessor's chain: a new version
   // deploys where its predecessor lives, and its legs must re-resolve against
@@ -495,6 +566,7 @@ export function BasketBuilder({
   // while name/fees — read on the predecessor's chain — prefilled fine.)
   const chainId = predecessorChainId ?? activeChainId
   const cfg = useMemo(() => chainCfg(chainId), [chainId])
+  const notesRegistry = cfg.notesRegistry
   const { address: account } = useAccount()
   // Creator identity is the wallet itself: the ENS name reverse-linked to the
   // deploy address (mainnet registry), else the address. No self-typed handles
@@ -512,6 +584,13 @@ export function BasketBuilder({
   const [weights, setWeights] = useState<number[]>([])
   const [name, setName] = useState('')
   const [symbol, setSymbol] = useState('')
+  const [thesis, setThesis] = useState('')
+  // The rest of the on-chain metadata envelope (owner 2026-07-29). `sectors` is
+  // the load-bearing one: Explore's trending-tag chips read exactly this field,
+  // so a basket launched without them is invisible to tag discovery.
+  const [tagline, setTagline] = useState('')
+  const [sectors, setSectors] = useState<string[]>([])
+  const [timeHorizon, setTimeHorizon] = useState('')
   const [adding, setAdding] = useState(false)
   const [minting, setMinting] = useState<{ address: string; symbol?: string; status: MintStatus } | null>(null)
   const [recheck, setRecheck] = useState<Record<string, 'checking' | 'better' | 'none' | 'set'>>({})
@@ -593,9 +672,18 @@ export function BasketBuilder({
   // Live waterfall the creator sees as they choose — assume a tagging interface
   // (the common case) so their/holders' shown shares are the FLOOR; the launcher
   // reflects this build's launcher (referrer if referred, else operator config).
+  // League-aware: this chain's lineage may carve the creator league off the top,
+  // and the contract skips that carve when the basket has no creator payout
+  // (the builder names a payout exactly when the take is non-zero).
   const builderSplit = useMemo(
-    () => feeSplit(creatorShareBps, { hasInterface: true, hasLauncher: launcher !== ZERO_ADDR }),
-    [creatorShareBps, launcher],
+    () =>
+      feeSplit(creatorShareBps, {
+        hasInterface: true,
+        hasLauncher: launcher !== ZERO_ADDR,
+        leagueBps: deploymentFor(chainId).leagueShareBps,
+        hasCreatorPayout: creatorShareBps > 0,
+      }),
+    [creatorShareBps, launcher, chainId],
   )
 
   const feeConfig: FeeConfigInput | null = useMemo(() => {
@@ -679,6 +767,43 @@ export function BasketBuilder({
       })
       .then(() => void queryClient.invalidateQueries())
   }, [account, deploy.status, deploy.token, deploying, predecessor, publisher, queryClient])
+
+  // Launch-time thesis → ON-CHAIN note (lab 2026-07-28). The moment a deploy
+  // with thesis text succeeds, prompt exactly ONE setNote tx (SpectrumNotes;
+  // authorship = the deployer wallet, no signature envelope). Fire-once via
+  // thesisTxRef; a rejected prompt is tolerated — the thesis stays in the
+  // creator's draft box on the basket page (deployer-only) to publish later.
+  const { writeContractAsync: writeNoteAsync } = useWriteContract()
+  const walletClientPub = usePublicClient({ chainId })
+  const thesisTxRef = useRef<'idle' | 'sent' | 'done' | 'failed'>('idle')
+  useEffect(() => {
+    if (!notesRegistry || !account || !walletClientPub) return
+    if (!(deploying && deploy.status === 'success' && deploy.token)) return
+    const hasMeta = !!(thesis.trim() || tagline.trim() || sectors.length > 0 || timeHorizon.trim())
+    if (!hasMeta || thesisTxRef.current !== 'idle') return
+    thesisTxRef.current = 'sent'
+    const basket = deploy.token
+    void (async () => {
+      try {
+        const h = await writeNoteAsync({
+          address: notesRegistry,
+          abi: notesRegistryAbi,
+          functionName: 'setNote',
+          args: [
+            basket,
+            NOTE_KINDS.thesis,
+            encodeBasketMetaJson({ thesis, tagline, sectors, timeHorizon }),
+          ],
+          chainId,
+        })
+        await walletClientPub.waitForTransactionReceipt({ hash: h })
+        thesisTxRef.current = 'done'
+        void queryClient.invalidateQueries({ queryKey: ['spectrum', 'creatorMeta'] })
+      } catch {
+        thesisTxRef.current = 'failed' // recoverable: the basket page's owner box
+      }
+    })()
+  }, [account, chainId, deploy.status, deploy.token, deploying, notesRegistry, queryClient, thesis, tagline, sectors, timeHorizon, walletClientPub, writeNoteAsync])
   // Open the ceremony + kick off the read-only prepare (mine + price + simulate).
   // The on-chain broadcast stays behind the DEPLOY_ENABLED feature flag inside the hook.
   const startDeploy = useCallback(() => {
@@ -738,6 +863,10 @@ export function BasketBuilder({
       )
       setWeights(d.weights)
       setName(d.name)
+      setThesis(d.thesis ?? '')
+      setTagline(d.tagline ?? '')
+      setSectors(Array.isArray(d.sectors) ? d.sectors : [])
+      setTimeHorizon(d.timeHorizon ?? '')
       setSymbol(d.symbol)
       setFeePct(d.feePct && parseFloat(d.feePct) > 0 ? d.feePct : midFeePct)
       // Same self-heal as the fee: a zero/empty share in a saved draft re-fills
@@ -792,7 +921,12 @@ export function BasketBuilder({
           predData.holdings.map(async (h) => {
             try {
               return await resolveAsset(h.asset, chainId, h.symbol)
-            } catch {
+            } catch (e) {
+              // "Could not CHECK" (RPC dropped a venue sweep) is a retry, never
+              // a verdict — dropping the leg here shipped a silently-shorter
+              // version with renormalized weights (verify pass F4). Abort the
+              // whole prefill instead; the catch below says retry.
+              if (poolReady && isRetryableDetection(e)) throw e
               // No live pool for this leg. If the chain HAS pool infra configured,
               // the pool is genuinely gone → drop it (a since-dead pool is never
               // silently kept). If pool detection is unavailable (no factory/pool
@@ -852,6 +986,14 @@ export function BasketBuilder({
             'Couldn’t re-resolve the predecessor’s constituents against live pools — reload to retry.',
           )
         }
+      } catch {
+        // A retryable per-leg refusal aborted the batch: same clean-retry
+        // posture — virgin state, honest message, nothing dropped.
+        if (!cancelled) {
+          setError(
+            'Couldn’t re-check every constituent against live pools (RPC error) — reload to retry.',
+          )
+        }
       } finally {
         if (!cancelled) setPrefillDone(true)
       }
@@ -879,10 +1021,14 @@ export function BasketBuilder({
       weightsConfirmed,
       basketConfirmed,
       maxStep,
+      thesis,
+      tagline,
+      sectors,
+      timeHorizon,
     }
     if (draftIsEmpty(d)) clearDraft(chainId, predecessor)
     else saveDraft(chainId, d, predecessor)
-  }, [assets, weights, name, symbol, feePct, creatorSharePct, creatorPayout, weightsConfirmed, basketConfirmed, maxStep, chainId, predecessor])
+  }, [assets, weights, name, symbol, thesis, tagline, sectors, timeHorizon, feePct, creatorSharePct, creatorPayout, weightsConfirmed, basketConfirmed, maxStep, chainId, predecessor])
 
   // Once the basket actually deploys, drop the saved draft.
   useEffect(() => {
@@ -1015,9 +1161,12 @@ export function BasketBuilder({
     [assets, chainId],
   )
 
-  // Suggestions: real constituents of live baskets on this chain, most-used first
-  // (usage frequency is a mechanical fact, not curation). `allBaskets` is read
-  // once, higher up (for the first-basket launcher gate).
+  // Suggestions: real constituents of live baskets on this chain, most-used
+  // first (usage frequency is a mechanical fact, not curation), BACKSTOPPED by
+  // the curated per-chain starter set (owner 2026-07-30) so a young chain's
+  // shelf is never empty — every starter is live-detection-proven
+  // (lib/chain/starter-suggestions.ts). `allBaskets` is read once, higher up
+  // (for the first-basket launcher gate).
   const suggestions = useMemo(() => {
     const freq = new Map<string, { address: string; symbol: string; n: number }>()
     const usdc = cfg.usdc?.toLowerCase()
@@ -1032,7 +1181,12 @@ export function BasketBuilder({
         else freq.set(k, { address: t.address, symbol: t.symbol, n: 1 })
       }
     }
-    return [...freq.values()].sort((a, b) => b.n - a.n)
+    const organic = [...freq.values()].sort((a, b) => b.n - a.n)
+    const seen = new Set(organic.map((s) => s.address.toLowerCase()))
+    const starters = starterSuggestionsFor(chainId)
+      .filter((s) => !seen.has(s.address.toLowerCase()))
+      .map((s) => ({ ...s, n: 0 }))
+    return [...organic, ...starters]
   }, [allBaskets, chainId, cfg])
 
   // Derived views
@@ -1053,7 +1207,9 @@ export function BasketBuilder({
   const nameValid = name.trim().length >= 2
   const enoughAssets = assets.length >= 2
   const canDeploy = weightsValid && symbolValid && nameValid && enoughAssets && feeValid
-  // Live Dutch-auction deploy cost — only polled once the basket is deployable.
+  // Live deploy cost — only polled once the basket is deployable. (V2 factories
+  // auction it, the new lineage charges a flat fee; the getter is ABI-identical
+  // either way, so this code never cares which is deployed.)
   const { data: deployPrice } = useDeployPrice(chainId, canDeploy)
   const deployCostEth = deployPrice?.priceWei != null ? Number(deployPrice.priceWei) / 1e18 : null
   // The deploy button STOPS when the wallet can't pay (owner 2026-07-07 13:4x —
@@ -1101,11 +1257,40 @@ export function BasketBuilder({
     { n: 6, label: 'Deploy', done: readyToDeploy },
   ]
   const currentStep = stepState.find((s) => s.n <= maxStep && !s.done)?.n ?? Math.min(maxStep, 6)
+  // Wizard view: follow the frontier unless the user stepped Back (the pin);
+  // any frontier move (a step completed / reopened) snaps the view back to it.
+  const [wizardPin, setWizardPin] = useState<number | null>(null)
+  useEffect(() => setWizardPin(null), [currentStep])
+  // Step 1 does NOT auto-advance at two assets (owner 2026-07-29): the wizard
+  // holds until the explicit Continue click. Restored drafts that already
+  // progressed (weights confirmed etc.) skip the hold.
+  const [assetsConfirmed, setAssetsConfirmed] = useState(false)
+  useEffect(() => {
+    if (weightsConfirmed || basketConfirmed) setAssetsConfirmed(true)
+  }, [weightsConfirmed, basketConfirmed])
+  const viewStep = wizardPin ?? (wizard && !assetsConfirmed ? 1 : currentStep)
+  const stepVisible = (n: number) => !wizard || viewStep === n
 
   return (
     <>
       <div className="mx-auto max-w-5xl space-y-6">
         <Stepper steps={stepState} maxStep={maxStep} current={currentStep} />
+
+        {/* wizard chrome (owner 2026-07-29): past the asset/weight steps the
+            basket's contents must stay obvious — the mini weights-bar rides
+            under the stepper on fees / review / name / deploy. Steps 1–2
+            already show the composition in full. */}
+        {wizard && viewStep >= 3 && assets.length > 0 && (
+          <div>
+            <div className="mb-1.5 flex items-baseline justify-between px-1">
+              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Your basket</span>
+              <span className="font-mono text-[10px] tabular-nums text-ink-faint">
+                {assets.length} asset{assets.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <CompositionBar assets={assets} weights={weights} chainId={chainId} />
+          </div>
+        )}
 
         {predecessor && (
           <div className="rounded-xl border border-white/12 bg-white/[0.03] px-4 py-3">
@@ -1149,7 +1334,7 @@ export function BasketBuilder({
         <Step
           index={1}
           title="Add assets"
-          show
+          show={stepVisible(1)}
           complete={enoughAssets}
         >
           <AssetSearch
@@ -1180,6 +1365,46 @@ export function BasketBuilder({
             {chainId === 8453 && <> Aerodrome-only tokens can't be used (no hook support).</>}
           </p>
 
+          {/* wizard: the picked assets stay VISIBLE on this step (owner bug
+              report 2026-07-29 — in stacked mode they render in step 2 below,
+              but the wizard hides step 2 until this one completes, so a first
+              pick looked like nothing happened). Chips with remove; weights
+              come next step. */}
+          {wizard && assets.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {assets.map((a, i) => (
+                <span
+                  key={a.address}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] py-1.5 pl-1.5 pr-2.5"
+                >
+                  <AssetLogo address={a.address} symbol={a.symbol} chainId={chainId} size={22} />
+                  <span className="font-mono text-xs font-semibold text-ink">{a.symbol}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${a.symbol}`}
+                    onClick={() => remove(i)}
+                    className="press font-mono text-[11px] text-ink-faint hover:text-magenta"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              {assets.length < 2 ? (
+                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                  add {2 - assets.length} more to continue
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAssetsConfirmed(true)}
+                  className="press ml-auto rounded-lg bg-cyan px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-black hover:opacity-90"
+                >
+                  Continue → weights
+                </button>
+              )}
+            </div>
+          )}
+
           <PopularAssets
             chainId={chainId}
             chainName={cfg.name}
@@ -1194,7 +1419,7 @@ export function BasketBuilder({
         <Step
           index={2}
           title="Set weights"
-          show={maxStep >= 2}
+          show={maxStep >= 2 && stepVisible(2)}
           complete={enoughAssets && weightsValid}
         >
           <div className="mb-3 flex items-center justify-between">
@@ -1275,6 +1500,8 @@ export function BasketBuilder({
                         {a.depthUsd != null ? `~${formatUsdCompact(a.depthUsd)} liquidity` : shortAddr(a.address)}
                       </div>
                     </div>
+
+                    <RowPrice chainId={chainId} address={a.address} />
 
                     <div className="flex shrink-0 items-center overflow-hidden rounded-xl border border-white/15 bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
                       <button
@@ -1458,7 +1685,7 @@ export function BasketBuilder({
         <Step
           index={3}
           title="Set the fee"
-          show={maxStep >= 3}
+          show={maxStep >= 3 && stepVisible(3)}
           complete={feeValid}
         >
           <div className="grid gap-8 sm:grid-cols-2 sm:gap-10">
@@ -1512,8 +1739,9 @@ export function BasketBuilder({
                 minLabel="0% · all to holders"
                 maxLabel={`${(bounds.maxCreatorShareBps / 100).toFixed(0)}% max`}
               />
-              {/* one line (owner 13:46) — the InfoTip carries the full waterfall */}
-              <p className="mt-2.5 whitespace-nowrap font-mono text-xs leading-relaxed text-ink-dim">
+              {/* one line from sm (owner 13:46) — at ≤375px the nowrap sentence
+                  exceeded the step column and clipped (audit L) */}
+              <p className="mt-2.5 font-mono text-xs leading-relaxed text-ink-dim sm:whitespace-nowrap">
                 Your cut after the burn &amp; protocol slices.
               </p>
               {creatorShareBps === 0 && (
@@ -1524,11 +1752,18 @@ export function BasketBuilder({
             </div>
           </div>
 
-          {/* creator payout — only required/shown when the creator takes a share */}
+          {/* creator payout — only required/shown when the creator takes a share.
+              LOUD until filled (owner 2026-07-29: it must be OBVIOUS this blocks
+              the launch): amber ring + REQUIRED chip while empty, calm once valid. */}
           {creatorShareBps > 0 && (
-            <div className="mt-8">
-              <label htmlFor="creator-payout" className="flex items-center gap-2 font-mono text-[13px] uppercase tracking-[0.15em] text-ink-dim">
+            <div className={`mt-8 rounded-2xl border p-4 transition-colors ${payoutValid ? 'border-white/10 bg-white/[0.02]' : 'border-alert/50 bg-alert/[0.05]'}`}>
+              <label htmlFor="creator-payout" className="flex flex-wrap items-center gap-2 font-mono text-[13px] uppercase tracking-[0.15em] text-ink-dim">
                 Your payout address
+                {!payoutValid && (
+                  <span className="rounded bg-alert/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-alert">
+                    required to continue
+                  </span>
+                )}
                 <InfoTip>
                   Paid your fee share automatically on every trade. Set once at deploy.
                 </InfoTip>
@@ -1553,14 +1788,13 @@ export function BasketBuilder({
                   </button>
                 )}
               </div>
-              {creatorPayout && !payoutValid && (
+              {!payoutValid && (
                 <p className="mt-1.5 font-mono text-xs text-alert">
-                  Enter a valid payout address (0x…), required because your take is above 0%.
+                  {creatorPayout
+                    ? 'That is not a valid address (0x…).'
+                    : 'Your take is above 0%, so the launch needs an address to pay it to — paste one or use your connected address.'}
                 </p>
               )}
-              <p className="mt-2 font-mono text-xs leading-relaxed text-ink-faint">
-
-              </p>
             </div>
           )}
 
@@ -1568,13 +1802,25 @@ export function BasketBuilder({
           <div className="mt-6">
             <FeeBreakdown split={builderSplit} creatorShareBps={creatorShareBps} />
           </div>
+
+          {/* creator-league pitch (lab 2026-07-29) — only where a LeaguePool
+              exists on this chain. Factual, no projections: the league is a
+              pro-rata share of a real pool, not a promised amount. */}
+          {cfg.leaguePool && (
+            <p className="mt-3 font-mono text-xs leading-relaxed text-ink-dim">
+              Your basket also competes in the{' '}
+              <Link to="/league" className="text-cyan hover:underline">creator league</Link>: a slice of
+              a slice of every basket trade streams straight to whichever creator is leading on
+              fees, the moment it happens. Out-earn the crown-holder and it switches to you.
+            </p>
+          )}
         </Step>
 
         {/* ── 4 · Review & confirm basket ────────────────────────────── */}
         <Step
           index={4}
           title="Review basket"
-          show={maxStep >= 4}
+          show={maxStep >= 4 && stepVisible(4)}
           complete={basketConfirmed}
         >
           {/* What you see is what deploys: render the fee facts exactly as the
@@ -1640,7 +1886,7 @@ export function BasketBuilder({
         <Step
           index={5}
           title="Name your basket"
-          show={maxStep >= 5}
+          show={maxStep >= 5 && stepVisible(5)}
           complete={nameValid && symbolValid}
         >
           <div className="mb-6 space-y-3">
@@ -1707,10 +1953,94 @@ export function BasketBuilder({
             )}
           </div>
 
-          {/* The thesis (title, body, tags, launch post) is deliberately NOT
-              collected here — it lives in ONE place, the post-deploy publish
-              ceremony (owner 2026-07-07 12:11: entering it twice was the bug;
-              "publish your thesis in the popup rather than the launch page"). */}
+          {/* THE STORY — one optional group, deliberately light (owner
+              2026-07-29: "make this all easier to read and lighter"). R's design
+              law: kill filler, no explanatory paragraphs, detail behind the ⓘ.
+              Previously the whole block was gated on `notesRegistry`, which is
+              unset until SpectrumNotes is deployed — so it rendered as NOTHING
+              and looked like the launch flow collected no thesis at all. It now
+              always shows; only the on-chain publish depends on a registry. */}
+          <div className="mt-4 rounded-2xl border border-white/[0.08] bg-white/[0.015] p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-dim">
+                Your story
+              </span>
+              <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">
+                all optional
+              </span>
+            </div>
+
+            <input
+              id="basket-tagline"
+              value={tagline}
+              onChange={(e) => setTagline(e.target.value.slice(0, 120))}
+              aria-label="One-line hook"
+              placeholder="One line: the whole AI-agent sector, in one token."
+              className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-cyan/50 focus:outline-none"
+            />
+            <textarea
+              id="basket-thesis"
+              value={thesis}
+              onChange={(e) => setThesis(e.target.value.slice(0, 4000))}
+              aria-label="Your thesis"
+              placeholder="Your thesis — what you believe, and why these assets carry it."
+              className="mt-2 min-h-[76px] w-full resize-y rounded-xl border border-white/10 bg-black/30 px-3.5 py-2.5 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-cyan/50 focus:outline-none"
+            />
+
+            <div className="mt-4 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">Sectors</span>
+              {SECTOR_SUGGESTIONS.map((tag) => {
+                const on = sectors.includes(tag)
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() =>
+                      setSectors((prev) =>
+                        prev.includes(tag) ? prev.filter((t) => t !== tag) : prev.length >= 4 ? prev : [...prev, tag],
+                      )
+                    }
+                    className={`press rounded-full px-2.5 py-1 font-mono text-[10px] transition-colors ${
+                      on ? 'bg-cyan/15 text-cyan' : 'bg-white/[0.05] text-ink-dim hover:text-ink'
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                )
+              })}
+              <InfoDot>Sectors are the tags people browse by in Explore. Pick up to four.</InfoDot>
+            </div>
+
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">Horizon</span>
+              {HORIZONS.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  aria-pressed={timeHorizon === h}
+                  onClick={() => setTimeHorizon(timeHorizon === h ? '' : h)}
+                  className={`press rounded-full px-2.5 py-1 font-mono text-[10px] transition-colors ${
+                    timeHorizon === h ? 'bg-violet/20 text-ink' : 'bg-white/[0.05] text-ink-dim hover:text-ink'
+                  }`}
+                >
+                  {h}
+                </button>
+              ))}
+            </div>
+
+            <p className="mt-3 font-mono text-[10px] text-ink-faint">
+              {notesRegistry ? 'Publishes on-chain right after deploy.' : 'Saved with your draft.'}
+              <span className="ml-1.5 inline-flex align-middle">
+                <InfoDot>
+                  Your hook, thesis, sectors and horizon show on the basket page as the creator's own
+                  words. {notesRegistry
+                    ? 'They publish in one extra transaction the moment your deploy confirms — skippable, and editable later from the basket page.'
+                    : 'This site has no on-chain metadata registry yet, so they stay in your draft until one is configured; you can publish them from the basket page then.'}
+                </InfoDot>
+              </span>
+            </p>
+          </div>
 
           {/* Naming guidance, not enforcement — placeholder hint copy. */}
           {nameRiskHint && (
@@ -1765,7 +2095,7 @@ export function BasketBuilder({
         </Step>
 
         {/* ── 6 · Deploy ─────────────────────────────────────────────── */}
-        <Step index={6} title="Deploy" subtitle="Mint your basket token onchain." show={maxStep >= 6} complete={readyToDeploy}>
+        <Step index={6} title="Deploy" subtitle="Mint your basket token onchain." show={maxStep >= 6 && stepVisible(6)} complete={readyToDeploy}>
           <div className="flex items-center gap-2.5">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-white/20" style={{ background: avatarGrad }}>
               <span aria-hidden className="font-display text-base font-bold text-black/75">◆</span>
@@ -1827,7 +2157,9 @@ export function BasketBuilder({
 
         {/* Bottom-of-flow launch banner — routes through the same flow as the
             Deploy step (startDeploy → ceremony); the on-chain broadcast stays behind
-            the DEPLOY_ENABLED feature flag, so this never launches on its own. */}
+            the DEPLOY_ENABLED feature flag, so this never launches on its own.
+            Wizard: only WITH the final step (owner 2026-07-29). */}
+        {(!wizard || viewStep === 6) && (
         <div
           className="flex flex-col items-center gap-5 rounded-2xl p-6 text-center sm:flex-row sm:justify-between sm:p-8 sm:text-left"
           style={{ background: readyToDeploy ? 'linear-gradient(90deg,var(--color-amber),var(--color-magenta),var(--color-cyan))' : 'rgba(255,255,255,0.06)' }}
@@ -1852,22 +2184,53 @@ export function BasketBuilder({
             {canDeploy && !insufficientEth && (
               <span className={`font-mono text-[11px] uppercase tracking-[0.12em] ${readyToDeploy ? 'text-black/70' : 'text-ink-dim'}`}>
                 {deployCostEth != null
-                  ? `≈ ${deployCostEth.toLocaleString(undefined, { maximumFractionDigits: 3 })} ETH to deploy · auction`
-                  : 'Deploy cost: Dutch auction, price read live from the factory'}
+                  ? `≈ ${deployCostEth.toLocaleString(undefined, { maximumFractionDigits: 3 })} ETH to deploy · read live`
+                  : deployPrice?.slotOpen === false && deployPrice.blocksLeft != null
+                    ? `Another basket just launched — the next slot opens in ~${deployPrice.blocksLeft} block${deployPrice.blocksLeft === 1 ? '' : 's'}`
+                    : 'Deploy cost read live from the factory'}
               </span>
             )}
             {canDeploy && insufficientEth && walletBal && deployCostEth != null && (
               <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-alert">
                 Not enough ETH: wallet holds {(Number(walletBal.value) / 1e18).toFixed(4)} · needs ≈{' '}
-                {(deployCostEth + 0.01).toFixed(3)} (auction + gas)
+                {(deployCostEth + 0.01).toFixed(3)} (launch fee + gas)
               </span>
             )}
           </div>
         </div>
-        {canDeploy && !acknowledged && !insufficientEth && (
+        )}
+        {(!wizard || viewStep === 6) && canDeploy && !acknowledged && !insufficientEth && (
           <p className="text-center font-mono text-xs text-ink-dim">
             Check the creator acknowledgment in step 6 to enable deploy.
           </p>
+        )}
+
+        {/* wizard nav — Back bottom-left; Forward appears only when the user
+            stepped back behind the frontier (steps advance themselves via
+            their own Continue CTAs) */}
+        {wizard && (viewStep > 1 || viewStep < currentStep) && (
+          <div className="flex items-center justify-between">
+            {viewStep > 1 ? (
+              <button
+                type="button"
+                onClick={() => setWizardPin(Math.max(1, viewStep - 1))}
+                className="press rounded-lg border border-white/12 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-dim hover:border-cyan/50 hover:text-cyan"
+              >
+                ← Back
+              </button>
+            ) : (
+              <span />
+            )}
+            {viewStep < currentStep && (
+              <button
+                type="button"
+                onClick={() => setWizardPin(viewStep + 1 >= currentStep ? null : viewStep + 1)}
+                className="press rounded-lg border border-white/12 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-dim hover:border-cyan/50 hover:text-cyan"
+              >
+                Forward →
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -1944,7 +2307,7 @@ export function BasketBuilder({
   )
 }
 
-// The live fee waterfall — every fee split into its five sinks, as % of the TOTAL
+// The live fee waterfall — every fee split into its sinks, as % of the TOTAL
 // fee (the on-chain knob is "% of the remainder", but the honest, legible number
 // is "% of total"). Mirrors exactly what the post-launch FeePanel shows. The
 // `split` is computed by feeSplit() in the conservative (interface-present) case,
@@ -1960,6 +2323,9 @@ function FeeBreakdown({
 }) {
   const pct = (f: number) => `${(f * 100).toFixed(1).replace(/\.0$/, '')}%`
   const rows = [
+    // Taken off the top before everything else, streaming to whoever holds the
+    // crown — only on a league lineage, and skipped on a zero-take basket.
+    { key: 'league', label: 'Creator league', frac: split.league, color: '#FFC53D', caption: 'streams to the league champion', show: split.league > 0 },
     { key: 'burn', label: 'PRISM burn', frac: split.burn, color: 'var(--color-cyan)', caption: 'fixed · same on every basket', show: true },
     { key: 'interface', label: 'Interface', frac: split.interface, color: 'var(--color-ink-dim)', caption: 'routes the trade · 0 on direct trades', show: split.interface > 0 },
     { key: 'launcher', label: 'Launcher', frac: split.launcher, color: '#6b6b80', caption: 'operator origination', show: split.launcher > 0 },

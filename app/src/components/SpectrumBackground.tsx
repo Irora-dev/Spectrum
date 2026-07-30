@@ -86,13 +86,21 @@ const fragmentShader = /* glsl */ `
 `
 
 /**
- * Full-viewport animated optics-lab background. Renders behind all content
- * (fixed, -z-10, non-interactive). Honors prefers-reduced-motion by holding a
+ * Full-viewport animated optics-lab surface. Renders IN FRONT of content
+ * (fixed, z-40, mix-blend-screen — the shader's black centre screens through
+ * invisibly, only the band glows wash over card edges; R 2026-07-30 "the bands
+ * need to be in foreground"). Non-interactive; modals at z-50+ still cover it.
+ * Honors prefers-reduced-motion by holding a
  * still frame. To re-tune, use the dev-only sandbox at /proto/bg.html (lives in
  * app/proto/, served by the vite dev server, deliberately NOT in public/ so it
  * never ships in an operator's build).
  */
-export function SpectrumBackground() {
+/** Optional className overrides the default fixed placement. The app mounts
+ *  exactly ONE instance (App.tsx, gated off /embed — the old league-hero
+ *  second instance is gone; heroes use masked art + this foreground canvas).
+ *  Keep the `spectrum-webgl-bg` marker in any override: the [data-style] kill
+ *  rules for the flat styles target it. */
+export function SpectrumBackground({ className }: { className?: string } = {}) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -115,10 +123,18 @@ export function SpectrumBackground() {
     uniforms.uCyan = { value: band('--color-cyan', [0.0, 0.94, 1.0]) }
     uniforms.uMagenta = { value: band('--color-magenta', [1.0, 0.0, 0.7]) }
     uniforms.uAmber = { value: band('--color-amber', [1.0, 0.5, 0.0]) }
-    // Band widths are fractions of viewport width; ≥1024px renders unchanged
-    // (scale 1), below that the curtains narrow so 16px content padding clears
-    // the bright bands (floor 0.4 ≈ 19px reach at 375px wide).
-    const edgeScaleFor = (w: number) => Math.min(1, Math.max(0.4, w / 1024))
+    // Band widths are fractions of viewport width. The bright lanes end at the
+    // CONTENT GUTTER (owner 2026-07-30): reach = 0.13 · uEdgeScale · vw is
+    // clamped to the 1000px column's card edge ((vw−1000)/2 + 16px grace), so
+    // cards clear the bright bands at EVERY width — the old vw/1024 ramp left
+    // up to ~97px of overlap on 1024-1280 laptops (audit). 18px floor keeps
+    // the edges glowing on phones (≈ the old ~19px @375); ≥~1440 the natural
+    // 0.13 · vw cap wins and nothing changes.
+    const edgeScaleFor = (w: number) => {
+      const ramp = Math.min(1, Math.max(0.4, w / 1024))
+      const budgetPx = Math.max(18, (w - 1000) / 2 + 16)
+      return Math.min(ramp, budgetPx / (0.13 * w))
+    }
     uniforms.uEdgeScale = { value: edgeScaleFor(window.innerWidth) }
 
     const material = new ShaderMaterial({
@@ -136,9 +152,25 @@ export function SpectrumBackground() {
       ;(globalThis as Record<string, unknown>).__spectrumBg = { uniforms, renderer, scene, camera }
     }
 
+    // Resize coalesced into one rAF, and HEIGHT-ONLY deltas under 160px are
+    // ignored — mobile URL-bar collapse/expand fires resize mid-scroll, and an
+    // immediate setSize reallocates the whole drawing buffer during the scroll
+    // (a visible hitch; systems audit). Width changes always apply.
+    let lastW = window.innerWidth
+    let lastH = window.innerHeight
+    let resizeRaf = 0
     const onResize = () => {
-      renderer.setSize(window.innerWidth, window.innerHeight)
-      uniforms.uEdgeScale.value = edgeScaleFor(window.innerWidth)
+      cancelAnimationFrame(resizeRaf)
+      resizeRaf = requestAnimationFrame(() => {
+        const w = window.innerWidth
+        const h = window.innerHeight
+        if (w === lastW && Math.abs(h - lastH) < 160) return
+        lastW = w
+        lastH = h
+        renderer.setSize(w, h)
+        uniforms.uEdgeScale.value = edgeScaleFor(w)
+        renderer.render(scene, camera)
+      })
     }
     window.addEventListener('resize', onResize)
 
@@ -152,18 +184,47 @@ export function SpectrumBackground() {
     }
     window.addEventListener('spectrum:brandchange', onBrandChange)
 
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    // The loop GATES instead of running unconditionally (systems audit — the
+    // old loop redrew an identical frame 60×/s under reduced motion, and kept
+    // issuing full GL passes into a display:none canvas when a flat design
+    // style killed it via the [data-style] CSS):
+    //   · reduced motion → render ONE still frame, stop (listener re-arms);
+    //   · canvas hidden by the active style → stop entirely;
+    //   · otherwise → ~30fps, imperceptible for a slow glow, half the GPU.
+    const motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    const hidden = () => renderer.domElement.offsetParent === null
     const start = performance.now()
     let raf = 0
-    const loop = () => {
-      uniforms.uTime.value = reduceMotion ? 0 : (performance.now() - start) / 1000
+    let lastFrame = 0
+    const loop = (now: number) => {
+      raf = requestAnimationFrame(loop)
+      if (now - lastFrame < 30) return // ~30fps cap (decorative surface)
+      lastFrame = now
+      uniforms.uTime.value = (now - start) / 1000
       renderer.render(scene, camera)
+    }
+    const applyMode = () => {
+      cancelAnimationFrame(raf)
+      raf = 0
+      if (hidden()) return // flat style: no draws at all
+      if (motionQuery?.matches) {
+        uniforms.uTime.value = 0
+        renderer.render(scene, camera) // one honest still frame
+        return
+      }
       raf = requestAnimationFrame(loop)
     }
-    raf = requestAnimationFrame(loop)
+    applyMode()
+    motionQuery?.addEventListener?.('change', applyMode)
+    // a style switch (setup studio) can show/hide the canvas live
+    const onStyleChange = () => applyMode()
+    window.addEventListener('spectrum:brandchange', onStyleChange)
 
     return () => {
       cancelAnimationFrame(raf)
+      cancelAnimationFrame(resizeRaf)
+      motionQuery?.removeEventListener?.('change', applyMode)
+      window.removeEventListener('spectrum:brandchange', onStyleChange)
       window.removeEventListener('resize', onResize)
       window.removeEventListener('spectrum:brandchange', onBrandChange)
       mesh.geometry.dispose()
@@ -178,5 +239,5 @@ export function SpectrumBackground() {
 
   // `spectrum-webgl-bg` lets a design style drop this animated spectral backdrop entirely
   // (index.css [data-style] rules) — solid/editorial styles use a flat canvas instead.
-  return <div ref={ref} aria-hidden className="spectrum-webgl-bg pointer-events-none fixed inset-0 -z-10" />
+  return <div ref={ref} aria-hidden className={className ?? "spectrum-webgl-bg pointer-events-none fixed inset-0 z-40 mix-blend-screen"} />
 }

@@ -1,9 +1,10 @@
 {
-  "version": "2026.07.13",
-  "note": "V4 pool coverage on any RPC (standard-tier direct probe + honest cause-tracked warnings), the stale coverage-banner fix, and a token-screen fix (RPC blips no longer mislabel real tokens).",
+  "version": "2026.07.30",
+  "note": "Robinhood Chain's launch-ceremony contracts are live in the canonical book (flat 0.003 ETH launches, league + social layer on 4663, proven by a real basket launch through this kit), mobile is a first-class surface (bottom tab bar, reachable overlays, phone-sized hero art), the PRISM v2 community-airdrop claim page + banner and a PRISM trade card with a direct-pool route, drop-in setup for AI IDEs, custom-domain steps per host, and a full display-honesty pass on what every number claims.",
   "impact": "config",
   "sacred": [
-    "launch"
+    "launch",
+    "swap"
   ],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"

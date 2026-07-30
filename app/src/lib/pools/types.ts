@@ -1,17 +1,23 @@
 import { zeroAddress, type Address } from 'viem'
 
 // Venue enum — empirically confirmed from on-chain baskets:
-// 0 = Uniswap V4 (native-ETH PoolKey, hooks=0x0), 1 = V3 (v3Fee tier), 2 = V2 (pair).
+// 0 = Uniswap V4 (native-ETH PoolKey, hooks=0x0), 1 = V3 (v3Fee tier), 2 = V2 (pair),
+// 3 = V4Q (settlement-quoted hookless V4 — the stocks-fork lineage; MUST stay 3,
+// it mirrors that fork's Solidity enum order {V4, V3, V2, V4Q}). Deployed
+// V2-lineage factories reject venue 3 in the token constructor — the detector
+// only emits it where the chain config declares `v4qLineage`.
 export enum Venue {
   V4 = 0,
   V3 = 1,
   V2 = 2,
+  V4Q = 3,
 }
 
 export const VENUE_LABEL: Record<Venue, string> = {
   [Venue.V4]: 'Uniswap V4',
   [Venue.V3]: 'Uniswap V3',
   [Venue.V2]: 'Uniswap V2',
+  [Venue.V4Q]: 'Uniswap V4 (USD-paired)',
 }
 
 // Native ETH sentinel (V4 ETH pools use address(0) as currency0).
@@ -99,3 +105,25 @@ export class PoolDetectionError extends Error {
     this.code = code
   }
 }
+
+/** True when detection COULD NOT CHECK (RPC dropped a venue sweep) — a retry,
+ *  never a verdict about the token. Batch resolvers must not treat it like
+ *  NO_POOL: dropping the leg and renormalizing ships a silently-shorter basket
+ *  (the verify-pass F4/F5 class). Non-detection errors (transport throws that
+ *  never became a PoolDetectionError) count as retryable too. */
+export function isRetryableDetection(e: unknown): boolean {
+  return !(e instanceof PoolDetectionError) || e.code === 'VENUE_CHECK_FAILED'
+}
+
+/** Known hookless V4 tiers for LOGS-FREE probing (one storage read each) — the
+ *  four standards + live-observed non-standards. ONE list for both consumers
+ *  (per-leg discovery + the ETH/settlement hub anchor); the sweep caught them
+ *  drifting apart within a single commit. */
+export const V4_PROBE_TIERS: { fee: number; tickSpacing: number }[] = [
+  { fee: 100, tickSpacing: 1 },
+  { fee: 500, tickSpacing: 10 },
+  { fee: 3000, tickSpacing: 60 },
+  { fee: 5000, tickSpacing: 100 }, // the RH launch norm (CASHCAT/HOODRAT legs)
+  { fee: 10000, tickSpacing: 200 },
+  { fee: 20000, tickSpacing: 400 }, // 2% memecoin tier
+]

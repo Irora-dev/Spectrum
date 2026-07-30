@@ -68,22 +68,26 @@ Then **Save and Deploy**. The first build takes a minute or two; you'll get a
    **If it's elsewhere** (e.g. registered at Namecheap/GoDaddy): Cloudflare shows one **CNAME**
    record — add it at your registrar's DNS page exactly as shown.
 4. HTTPS is issued automatically, usually within a few minutes.
+5. **Make the site know its own domain** — the step people skip: set the **site URL** to the
+   custom domain (setup studio, or `src/site.config.json` → `siteUrl`), commit, and let it
+   redeploy. Until you do, social cards and the sitemap keep advertising the `*.pages.dev`
+   subdomain instead of your domain.
 
 Now go lock your RPC key to this domain if you added one (see
 [README → RPC keys](README.md#rpc-keys-public-vs-your-own)).
 
 ## Troubleshooting (Cloudflare-specific)
 
-- **Deep links 404 (e.g. refreshing `/discover` fails).** Cloudflare Pages needs a SPA
-  fallback. Add `public/_redirects` to your repo containing exactly:
-  ```
-  /*    /index.html   200
-  ```
-  Commit it and redeploy. (See [Make deep links work](README.md#make-deep-links-work-one-time).)
+- **Deep links 404 (e.g. refreshing `/explore` fails).** Cloudflare Pages needs a SPA
+  fallback — the kit **ships one** at `app/public/_redirects` (the SPA catch-all plus
+  the nested-route asset remaps; don't replace it with a bare catch-all or refreshing
+  `/creator/…`, `/docs/…` and `/bundle/…` pages goes blank). If deep links 404, check
+  that file reached your repo and the deployed `dist/`, then redeploy. (See
+  [Deep links work out of the box](README.md#deep-links-work-out-of-the-box).)
 - **Build can't find `npm`/wrong Node.** Add env var `NODE_VERSION` = `20` and retry.
 - **Wrong output folder.** Must be `dist` for Vite. A blank page often means the output dir is
   set to the repo root instead of `dist`.
 
 ---
 
-← Back to [README.md](README.md) · Other host: [Vercel](vercel.md)
+← Back to [README.md](README.md) · Other hosts: [Netlify](netlify.md) · [Vercel](vercel.md)

@@ -11,7 +11,7 @@
 // — a transactional flag without the wallet flag, or a malformed address — the
 // same class of error the app throws on at module load (features.ts) or silently
 // drops to null (deployments.ts). Warnings (checksum, an empty secondary chain,
-// a missing site origin, a stub sitemap) never block the build.
+// a missing site origin) never block the build.
 //
 //   node scripts/check-config.mjs      # run it directly
 //   npm run check:config               # the same, as a named script
@@ -209,7 +209,7 @@ if (extra) {
     const id = Number(part.trim())
     if (!Number.isInteger(id) || id <= 0) continue
     if (!SCAFFOLDED.has(id)) {
-      warns.push(`VITE_EXTRA_CHAIN_IDS lists chain ${id}, which has no scaffold in chains.ts → it is ignored (never guessed). Scaffolded ids: 8453 (Base), 1 (Ethereum).`)
+      warns.push(`VITE_EXTRA_CHAIN_IDS lists chain ${id}, which has no scaffold in chains.ts → it is ignored (never guessed). Scaffolded ids: ${[...SCAFFOLDED].join(', ')}.`)
       continue
     }
     if (id === BASE) continue
@@ -228,6 +228,28 @@ if (!(val('VITE_SITE_URL') || String(siteCfg.siteUrl ?? '').trim())) {
   // (Cloudflare Pages / Netlify) assigns the URL on the FIRST deploy, so a first
   // build legitimately has none. Set it after deploy and rebuild.
   warns.push('No site URL yet — fine for a first deploy (your host assigns one). Social cards + the sitemap stay unbranded until you set it (setup studio or src/site.config.json) and rebuild.')
+}
+
+// ── 6a. brand.config.ts's defaultChainId must be a scaffolded chain (kit audit) ──
+//       The app silently falls back to Base when it isn't in SUPPORTED_CHAIN_IDS, so a
+//       typo looks like it worked. This is the one product knob worth validating — the
+//       booleans can't be wrong in a way that hides. Parsed, not imported: this script
+//       is plain .mjs and brand.config.ts is TypeScript.
+{
+  try {
+    const src = readFileSync(resolve(APP_DIR, 'src/brand.config.ts'), 'utf8')
+    const m = /defaultChainId:\s*(\d+)/.exec(src)
+    if (m) {
+      const id = Number(m[1])
+      if (!SCAFFOLDED.has(id)) {
+        warns.push(`brand.config.ts defaultChainId is ${id}, which has no scaffold in chains.ts → the app IGNORES it and opens on the deployment book's default instead. Scaffolded ids: ${[...SCAFFOLDED].join(', ')}.`)
+      } else if (!(deployments[String(id)] || {}).factory) {
+        warns.push(`brand.config.ts defaultChainId is ${id}, which has no factory in deployments.json → first-time visitors land on an empty chain.`)
+      }
+    }
+  } catch {
+    /* no brand.config (fresh clone mid-setup) — the wizard/studio writes it */
+  }
 }
 
 // ── 6b. the committed fee wallet must be well-formed when set ──
@@ -263,15 +285,11 @@ if (siteCfgRaw && typeof siteCfgRaw === 'object') {
   }
 }
 
-// ── 7. sitemap still the shipped stub ──
-try {
-  const sm = readFileSync(resolve(APP_DIR, 'public/sitemap.xml'), 'utf8')
-  if (!/<url>/.test(sm)) {
-    warns.push('public/sitemap.xml is still the empty stub (no <url> entries). Regenerate it with your origin before publishing (see OPERATORS.md / SETUP.md).')
-  }
-} catch {
-  /* no sitemap — skip */
-}
+// (There is deliberately NO stub-sitemap check: build-sitemap.mjs runs right
+// after this script in the prebuild hook and ALWAYS writes the file from the
+// current site URL — stub when none is set, which §6 above already warns about.
+// This script also runs standalone BEFORE that regeneration, where inspecting
+// the previous build's file would just report a state about to be replaced.)
 
 // ── report ──
 const C = { red: '\x1b[31m', yellow: '\x1b[33m', green: '\x1b[32m', dim: '\x1b[2m', bold: '\x1b[1m', reset: '\x1b[0m' }

@@ -2,11 +2,13 @@ import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ChainBadge } from './ChainBadge'
 import { BasketAvatar } from './BasketAvatar'
+import { BasketBento } from './BasketBento'
 import { AssetLogo } from './AssetLogo'
 import { BasketSpark } from './BasketSpark'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { basketSignatureColor } from '../lib/spectrum/signature'
 import { tokenVisual } from '../lib/spectrum/token-meta'
+import { QuickBuy } from './QuickBuy'
 import { formatNav, formatPct, formatUsdCompact } from '../lib/spectrum/format'
 import { CreatorChip } from './CreatorChip'
 import { WatchButton } from './WatchButton'
@@ -74,7 +76,7 @@ function PagerBtn({ dir, disabled, onClick }: { dir: 'prev' | 'next'; disabled: 
   )
 }
 
-export function BasketCard({ ix, footer }: { ix: BasketSummary; footer?: ReactNode }) {
+export function BasketCard({ ix, footer, fullBento = false }: { ix: BasketSummary; footer?: ReactNode; fullBento?: boolean }) {
   const [page, setPage] = useState(0)
   const up = (ix.change24hPct ?? 0) >= 0
   const accent = up ? 'var(--color-cyan)' : 'var(--color-magenta)'
@@ -86,7 +88,7 @@ export function BasketCard({ ix, footer }: { ix: BasketSummary; footer?: ReactNo
   const remaining = Math.max(0, holdings.length - (cur + 1) * PER_PAGE)
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.045] p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] backdrop-blur-md transition-[translate,border-color,background-color] duration-200 hover:-translate-y-0.5 hover:border-white/30 hover:bg-white/[0.06]">
+    <div className={`group relative overflow-hidden rounded-2xl border border-white/15 p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] transition-[translate,border-color,background-color] duration-200 hover:-translate-y-0.5 hover:border-white/30 ${fullBento ? 'bg-panel hover:bg-panel-2' : 'bg-white/[0.045] backdrop-blur-md hover:bg-white/[0.06]'}`}>
       {/* whole-card link sits behind the content; the pager opts back into clicks */}
       <Link
         to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
@@ -124,18 +126,34 @@ export function BasketCard({ ix, footer }: { ix: BasketSummary; footer?: ReactNo
           </div>
         </div>
 
-        {/* nav trend — above the assets (real reconstructed history, hoverable) */}
-        <div className="pointer-events-auto mt-3 h-12">
+        {/* nav trend — above the assets (real reconstructed history, hoverable);
+            the fullBento (trio) card breathes more between its stacked blocks.
+            24H, not 7D: the only % on this card is change24hPct, and a 7-day
+            shape beside a 24-hour number reads as one claim (honesty audit) */}
+        <div className={`pointer-events-auto h-12 ${fullBento ? 'mt-6' : 'mt-3'}`}>
           <BasketSpark
             chainId={ix.chainId}
             assets={holdings.map((t) => ({ address: t.address, weight: t.weightPct }))}
             navPerToken={ix.navPerToken}
             fallback={ix.navSeries}
-            range="7D"
+            range="24H"
+            address={ix.address}
+            symbol={ix.symbol}
+            legs={holdings.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct }))}
           />
         </div>
 
-        {/* assets — three at a time, paged with arrows */}
+        {/* assets — the FULL weighted bento when the host gives the card the
+            height for it (the Home trio, owner 2026-07-29); else the paged strip */}
+        {fullBento ? (
+          <div className="mt-6">
+            <BasketBento
+              items={holdings.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct, chainId: ix.chainId }))}
+              fill
+              className="min-h-[200px]"
+            />
+          </div>
+        ) : (
         <div className="mt-3">
           <div className="overflow-hidden">
             <div className="flex transition-transform duration-300 ease-out" style={{ transform: `translateX(-${cur * 100}%)` }}>
@@ -160,6 +178,7 @@ export function BasketCard({ ix, footer }: { ix: BasketSummary; footer?: ReactNo
             )}
           </div>
         </div>
+        )}
 
         {/* price */}
         <div className="mt-3 flex items-end justify-between">
@@ -170,9 +189,13 @@ export function BasketCard({ ix, footer }: { ix: BasketSummary; footer?: ReactNo
             </div>
             <div className="mt-1 font-mono text-[11px] text-ink-faint">AUM {formatUsdCompact(ix.aumUsd)}</div>
           </div>
-          <span className="font-num text-sm font-semibold tabular-nums" style={{ color: accent }}>
-            {formatPct(ix.change24hPct)}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="font-num text-sm font-semibold tabular-nums" style={{ color: accent }}>
+              {formatPct(ix.change24hPct)}
+            </span>
+            {/* buy from the card — one click to a filled quote (owner 2026-07-29) */}
+            <QuickBuy address={ix.address} chainId={ix.chainId} symbol={ix.symbol} />
+          </div>
         </div>
       </div>
 

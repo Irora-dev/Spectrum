@@ -1,4 +1,7 @@
 import { chainCfg } from '../chain/chains'
+import { clientFor } from '../chain/rpc'
+import { chainlinkFeedFor, fetchChainlinkHistory } from './chainlink-history'
+import { fetchPoolSpotHistory } from './pool-spot-history'
 import type { NavPoint } from './basket-data'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +161,17 @@ async function fetchLlama(slug: string, address: string, plan: RangePlan): Promi
 // consumer (one metered request per unique asset per visitor per cache
 // window), and DefiLlama's coarser series is indistinguishable at sparkline
 // size. Detail-grade charts keep the keyed source first for resolution.
+// Chain 4663 has NO offchain price API (no Alchemy tier, no DexScreener, no
+// DefiLlama) — Chainlink rounds ON-CHAIN are the source for feed-listed assets
+// (the tokenized stocks + WETH + USDG); see chainlink-history.ts. Feedless
+// RH-native tokens still return empty — honest, until an indexer exists.
+async function fetchChainlink4663(chainId: number, address: string, plan: RangePlan): Promise<NavPoint[]> {
+  const feed = chainlinkFeedFor(chainId, address)
+  if (!feed) return []
+  const start = Math.floor(Date.now() / 1000) - plan.seconds
+  return fetchChainlinkHistory(clientFor(chainId), feed, start)
+}
+
 export async function fetchAssetHistory(
   chainId: number,
   address: string,
@@ -170,6 +184,22 @@ export async function fetchAssetHistory(
   const slug = chainCfg(chainId).dexscreenerSlug
   await acquire()
   try {
+    if (chainId === 4663) {
+      try {
+        const c = await fetchChainlink4663(chainId, address, plan)
+        if (c.length >= 2) return c
+      } catch {
+        /* feed hiccup — try the pool rung */
+      }
+      // feedless RH-native tokens: their own pool's historical storage
+      try {
+        const start = Math.floor(Date.now() / 1000) - plan.seconds
+        const p = await fetchPoolSpotHistory(chainId, address, start)
+        if (p.length >= 2) return p
+      } catch {
+        /* patchy archival replicas — honest empty */
+      }
+    }
     if (opts.preferKeyless) {
       try {
         const l = await fetchLlama(slug, address, plan)
@@ -299,4 +329,19 @@ export function computeReturns(series: NavPoint[], ageSec: number | null): Range
   }
   if (first.value > 0) out.push({ range: 'ALL', pct: (last.value / first.value - 1) * 100 })
   return out
+}
+
+/** The 24H return only when it's HONEST: a real sample must sit within 12h of
+ *  the interpolation anchor — `last.time − 24h`, the exact point computeReturns
+ *  samples (not now−24h: on a stale-tailed feed the two can differ by hours).
+ *  On a sparse feed sampleAt would otherwise interpolate across days while the
+ *  chip claims a daily move — suppress rather than fabricate. ONE guard for
+ *  every 24h chip fed by a series (weights row, hover card); the sweep verify
+ *  pass found it on one surface with its sibling unguarded. */
+export function honest24hPct(series: NavPoint[]): number | null {
+  if (series.length < 2) return null
+  const target = series[series.length - 1].time - DAY
+  const nearest = series.reduce((b, p) => (Math.abs(p.time - target) < Math.abs(b.time - target) ? p : b), series[0])
+  if (Math.abs(nearest.time - target) > DAY / 2) return null
+  return computeReturns(series, null).find((r) => r.range === '24H')?.pct ?? null
 }

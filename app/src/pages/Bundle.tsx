@@ -1,16 +1,19 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { useAccount } from 'wagmi'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { erc20Abi, formatUnits, type Address } from 'viem'
+import { clientFor } from '../lib/chain/rpc'
+import { useActiveChainId } from '../lib/chain/active-chain'
+import { NOTE_KINDS, notesRegistryAbi } from '../lib/spectrum/profile-registry'
+import { encodeBundleNote, useCreatorBundles } from '../lib/spectrum/notes-social'
 import { PageHeader } from '../components/PageHeader'
-import { BasketBento } from '../components/BasketBento'
-import { BasketWash } from '../components/BasketWash'
+import { BundleBento as SharedBundleBento } from '../components/BundleBento'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { ChainBadge } from '../components/ChainBadge'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
-import { basketSignatureColor } from '../lib/spectrum/signature'
-import { squarify } from '../lib/treemap'
 import { shortAddr } from '../lib/spectrum/format'
 import {
   MAX_BUNDLE_LEGS,
@@ -18,6 +21,7 @@ import {
   decodeBundle,
   encodeBundleParams,
   normalizedLegs,
+  slugForLegs,
   splitBudget,
   type Bundle as BundleT,
   type BundleLeg,
@@ -54,64 +58,6 @@ function useResolved(legs: BundleLeg[]): Resolved[] {
   }, [legs, all])
 }
 
-// ── the centerpiece: a weighted BENTO OF BASKETS (squarified by weight) ────────
-function BundleBento({ resolved, aspect = 2.2 }: { resolved: Resolved[]; aspect?: number }) {
-  const VW = 300
-  const VH = VW / aspect
-  const rects = useMemo(
-    () => squarify(resolved.filter((r) => r.pct > 0).map((r) => ({ ticker: `${r.leg.chainId}:${r.leg.address}`, weight: Math.pow(r.pct, 0.7) })), VW, VH),
-    [resolved, VH],
-  )
-  const byKey = useMemo(() => new Map(resolved.map((r) => [`${r.leg.chainId}:${r.leg.address}`.toLowerCase(), r])), [resolved])
-  if (rects.length === 0) return <div className="w-full rounded-2xl bg-white/[0.02]" style={{ aspectRatio: String(aspect) }} />
-  return (
-    <div className="relative w-full overflow-hidden rounded-2xl" style={{ aspectRatio: String(aspect) }}>
-      {rects.map((r) => {
-        const res = byKey.get(r.ticker.toLowerCase())
-        if (!res) return null
-        const { ix, leg, pct } = res
-        const sig = ix ? basketSignatureColor(ix.address, ix.top[0]) : 'var(--color-violet)'
-        const wFrac = r.w / VW
-        const hFrac = r.h / VH
-        const big = wFrac > 0.34 && hFrac > 0.4
-        const symbol = ix?.symbol ?? '—'
-        return (
-          <div
-            key={r.ticker}
-            className="absolute p-1"
-            style={{ left: `${(r.x / VW) * 100}%`, top: `${(r.y / VH) * 100}%`, width: `${wFrac * 100}%`, height: `${hFrac * 100}%` }}
-          >
-            <Link
-              to={ix ? `/token?addr=${ix.address}&chain=${ix.chainId}` : '#'}
-              className="group relative flex h-full w-full flex-col justify-between overflow-hidden rounded-xl border border-white/10 p-3 transition-[transform,border-color] duration-300 hover:-translate-y-0.5 hover:border-white/30"
-              style={{ background: `linear-gradient(150deg, ${sig}2e, rgba(255,255,255,0.02) 62%)` }}
-            >
-              {ix && <BasketWash ix={ix} opacity={0.26} />}
-              <span aria-hidden className="pointer-events-none absolute -bottom-10 -right-10 h-32 w-32 rounded-full opacity-20 blur-3xl transition-opacity duration-300 group-hover:opacity-35" style={{ background: sig }} />
-              <div className="relative z-10 flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  {ix && <BasketAvatar address={ix.address} symbol={ix.symbol} size={big ? 30 : 22} />}
-                  <span className="truncate font-display text-sm font-bold uppercase leading-none text-ink sm:text-base">${symbol}</span>
-                </div>
-                <ChainBadge chainId={leg.chainId} />
-              </div>
-              {big && ix && (
-                <div className="relative z-10 my-1 overflow-hidden rounded-lg border border-white/10 bg-black/25 p-1.5">
-                  <BasketBento items={ix.top.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct, chainId: ix.chainId }))} aspect={3} compact />
-                </div>
-              )}
-              <div className="relative z-10 flex items-baseline justify-between gap-2">
-                <span className="font-num text-2xl font-light leading-none tabular-nums text-ink sm:text-3xl">{Math.round(pct)}%</span>
-                <span className="truncate font-mono text-[9px] uppercase tracking-wide text-ink-faint">{chainCfg(leg.chainId).name}</span>
-              </div>
-            </Link>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 // The explicit cross-chain disclosure — the honesty rail for this whole feature.
 function CrossChainNote({ chains }: { chains: number[] }) {
   return (
@@ -130,8 +76,143 @@ function CrossChainNote({ chains }: { chains: number[] }) {
 }
 
 // ── VIEW: an existing bundle ───────────────────────────────────────────────────
-function BundleView({ bundle, dropped }: { bundle: BundleT; dropped: number }) {
+// ── what the VIEWER actually holds of each leg ────────────────────────────────
+// The framing decision (owner 2026-07-29): an allocation reads like a PORTFOLIO —
+// one combined value and one performance number, with the legs as the breakdown —
+// plus a completion state, because "you hold 2 of 3" is both the honest sentence
+// and the one that makes the buyer want the third. Never "one token".
+interface Held {
+  /** Whole basket tokens held by the viewer, or null while unknown. */
+  balance: number | null
+  valueUsd: number
+}
+
+function useBundleHoldings(resolved: Resolved[]): {
+  byLeg: Map<string, Held>
+  heldCount: number
+  combinedUsd: number
+  /** Value-weighted 24h change across the legs actually held, or null. */
+  change24hPct: number | null
+  loading: boolean
+} {
+  const { address } = useAccount()
+  const legKey = (l: BundleLeg) => `${l.chainId}:${l.address.toLowerCase()}`
+  const q = useQuery({
+    queryKey: [
+      'spectrum',
+      'bundle-holdings',
+      address?.toLowerCase() ?? '',
+      resolved.map((r) => legKey(r.leg)).join(','),
+    ],
+    enabled: !!address && resolved.length > 0,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const out = new Map<string, number | null>()
+      await Promise.all(
+        resolved.map(async (r) => {
+          try {
+            const bal = await clientFor(r.leg.chainId).readContract({
+              address: r.leg.address as Address,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [address as Address],
+            })
+            out.set(legKey(r.leg), Number(formatUnits(bal, 18)))
+          } catch {
+            out.set(legKey(r.leg), null) // couldn't read: say unknown, never "0 held"
+          }
+        }),
+      )
+      return out
+    },
+  })
+
+  return useMemo(() => {
+    const byLeg = new Map<string, Held>()
+    let combinedUsd = 0
+    let heldCount = 0
+    let changeNumer = 0
+    let changeDenom = 0
+    for (const r of resolved) {
+      const bal = q.data?.get(legKey(r.leg)) ?? null
+      const nav = r.ix?.navPerToken ?? 0
+      const valueUsd = bal != null && nav > 0 ? bal * nav : 0
+      byLeg.set(legKey(r.leg), { balance: bal, valueUsd })
+      if (bal != null && bal > 0) {
+        heldCount++
+        combinedUsd += valueUsd
+        if (r.ix?.change24hPct != null && valueUsd > 0) {
+          changeNumer += r.ix.change24hPct * valueUsd
+          changeDenom += valueUsd
+        }
+      }
+    }
+    return {
+      byLeg,
+      heldCount,
+      combinedUsd,
+      change24hPct: changeDenom > 0 ? changeNumer / changeDenom : null,
+      loading: q.isLoading,
+    }
+  }, [resolved, q.data, q.isLoading])
+}
+
+/** The portfolio headline: one combined number, one performance number, and the
+ *  completion state. Shown only to a connected wallet — with none, there is no
+ *  honest "you" to report on, so the page stays purely descriptive. */
+function AllocationHeadline({
+  resolved,
+  holdings,
+}: {
+  resolved: Resolved[]
+  holdings: ReturnType<typeof useBundleHoldings>
+}) {
+  const { address } = useAccount()
+  if (!address) return null
+  const total = resolved.length
+  const pct = total > 0 ? (holdings.heldCount / total) * 100 : 0
+  const complete = holdings.heldCount === total && total > 0
+  return (
+    <section className="rounded-2xl border border-white/12 bg-white/[0.03] px-5 py-4">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
+            Your combined position
+          </div>
+          <div className="mt-1 flex items-baseline gap-3">
+            <span className="font-num text-4xl font-light tabular-nums text-ink">
+              {holdings.loading ? '…' : `$${Math.round(holdings.combinedUsd).toLocaleString('en-US')}`}
+            </span>
+            {holdings.change24hPct != null && (
+              <span
+                className={`font-num text-sm font-semibold tabular-nums ${holdings.change24hPct >= 0 ? 'text-teal' : 'text-magenta'}`}
+              >
+                {holdings.change24hPct >= 0 ? '+' : ''}
+                {holdings.change24hPct.toFixed(1)}% 24h
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="min-w-[12rem] flex-1">
+          <div className="flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+            <span>{complete ? 'allocation complete' : `you hold ${holdings.heldCount} of ${total} legs`}</span>
+            {!complete && <span className="tabular-nums">{Math.round(pct)}%</span>}
+          </div>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+            <div
+              className="h-full rounded-full transition-[width] duration-700"
+              style={{ width: `${Math.max(pct, complete ? 100 : 2)}%`, background: complete ? 'var(--color-teal)' : SPECTRAL }}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: number; published?: boolean }) {
   const resolved = useResolved(bundle.legs)
+  const holdings = useBundleHoldings(resolved)
   const chains = bundleChains(bundle.legs)
   const [budget, setBudget] = useState('1000')
   const budgetNum = Number(budget) || 0
@@ -156,6 +237,14 @@ function BundleView({ bundle, dropped }: { bundle: BundleT; dropped: number }) {
       <PageHeader size="lg" className="mb-2" title={bundle.name || 'Cross-chain bundle'} />
       <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-ink-dim">
         <span>{bundle.legs.length} baskets · {chains.length} chains</span>
+        {published && (
+          <span
+            title="This bundle is published on-chain by its creator, so this page works even without the original share link."
+            className="inline-flex items-center gap-1 rounded-full border border-teal/40 bg-teal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-teal"
+          >
+            published on-chain
+          </span>
+        )}
         {bundle.by && (
           <span>
             by{' '}
@@ -170,9 +259,13 @@ function BundleView({ bundle, dropped }: { bundle: BundleT; dropped: number }) {
         </p>
       )}
 
+      <div className="mb-6">
+        <AllocationHeadline resolved={resolved} holdings={holdings} />
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
-          <BundleBento resolved={resolved} />
+          <SharedBundleBento legs={resolved.map((r) => ({ chainId: r.leg.chainId, address: r.leg.address, weight: r.leg.weight, ix: r.ix }))} />
           <CrossChainNote chains={chains} />
         </div>
 
@@ -186,7 +279,7 @@ function BundleView({ bundle, dropped }: { bundle: BundleT; dropped: number }) {
               <input
                 value={budget}
                 onChange={(e) => setBudget(e.target.value.replace(/[^0-9.]/g, ''))}
-                inputMode="decimal"
+                inputMode="decimal" enterKeyHint="done" autoComplete="off"
                 aria-label="Budget in USD"
                 className="min-w-0 flex-1 bg-transparent font-num text-2xl font-light tabular-nums text-ink outline-none"
               />
@@ -194,31 +287,57 @@ function BundleView({ bundle, dropped }: { bundle: BundleT; dropped: number }) {
             </label>
           </div>
 
+          {/* ONE PLAN, several steps — numbered, with what's already done ticked
+              off. A leg the viewer already holds is not a pending purchase. */}
           <div className="flex flex-col divide-y divide-white/8 border-y border-white/10">
-            {resolved.map((r, i) => (
-              <div key={`${r.leg.chainId}:${r.leg.address}`} className="flex items-center gap-3 py-2.5">
-                {r.ix && <BasketAvatar address={r.ix.address} symbol={r.ix.symbol} size={30} />}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate font-display text-sm font-bold text-ink">${r.ix?.symbol ?? shortAddr(r.leg.address)}</span>
-                    <ChainBadge chainId={r.leg.chainId} />
-                  </div>
-                  <div className="font-mono text-[10px] tabular-nums text-ink-faint">{Math.round(r.pct)}% · {chainCfg(r.leg.chainId).name}</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-num text-sm tabular-nums text-ink">{budgetNum > 0 ? `$${splits[i].toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}</div>
-                  <Link
-                    to={`/swap?basket=${r.leg.address}&chain=${r.leg.chainId}${refq}`}
-                    className="press mt-0.5 inline-block rounded-md border border-cyan/40 bg-cyan/[0.08] px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-cyan hover:border-cyan"
+            {resolved.map((r, i) => {
+              const held = holdings.byLeg.get(`${r.leg.chainId}:${r.leg.address.toLowerCase()}`)
+              const has = (held?.balance ?? 0) > 0
+              return (
+                <div key={`${r.leg.chainId}:${r.leg.address}`} className="flex items-center gap-3 py-2.5">
+                  <span
+                    aria-hidden
+                    className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border font-mono text-[9px] tabular-nums ${
+                      has ? 'border-teal/60 bg-teal/15 text-teal' : 'border-white/20 text-ink-faint'
+                    }`}
                   >
-                    Buy on {chainCfg(r.leg.chainId).key ?? chainCfg(r.leg.chainId).name}
-                  </Link>
+                    {has ? '✓' : i + 1}
+                  </span>
+                  {r.ix && <BasketAvatar address={r.ix.address} symbol={r.ix.symbol} size={30} />}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate font-display text-sm font-bold text-ink">${r.ix?.symbol ?? shortAddr(r.leg.address)}</span>
+                      <ChainBadge chainId={r.leg.chainId} />
+                    </div>
+                    <div className="font-mono text-[10px] tabular-nums text-ink-faint">
+                      {Math.round(r.pct)}% · {chainCfg(r.leg.chainId).name}
+                      {has && held?.valueUsd ? ` · you hold $${Math.round(held.valueUsd).toLocaleString('en-US')}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-num text-sm tabular-nums text-ink">
+                      {budgetNum > 0 ? `$${splits[i].toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
+                    </div>
+                    <Link
+                      to={`/swap?basket=${r.leg.address}&chain=${r.leg.chainId}${refq}`}
+                      className={`press mt-0.5 inline-block rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+                        has
+                          ? 'border-white/15 text-ink-faint hover:border-white/35 hover:text-ink'
+                          : 'border-cyan/40 bg-cyan/[0.08] text-cyan hover:border-cyan'
+                      }`}
+                    >
+                      {has ? 'Add more' : `Step ${i + 1}`}
+                    </Link>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
+          {/* The honest sentence, in the buy panel where the decision happens. */}
           <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
-            Buy each leg on its chain, in any order. Amounts are your budget split by the target weights.
+            {resolved.length} basket tokens, one per chain — you hold each in your own wallet. Take the
+            steps in any order; each needs funds and gas on its own chain. Nothing here is pooled,
+            bridged, or wrapped, and there is no combined token.
           </p>
 
           <div className="mt-1 flex flex-wrap gap-2">
@@ -239,6 +358,9 @@ function BundleView({ bundle, dropped }: { bundle: BundleT; dropped: number }) {
 function BundleBuilder() {
   const { data: all } = useAllBaskets()
   const { address } = useAccount()
+  // Publishing writes to the notes registry on the VIEWING chain (the bundle's
+  // legs can span chains; the record of it lives on one).
+  const activeChainId = useActiveChainId()
   const [, setSearchParams] = useSearchParams()
   const [legs, setLegs] = useState<BundleLeg[]>([])
   const [name, setName] = useState('')
@@ -275,6 +397,52 @@ function BundleBuilder() {
       window.setTimeout(() => setCopied(false), 1600)
     } catch {
       /* clipboard unavailable */
+    }
+  }
+
+  // PUBLISH — a bundle that lives only in a URL dies with the link. One
+  // signature writes it on-chain (kind 'bundle', subject = the creator), so it
+  // gets listed on their creator page, travels to every Spectrum site, and stays
+  // editable. Publishing is optional: the link alone still works.
+  const registry = (() => {
+    try {
+      return chainCfg(activeChainId).notesRegistry
+    } catch {
+      return null
+    }
+  })()
+  const publicClient = usePublicClient({ chainId: activeChainId })
+  const { writeContractAsync } = useWriteContract()
+  const queryClient = useQueryClient()
+  const [publishState, setPublishState] = useState<'idle' | 'busy' | 'done'>('idle')
+  const [publishError, setPublishError] = useState<string | null>(null)
+  const canPublish = !!registry && !!address && share
+
+  async function publish() {
+    if (!canPublish || !publicClient || publishState === 'busy') return
+    setPublishState('busy')
+    setPublishError(null)
+    try {
+      // A stable slug from the composition: re-publishing the same set EDITS in
+      // place instead of stacking duplicates.
+      const slug = slugForLegs(legs)
+      const h = await writeContractAsync({
+        address: registry as Address,
+        abi: notesRegistryAbi,
+        functionName: 'setNote',
+        args: [
+          address as Address,
+          NOTE_KINDS.bundle,
+          encodeBundleNote({ slug, name: name.trim() || undefined, legs }),
+        ],
+        chainId: activeChainId,
+      })
+      await publicClient.waitForTransactionReceipt({ hash: h })
+      void queryClient.invalidateQueries({ queryKey: ['spectrum', 'bundles', activeChainId] })
+      setPublishState('done')
+    } catch (e) {
+      setPublishError(e instanceof Error ? (e.message.split('\n')[0] ?? 'Could not publish.') : 'Could not publish.')
+      setPublishState('idle')
     }
   }
 
@@ -389,7 +557,7 @@ function BundleBuilder() {
         {/* live preview + link */}
         <div className="flex flex-col gap-4">
           <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-ink-dim">Live preview</div>
-          {legs.length > 0 ? <BundleBento resolved={resolved} /> : (
+          {legs.length > 0 ? <SharedBundleBento legs={resolved.map((r) => ({ chainId: r.leg.chainId, address: r.leg.address, weight: r.leg.weight, ix: r.ix }))} /> : (
             <div className="grid aspect-[2.2/1] w-full place-items-center rounded-2xl border border-dashed border-white/12 text-center font-mono text-xs text-ink-faint">
               Add baskets to see your bundle
             </div>
@@ -404,6 +572,35 @@ function BundleBuilder() {
                   <button type="button" onClick={() => setSearchParams(encodeBundleParams({ legs, by: address ?? null, name: name.trim() || null } as BundleT))} className="press rounded-lg border border-white/15 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan">Preview it</button>
                 </div>
                 {!address && <p className="mt-2 font-mono text-[9px] text-ink-faint">Connect a wallet so buys through your link are tagged to you.</p>}
+
+                {/* PUBLISH — makes the bundle durable + listed, one signature.
+                    Optional: the link works either way. */}
+                {canPublish && (
+                  <div className="mt-3 border-t border-white/10 pt-3">
+                    {publishState === 'done' ? (
+                      <p className="font-mono text-[10px] leading-relaxed text-teal">
+                        Published on-chain. It now appears on your creator page and on any Spectrum site
+                        reading this chain. Publish again after an edit to update it.
+                      </p>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void publish()}
+                          disabled={publishState === 'busy'}
+                          className="press rounded-lg bg-cyan px-4 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:opacity-90 disabled:opacity-60"
+                        >
+                          {publishState === 'busy' ? 'Publishing…' : 'Publish on-chain'}
+                        </button>
+                        <p className="mt-2 font-mono text-[9px] leading-relaxed text-ink-faint">
+                          One signature. A published bundle is listed on your creator page and survives
+                          the link being lost; re-publishing the same set edits it in place.
+                        </p>
+                      </>
+                    )}
+                    {publishError && <p className="mt-2 font-mono text-[10px] text-magenta">{publishError}</p>}
+                  </div>
+                )}
               </>
             ) : (
               <p className="mt-2 font-mono text-[11px] text-ink-faint">Add at least 2 baskets to get a shareable link.</p>
@@ -440,15 +637,68 @@ function BundleBuilder() {
   )
 }
 
+/** Chains this build actually supports — `chainCfg` throws on an unknown chain,
+ *  and a shared bundle can name one this deployment hasn't enabled. */
+function keepSupported(legs: BundleLeg[]): { legs: BundleLeg[]; dropped: number } {
+  const supported = new Set(SUPPORTED_CHAIN_IDS as readonly number[])
+  const kept = legs.filter((l) => supported.has(l.chainId))
+  return { legs: kept, dropped: legs.length - kept.length }
+}
+
+/**
+ * A PUBLISHED bundle's own page: /bundle/:creator/:slug. Stable and shareable,
+ * with no query soup — and because it reads the on-chain note rather than the
+ * URL, the link keeps working even if the original share link is lost (which is
+ * the whole point of publishing).
+ */
+export function PublishedBundlePage() {
+  const { creator, slug } = useParams()
+  const chainId = useActiveChainId()
+  const { data, isLoading } = useCreatorBundles(chainId, creator)
+  const found = (data ?? []).find((b) => b.slug === slug)
+
+  if (isLoading) {
+    return (
+      <div className="grid min-h-[50vh] place-items-center" role="status" aria-label="Loading the bundle">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-cyan" />
+      </div>
+    )
+  }
+  if (!found) {
+    return (
+      <div className="py-10">
+        <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center">
+          <p className="text-sm text-ink-dim">
+            No published bundle at this address on {chainCfg(chainId).name}.
+          </p>
+          <p className="mt-1.5 font-mono text-[10px] text-ink-faint">
+            It may have been retired by its creator, or published on a different network.
+          </p>
+          <Link to="/bundle" className="press mt-4 inline-block font-mono text-[11px] uppercase tracking-[0.16em] text-cyan hover:underline">
+            Build your own →
+          </Link>
+        </div>
+      </div>
+    )
+  }
+  const { legs, dropped } = keepSupported(
+    found.legs.map((l) => ({ chainId: l.chainId, address: l.address, weight: l.weight })),
+  )
+  return (
+    <BundleView
+      bundle={{ legs, by: creator ?? null, name: found.name || null }}
+      dropped={dropped}
+      published
+    />
+  )
+}
+
 export function Bundle() {
   const [params] = useSearchParams()
-  // Filter to chains THIS build supports — `chainCfg` throws on an unknown chain,
-  // and a shared bundle link could name one this deployment hasn't enabled.
   const { bundle, dropped } = useMemo(() => {
     const b = decodeBundle(params.toString())
-    const supported = new Set(SUPPORTED_CHAIN_IDS as readonly number[])
-    const legs = b.legs.filter((l) => supported.has(l.chainId))
-    return { bundle: { ...b, legs }, dropped: b.legs.length - legs.length }
+    const { legs, dropped: d } = keepSupported(b.legs)
+    return { bundle: { ...b, legs }, dropped: d }
   }, [params])
   return bundle.legs.length > 0 ? <BundleView bundle={bundle} dropped={dropped} /> : <BundleBuilder />
 }

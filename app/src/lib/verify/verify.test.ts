@@ -4,7 +4,7 @@ import { verdictFor, verifyChainConfig, DEPLOYER_ANCHOR_ENS } from './anchor'
 import canonicalBook from '../chain/deployments.json'
 import type { Address } from 'viem'
 
-const CANON_FACTORY = (canonicalBook as Record<string, Record<string, string>>)['8453'].factory as Address
+const CANON_FACTORY = (canonicalBook as Record<string, Record<string, string | boolean | number>>)['8453'].factory as Address
 
 describe('addressFingerprint', () => {
   it('is deterministic and case-insensitive', () => {
@@ -38,14 +38,31 @@ describe('addressFingerprint', () => {
 
 describe('anchor verdicts', () => {
   it('the shipped canonical book verifies as canonical on every shipped chain', () => {
+    // /verify authenticates every address a money path calls (redteam F-7), and
+    // some are legitimately absent per chain (4663 ships no Uniswap periphery),
+    // so the assertion is: a SET field is canonical, an absent one is unset, and
+    // nothing is ever 'override' for the shipped book.
     for (const chainId of [8453, 1, 4663]) {
-      const entry = (canonicalBook as Record<string, Record<string, string>>)[String(chainId)]
+      const entry = (canonicalBook as Record<string, Record<string, string | boolean | number>>)[String(chainId)]
+      const at = (k: string) => {
+        const v = entry[k]
+        return typeof v === 'string' && v.length > 0 ? (v as Address) : null
+      }
       const fields = verifyChainConfig(chainId, {
-        factory: entry.factory as Address,
-        swapRouter: entry.swapRouter as Address,
-        usdc: entry.usdc as Address,
+        factory: at('factory'),
+        swapRouter: at('swapRouter'),
+        usdc: at('usdc'),
+        uniV3SwapRouter: at('uniV3SwapRouter'),
+        uniV3Quoter: at('uniV3Quoter'),
+        weth: at('weth'),
+        poolManager: at('poolManager'),
       })
-      expect(fields.map((f) => f.verdict)).toEqual(['canonical', 'canonical', 'canonical'])
+      expect(fields.length).toBe(7)
+      expect(fields.some((f) => f.verdict === 'override')).toBe(false)
+      for (const f of fields) expect(f.verdict).toBe(f.effective ? 'canonical' : 'unset')
+      for (const k of ['factory', 'swapRouter', 'usdc']) {
+        expect(fields.find((f) => f.key === k)?.verdict).toBe('canonical')
+      }
     }
   })
 

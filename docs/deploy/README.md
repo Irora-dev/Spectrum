@@ -39,17 +39,20 @@ There are three ways in. They all produce the **same** site — choose by how ha
 |---|---|---|
 | **Deploy button** | "Just make it live" — one click clones + connects + builds | [deploy-button.md](deploy-button.md) |
 | **Use this template** | You want your own GitHub repo first, then connect a host | [github-template.md](github-template.md) |
-| **Host dashboard** | You already have the repo and just want the host's steps | [Cloudflare Pages](cloudflare-pages.md) · [Vercel](vercel.md) |
+| **Host dashboard** | You already have the repo and just want the host's steps | [Cloudflare Pages](cloudflare-pages.md) · [Netlify](netlify.md) · [Vercel](vercel.md) |
 
 Most non-developers should start with the **deploy button**. If it stalls on env vars or build
 settings, fall back to **Use this template → connect host** (the steps are spelled out for each host).
 
-> **Which host?** Both work and both are free to start — we suggest **Cloudflare Pages** as the
-> default. Its free tier permits **commercial use** and isn't bandwidth-metered. **Vercel's**
-> free "Hobby" tier is **non-commercial** per their terms, and a site that routes fees to your
-> wallet is arguably commercial, so on Vercel you may need a paid plan. (Vercel's deploy button
-> is a touch smoother — it prompts for every value inline; Cloudflare's takes one extra
-> dashboard step.) You can move hosts later either way.
+> **Which host?** All three work and all are free to start — we suggest **Cloudflare Pages** as
+> the default. Its free tier permits **commercial use** and isn't bandwidth-metered.
+> **[Netlify](netlify.md)**'s free tier also allows commercial use (bandwidth metered at
+> 100 GB/mo) and is the one host where the kit's **per-URL social cards deploy automatically**
+> (the shipped edge function). **Vercel's** free "Hobby" tier is **non-commercial** per their
+> terms, and a site that routes fees to your wallet is arguably commercial, so on Vercel you
+> may need a paid plan. (Vercel's deploy button is a touch smoother — it prompts for every
+> value inline; Cloudflare's takes one extra dashboard step.) You can move hosts later either
+> way.
 
 ---
 
@@ -116,10 +119,11 @@ low traffic; public nodes can rate-limit or slow down under load.
 **2. Your own key (recommended for reliability).** Free, ~3 minutes:
 
 - Make a free account at **[Alchemy](https://alchemy.com)**.
-- Create an app/key for **Base Mainnet** (the default chain; also Ethereum Mainnet if you set
-  `VITE_EXTRA_CHAIN_IDS=1`).
-- Copy the **API key** and set it as `VITE_ALCHEMY_API_KEY`. (Prefer a full URL? Use
-  `VITE_BASE_RPC_URL` / `VITE_MAINNET_RPC_URL` instead.)
+- Create an app/key with **Base Mainnet, Ethereum Mainnet and Robinhood Chain** enabled —
+  all three are live by default, and the one key serves them all.
+- Copy the **API key** and set it as `VITE_ALCHEMY_API_KEY`. (Prefer full URLs from another
+  provider? `VITE_BASE_RPC_URL` / `VITE_MAINNET_RPC_URL` / `VITE_ROBINHOOD_RPC_URL` each
+  override per chain.)
 
 > ⚠️ **Lock your key to your domain.** Because the URL ships in the browser bundle, anyone can
 > read it. That's normal for a static site — but turn on the provider's origin/referrer
@@ -128,6 +132,31 @@ low traffic; public nodes can rate-limit or slow down under load.
 > - **Infura:** your API key → *Settings → Allowlist / Referrers* → add your domain(s).
 >
 > Add the custom domain first (below), then lock the key to it.
+
+---
+
+## What this costs, and surviving real traffic
+
+**The only thing you have to buy is the domain.** The site is fully static, so the free hosting
+tiers carry it: Cloudflare Pages' free plan has no bandwidth metering on static assets, allows
+commercial use, and includes the custom domain + HTTPS (Netlify's free tier meters at 100 GB/mo;
+Vercel's free tier is non-commercial — see "Which host?"). No hosting upgrade, no premium plan,
+no server. The optional per-URL social cards also fit free tiers (the Netlify edge function, or
+the standalone Cloudflare Worker inside the free 100k requests/day).
+
+**Traffic doesn't hit your host — it hits your RPC.** The CDN absorbs any number of visitors;
+what scales with traffic is each browser reading the chain. Three levers, in order:
+
+1. **Set your own origin-restricted RPC key** (above). Free tiers are fine to launch; the key is
+   also the first thing to upgrade if reads ever throttle.
+2. **Publish a snapshot — the big one.** `npm run build:snapshot` (on a schedule: cron, CI, or
+   your laptop) writes a JSON that list/discovery surfaces render from, so global data is read
+   once per interval instead of once per visitor — RPC cost goes **flat** no matter the traffic.
+   Anything trade-critical (floors, simulations, allowances, balances) always stays on live RPC
+   by design. Full guide: `app/handover/RPC-EFFICIENCY.md`.
+3. **Robinhood Chain rides the same key** — Alchemy serves it too, so the one
+   `VITE_ALCHEMY_API_KEY` covers all three chains (its keyless public node is rate-limited;
+   `VITE_ROBINHOOD_RPC_URL` still overrides per chain if you prefer another provider).
 
 ---
 
@@ -167,7 +196,10 @@ HTTPS is provisioned automatically on both, usually within minutes.
 2. Open **Discover** — it lists baskets read live from the factory. (Every Spectrum Mini site
    shows every basket; that's by design, not a setting.)
 3. If you set the swap router, **Trade** should be in the nav; if you left it blank, it won't be.
-4. Empty or erroring? Jump to **Troubleshooting**.
+4. **On your custom domain?** Confirm the loop is closed: the site URL is set to the domain
+   (share any page into a chat — the link preview should show *your* domain, not
+   `*.pages.dev`/`*.netlify.app`) and your RPC key's allowlist includes it.
+5. Empty or erroring? Jump to **Troubleshooting**.
 
 ---
 
@@ -178,12 +210,13 @@ HTTPS is provisioned automatically on both, usually within minutes.
 | Build fails immediately | Wrong build settings | Framework **Vite**, build `npm run build`, output `dist`. See your host guide. |
 | Site loads but Discover is empty / spinning | Bad or missing `VITE_FACTORY_ADDRESS` | Recheck it (and `VITE_EXTRA_CHAIN_IDS` if you meant to add a 2nd chain), then **Redeploy**. |
 | Changed a value but nothing changed | Env vars are baked at build time | Hit **Redeploy** after editing. |
-| Deep links / refresh show **404** | SPA routing file not added | Add `public/_redirects` (Cloudflare) or `vercel.json` (Vercel) — see [Make deep links work](#make-deep-links-work-one-time). |
+| Deep links / refresh show **404** | The shipped SPA routing file didn't reach the deploy | Check `public/_redirects` (Cloudflare) or `vercel.json` (Vercel) made it into your repo/build — see [Deep links work out of the box](#deep-links-work-out-of-the-box). |
 | No buy/sell on the token page | Missing one of `VITE_ENABLE_WALLET` / `VITE_ENABLE_SWAP` / `VITE_SWAP_ROUTER_ADDRESS`, or the `trade` toggle is off | Set all three (+ the `trade` toggle in `brand.config.ts`), then redeploy — or leave off on purpose. |
 | Slow / intermittent data | Public RPC rate-limiting | Add your own Alchemy/Infura key (above). |
 | RPC key stopped working after going live | Allowlist set before the domain existed | Add the domain, then add it to the key's allowlist. |
 
 ---
 
-*Generated sites always carry the **"powered by Spectrum Mini"** line and may not be named
-"Spectrum …". Fees are fixed by the contracts; you set only your fee wallet.*
+*Generated sites always carry the **"powered by Spectrum Mini"** line ("Spectrum" is the
+shipped default site name; rename it freely). Fees are fixed by the contracts; you set only
+your fee wallet.*

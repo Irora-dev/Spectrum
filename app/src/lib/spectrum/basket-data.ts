@@ -3,6 +3,7 @@ import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
 import { ZERO_ADDRESS } from '../chain/constants'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
 import { nativeEthUsdOnChain, v4LegUsd } from '../pools/v4-usd'
+import { v3LegUsd } from '../pools/v3-usd'
 import { basketAbi, erc20BalanceAbi, factoryAbi, launchedEvent } from './abis-v2'
 import { cacheGet, cacheSet } from './persist-cache'
 import { loadSnapshot, type SpectrumSnapshot } from './snapshot'
@@ -484,9 +485,17 @@ interface ImmutableMeta {
   targetBps: number[]
   assetDecimals: number[]
   deployer: string | null
-  /** Per-leg native-ETH V4 PoolKey from basket(i).ethPool (null = non-V4 leg).
-   *  Optional: snapshot-seeded meta omits it (the live read fills it). */
+  /** Per-leg routing-pool PoolKey from basket(i).ethPool — native-ETH-paired for
+   *  V4 legs (venue 0), settlement-paired for V4Q legs (venue 3, the stocks
+   *  lineage); null = V2/V3 leg. Optional: snapshot-seeded meta omits it (the
+   *  live read fills it). */
   ethPools?: ({ currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address } | null)[]
+  /** Per-leg venue (0 V4 · 1 V3 · 2 V2 · 3 V4Q) — lets the pricing rung route
+   *  non-V4 legs (a V3 leg has no PoolKey, only a fee tier). */
+  legVenues?: number[]
+  /** Per-leg V3 fee tier (0 for non-V3 legs) — with legVenues, enough to
+   *  re-derive a V3 leg's routing pool from the canonical factory. */
+  v3Fees?: number[]
   /** Per-leg ERC-20 symbol (on-chain), for chains DexScreener doesn't name. */
   assetSymbols?: (string | null)[]
 }
@@ -515,7 +524,7 @@ function isImmutableMeta(v: unknown): v is ImmutableMeta {
 function getCachedMeta(key: string): ImmutableMeta | undefined {
   const mem = immutableCache.get(key)
   if (mem) return mem
-  const persisted = cacheGet<ImmutableMeta>(`imm:v2:${key}`) // v2: + ethPools/assetSymbols
+  const persisted = cacheGet<ImmutableMeta>(`imm:v3:${key}`) // v3: + legVenues/v3Fees (V3-leg pricing)
   if (persisted && isImmutableMeta(persisted)) {
     immutableCache.set(key, persisted)
     return persisted
@@ -529,7 +538,7 @@ export function seedImmutableMeta(address: string, chainId: number, meta: Immuta
   if (!isImmutableMeta(meta)) return
   const key = `${chainId}:${address.toLowerCase()}`
   immutableCache.set(key, meta)
-  cacheSet(`imm:v2:${key}`, meta, 0)
+  cacheSet(`imm:v3:${key}`, meta, 0)
 }
 
 // `inception` defaults off: list views don't need the lifetime-clamped chart
@@ -562,6 +571,11 @@ export async function getBasketData(
       getDeployer(address, chainId),
     ])
     const n = Number(lenRaw)
+  // A hostile contract at a pasted ?addr= can return 1e9 here and the Array.from
+  // below allocates a billion promises → tab OOM before anything renders
+  // (redteam 2026-07-29 F-1). No real basket is anywhere near this.
+  if (!Number.isInteger(n) || n < 0 || n > 64)
+    throw new Error('Not a Spectrum basket (implausible constituent count).')
     const entries = await Promise.all(
       Array.from({ length: n }, (_, i) =>
         client.readContract({ address, abi: basketAbi, functionName: 'basket', args: [BigInt(i)] }),
@@ -586,12 +600,16 @@ export async function getBasketData(
       targetBps: entries.map((e) => Number(e[5])),
       assetDecimals: entries.map((e) => Number(e[6])),
       deployer,
-      // venue 0 = Uniswap V4: the leg's own native-ETH pool, the pricing source.
-      ethPools: entries.map((e) => (Number(e[1]) === 0 ? e[2] : null)),
+      // venue 0 = V4 (native-ETH pool) and venue 3 = V4Q (settlement-paired,
+      // stocks lineage): both carry the leg's own routing pool key — the
+      // pricing source. v4LegUsd prices either shape, ordering-aware.
+      ethPools: entries.map((e) => (Number(e[1]) === 0 || Number(e[1]) === 3 ? e[2] : null)),
+      legVenues: entries.map((e) => Number(e[1])),
+      v3Fees: entries.map((e) => Number(e[3])),
       assetSymbols: legSymbols,
     }
     immutableCache.set(key, meta)
-    cacheSet(`imm:v2:${key}`, meta, 0)
+    cacheSet(`imm:v3:${key}`, meta, 0)
   }
   const { name, symbol, decimals, assets, targetBps, assetDecimals, deployer } = meta
 
@@ -636,14 +654,22 @@ export async function getBasketData(
   // each leg priced from its own routing pool. Settlement-paired legs (the 4663
   // norm) price directly off their pool ($1 anchor); ETH-paired legs also need
   // the ETH/settlement hub price — its absence only skips those, never the rung.
+  // V3-routed legs (venue 1 — live on 4663 since the gate split) carry no
+  // PoolKey, so their pool is re-derived from the factory by fee tier: without
+  // this rung a V3 leg read $0 and understated holdings + NAV (verify pass).
   let onchainUsd: (number | null)[] | null = null
-  if (!cfg.dexscreenerSlug && meta.ethPools?.length) {
+  if (!cfg.dexscreenerSlug && (meta.ethPools?.length || meta.legVenues?.length)) {
     const ethUsd = await nativeEthUsdOnChain(chainId)
     onchainUsd = await Promise.all(
-      meta.ethPools.map((k, i) => {
-        const low = assets[i].toLowerCase()
-        if (!k || (USDC && low === USDC) || dex.get(low)) return null
-        return v4LegUsd(chainId, k, assetDecimals[i], ethUsd)
+      assets.map((a, i) => {
+        const low = a.toLowerCase()
+        if ((USDC && low === USDC) || dex.get(low)) return null
+        const k = meta.ethPools?.[i]
+        if (k) return v4LegUsd(chainId, k, assetDecimals[i], ethUsd)
+        if (meta.legVenues?.[i] === 1 && (meta.v3Fees?.[i] ?? 0) > 0) {
+          return v3LegUsd(chainId, a, meta.v3Fees![i], assetDecimals[i], ethUsd)
+        }
+        return null
       }),
     )
   }

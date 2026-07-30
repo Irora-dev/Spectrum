@@ -30,7 +30,7 @@ the generic card.
 
 ## Follow-up: per-basket card IMAGES
 
-Right now `og:image` is the branded **generic** card (`/og.png`) for every URL —
+Right now `og:image` is the name-neutral **generic** card (`/og.png`) for every URL —
 the per-URL **title + description** is what's personalized. Real per-basket card
 images (ticker + faux-bento, like the Cloudflare worker renders) are the next
 step. The proven satori→resvg render already exists in

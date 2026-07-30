@@ -562,8 +562,10 @@ export function DeployPortal({
           ))}
         </div>
 
-        {/* portal */}
-        <div className="absolute bottom-[15vh] left-0 right-0 z-30 mx-auto flex w-[400px] flex-col items-center justify-center">
+        {/* portal — w-[min(400px,100vw)]: left/right/width all set is
+            over-constrained, and at <400px the box anchored LEFT instead of
+            centring (mobile audit L) */}
+        <div className="absolute bottom-[15vh] left-0 right-0 z-30 mx-auto flex w-[min(400px,100vw)] flex-col items-center justify-center">
           <div className="relative flex h-[100px] w-full items-center justify-center" style={{ perspective: '1000px' }}>
             <div ref={glowRef} className="absolute inset-0 m-auto h-[120px] w-[350px] rounded-[100%] blur-[50px] transition-[background-color] duration-500" style={{ backgroundColor: 'rgba(6,182,212,0.10)' }} />
             <div
@@ -676,9 +678,14 @@ export function DeployPortal({
                 {!deploy || deploy.status === 'idle' ? (
                   <>{assets.length} assets · starts at $1.00 NAV.</>
                 ) : deploy.status === 'mining' ? (
-                  <>Mining the 0x88 hook address… {deploy.attempts.toLocaleString()} salts tried (CREATE2)</>
+                  <>
+                    Mining the 0x88 hook address… {deploy.attempts.toLocaleString()} salts tried (CREATE2)
+                    {/* expectation-setter (owner 2026-07-30): the salt search is
+                        luck-of-the-draw, so quiet minutes are normal, not a hang */}
+                    <span className="mt-1 block text-ink-faint">Could take a few minutes…</span>
+                  </>
                 ) : deploy.status === 'preparing' ? (
-                  <>Hook address mined · reading the Dutch-auction price…</>
+                  <>Hook address mined · reading the launch price…</>
                 ) : deploy.status === 'error' ? (
                   <span className="text-rose-300">Deploy halted: {deploy.error}</span>
                 ) : deploy.status === 'success' ? (
@@ -717,7 +724,7 @@ export function DeployPortal({
                 ) : (
                   <div className="space-y-2">
                     <div>
-                      Hook <span className="text-ink">{shortHex(deploy.predicted)}</span> · auction{' '}
+                      Hook <span className="text-ink">{shortHex(deploy.predicted)}</span> · launch fee{' '}
                       {deploy.priceWei != null ? formatEther(deploy.priceWei) : '—'} ETH · starts at $1.00 NAV
                     </div>
                     {deploy.txHash && (
@@ -1108,7 +1115,7 @@ function DeployGate({ chainId }: { chainId: number }) {
   if (!DEPLOY_ENABLED) {
     return (
       <div className="text-ink-dim/70">
-        Basket deploy is off on this build (VITE_ENABLE_DEPLOY), but the hook address and auction price
+        Basket deploy is off on this build (VITE_ENABLE_DEPLOY), but the hook address and launch price
         above are real (mined + read live), not a mock.
       </div>
     )

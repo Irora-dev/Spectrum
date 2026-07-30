@@ -34,11 +34,14 @@ export function mainnetRpcUrl(): string {
   )
 }
 
-// No Alchemy tier: Alchemy does not serve Robinhood Chain (verified 2026-07),
-// so the key never forms a URL here — explicit override else the chain's public
-// endpoint. Revisit when a provider adds 4663.
+// Alchemy DOES serve Robinhood Chain now (robinhood-mainnet.g.alchemy.com —
+// owner-confirmed + DNS/endpoint-verified 2026-07-30; the old "no tier" note
+// predated it), so the one key covers all three chains.
 export function robinhoodRpcUrl(): string {
-  return envTrim(import.meta.env.VITE_ROBINHOOD_RPC_URL) || PUBLIC_ROBINHOOD
+  return (
+    envTrim(import.meta.env.VITE_ROBINHOOD_RPC_URL) ||
+    (alchemyKey ? `https://robinhood-mainnet.g.alchemy.com/v2/${alchemyKey}` : PUBLIC_ROBINHOOD)
+  )
 }
 
 // Whether an Alchemy key is configured — enables wide (full-range) filtered getLogs,
@@ -59,12 +62,32 @@ export function hasPrivateRpc(chainId: number): boolean {
   return hasAlchemyKey() && hasAlchemyTier(chainId)
 }
 
-// Chains Alchemy can serve at all. On a chain with NO tier (Robinhood), the chain's
-// own RPC is the only option — and its filtered wide getLogs is proven fast (the
-// chain is young), so scanners ATTEMPT full-range there instead of skipping.
-const ALCHEMY_TIER: Record<number, boolean> = { [BASE_CHAIN_ID]: true, [MAINNET_CHAIN_ID]: true }
+// Two SEPARATE facts that used to share one flag (split 2026-07-30 when
+// Alchemy added Robinhood Chain):
+//  · which chains the Alchemy key can serve (URL formation / hasPrivateRpc) —
+//    all three now;
+//  · which chains' PUBLIC endpoints choke on wide filtered getLogs, so a
+//    keyless build should SKIP full-range scans there rather than hammer them.
+//    Robinhood's own endpoint is proven fast on wide logs (the chain is young),
+//    so keyless RH keeps ATTEMPTING full-range exactly as before — folding it
+//    into one flag would have silently downgraded keyless RH discovery.
+const ALCHEMY_TIER: Record<number, boolean> = {
+  [BASE_CHAIN_ID]: true,
+  [MAINNET_CHAIN_ID]: true,
+  [ROBINHOOD_CHAIN_ID]: true,
+}
 export function hasAlchemyTier(chainId: number): boolean {
   return !!ALCHEMY_TIER[chainId]
+}
+const PUBLIC_CHOKES_ON_WIDE_LOGS: Record<number, boolean> = {
+  [BASE_CHAIN_ID]: true,
+  [MAINNET_CHAIN_ID]: true,
+}
+/** True when this chain's PUBLIC endpoint can't take full-range filtered
+ *  getLogs — the scanners skip wide discovery there unless a private endpoint
+ *  is configured. */
+export function publicWideLogsRisky(chainId: number): boolean {
+  return !!PUBLIC_CHOKES_ON_WIDE_LOGS[chainId]
 }
 
 export function rpcUrlFor(chainId: number): string {

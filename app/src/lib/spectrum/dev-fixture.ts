@@ -6,6 +6,7 @@ import type { VerifiedCreatorMeta } from './creator-metadata'
 import type { FeeState, FrontendAccrual, FrontendRole } from './use-fee-state'
 import type { BasketSnapshot, DeltaPreview, MigratePlanView, SnapLeg } from './use-migrate'
 import { planRedeem } from './migrate-math'
+import { demoBasket, demoMeta, demoSummaries } from './demo-baskets'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEV-ONLY mock basket fixture. The shipped default config is
@@ -165,6 +166,12 @@ const MOCKS: MockBasket[] = [
   { address: ROTATE_V2, name: 'Sector Rotator v2', symbol: 'ROTATE2', deployer: MOCK_C2, legs: [leg(T.AERO, 30, 1.9, 28), leg(T.DEGEN, 30, 3.1, 33), leg(T.WETH, 40, 1.8, 39)], aumUsd: 71_000, navPerToken: 1.12, change24hPct: 1.9, seed: 71, feeBps: 250, creatorShareBps: 2500, holdersCount: 133, ageDays: 22 },
 ]
 
+/** True only when the operator explicitly asked for the design-review catalogue.
+ *  The demo/trailer baskets ride this: unlike the Base-only mocks they span three
+ *  chains, so without an explicit opt-in they would shadow the real directory on
+ *  every configured chain (see devBasketSummaries). */
+const fixtureMode = import.meta.env.VITE_DEV_FIXTURE === '1'
+
 function active(chainId: number): boolean {
   // The fixture only stands in while the chain has no real deployment — unless
   // FORCED for design review (`VITE_DEV_FIXTURE=1` in .env.local): a populated
@@ -304,8 +311,20 @@ export function devMigratePreview(
 }
 
 export function devBasketSummaries(chainId: number): BasketSummary[] | null {
-  if (!active(chainId)) return null
-  return MOCKS.map((m) => ({
+  // Demo baskets list on their OWN chains (Base/Eth/RH) so they show up in
+  // Explore, Home's spotlight and every picker — not just at their direct URLs.
+  //
+  // They must NOT do that on a chain with a real factory unless the operator
+  // explicitly asked for fixture mode: returning a non-null list here
+  // short-circuits the real factory read (basket-data.ts), so an ordinary
+  // `npm run dev` against the live deployment was showing ONLY the 20 fabricated
+  // baskets and zero real ones, while a direct basket URL still loaded real data
+  // — a directory that lies while click-through works.
+  const demo = fixtureMode ? demoSummaries(chainId) : []
+  if (!active(chainId)) return demo.length > 0 ? demo : null
+  return [
+    ...demo,
+    ...MOCKS.map((m) => ({
     chainId,
     address: m.address,
     name: m.name,
@@ -322,10 +341,16 @@ export function devBasketSummaries(chainId: number): BasketSummary[] | null {
     deployer: m.deployer ?? MOCK_DEPLOYER,
     supersededBy: m.supersededBy ?? null,
     holdersCount: m.holdersCount ?? null,
-  }))
+    })),
+  ]
 }
 
 export function devBasketData(address: Address, chainId: number): BasketData | null {
+  // Trailer demo baskets (…de50NNNN) resolve FIRST and deliberately bypass the
+  // Base-only `active()` gate: the set spans Base, Ethereum and Robinhood, and
+  // each one self-gates on its own chain (demo-baskets.ts).
+  const demo = demoBasket(address, chainId)
+  if (demo) return demo
   if (!active(chainId)) return null
   const m = MOCKS.find((x) => x.address.toLowerCase() === address.toLowerCase())
   if (!m) return null
@@ -441,6 +466,7 @@ export function devFeeState(address: string, chainId: number, holder?: string): 
     pendingClaimsTokens: s.pendingClaimsTokens,
     claimableUsdc: holder ? s.claimableUsdc : 0,
     frontend,
+    degraded: false,
   }
 }
 
@@ -609,6 +635,38 @@ const MOCK_META: Record<string, VerifiedCreatorMeta> = {
 
 /** DEV-only verified creator metadata (same activation rule as the basket mocks). */
 export function devCreatorMeta(address: string, chainId: number): VerifiedCreatorMeta | null {
+  // demo baskets carry their own signed thesis, on any of their three chains
+  const demo = demoMeta(address, chainId)
+  if (demo) return demo
   if (!active(chainId)) return null
   return MOCK_META[address.toLowerCase()] ?? null
+}
+
+// DEV-only self-signed creator IDENTITY (the /creator hero demo): pre-verified
+// view, same doctrine as devCreatorMeta — never touches the verify gate.
+import type { VerifiedCreatorIdentity } from './creator-identity'
+
+const DEV_IDENTITY: Record<string, VerifiedCreatorIdentity> = {
+  [MOCK_C1]: {
+    verified: true,
+    creator: MOCK_C1 as Address,
+    handle: '@basedresearch',
+    name: 'Based Research',
+    avatarUrl: avatarFor('B', '#35e0ff', '#a48bff'),
+    bannerUrl: DEV_BANNER,
+    bio: 'Systematic baskets around the Base economy. Majors first, narratives second, no leverage, long horizons. Everything I hold is on this page.',
+    picks: [
+      { address: T.WETH.asset, note: 'the settlement layer of everything here' },
+      { address: T.cbBTC.asset, note: 'the hardest collateral onchain' },
+      { address: T.AERO.asset, note: 'the liquidity engine of Base' },
+    ].map((p) => ({ address: p.address as Address, note: p.note })),
+    issuedAt: 1_753_700_000,
+    chainId: 8453,
+    delegate: null,
+  },
+}
+
+export function devCreatorIdentity(creator: string, chainId: number): VerifiedCreatorIdentity | null {
+  if (!active(chainId)) return null
+  return DEV_IDENTITY[creator.toLowerCase()] ?? null
 }

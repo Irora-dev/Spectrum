@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import { chainCfg } from '../lib/chain/chains'
+import { deploymentFor } from '../lib/chain/deployments'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
 import { feeSplit } from '../lib/spectrum/fee-model'
 import { INTERFACE_TAG_ADDRESS } from '../lib/config/operator'
@@ -96,10 +97,20 @@ export function FeePanel({ address, chainId }: { address: string; chainId: numbe
   // when this build carries a tag; launcher is a per-basket on-chain fact.
   const hasInterface = !!INTERFACE_TAG_ADDRESS
   const hasLauncher = !!fees.launcher
-  const split = feeSplit(fees.creatorShareBps, { hasInterface, hasLauncher })
+  // League slice: a per-chain lineage constant, and the contract skips it
+  // entirely on a basket with no creatorPayout — mirror both, or the whole
+  // split is overstated (kit audit).
+  const leagueBps = deploymentFor(chainId).leagueShareBps
+  const hasCreatorPayout = !!fees.creatorPayout
+  const split = feeSplit(fees.creatorShareBps, { hasInterface, hasLauncher, leagueBps, hasCreatorPayout })
   // The protocol's reserved integrator slices (≈5% each) — quoted in the rows
   // even when they don't apply here, so the waterfall never hides a sink.
-  const reserved = feeSplit(fees.creatorShareBps, { hasInterface: true, hasLauncher: true })
+  const reserved = feeSplit(fees.creatorShareBps, {
+    hasInterface: true,
+    hasLauncher: true,
+    leagueBps,
+    hasCreatorPayout,
+  })
   const hasCreator = fees.creatorShareBps > 0 && !!fees.creatorPayout
 
   return (
@@ -121,6 +132,18 @@ export function FeePanel({ address, chainId }: { address: string; chainId: numbe
         <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-dim">
           Where it goes
         </div>
+
+        {/* The league carve comes off the top BEFORE every other sink — hiding
+            it would leave this waterfall 5% short of a whole (the same
+            never-hide-a-sink rule as the integrator slices). Zero on non-league
+            lineages and on baskets with no creator payout. */}
+        {split.league > 0 && (
+          <Row
+            label="Creator league"
+            caption="taken first · streams to the current league champion"
+            value={fmtShare(split.league)}
+          />
+        )}
 
         <Row
           label="Burned"

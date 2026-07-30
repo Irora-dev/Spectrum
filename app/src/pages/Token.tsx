@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import type { Address } from 'viem'
 import { useBasketData, useCreatorMeta, useLineage, useAllBaskets } from '../lib/spectrum/hooks'
 import type { Holding } from '../lib/spectrum/basket-data'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
@@ -10,6 +11,11 @@ import { ChainBadge } from '../components/ChainBadge'
 import { BasketChart } from '../components/BasketChart'
 import { BasketStats } from '../components/BasketStats'
 import { HoldingsView } from '../components/HoldingsView'
+import { HolderWall } from '../components/HolderWall'
+import { useQueryClient } from '@tanstack/react-query'
+import { usePublicClient, useWriteContract } from 'wagmi'
+import { NOTE_KINDS, notesRegistryAbi } from '../lib/spectrum/profile-registry'
+import { MAX_POST_CHARS, encodeUpdateNoteJson, useVersionNote } from '../lib/spectrum/notes-social'
 import { DexSwapCard } from '../components/DexSwapCard'
 import { FeePanel } from '../components/FeePanel'
 import { VersionStrip } from '../components/VersionStrip'
@@ -33,6 +39,13 @@ import { useAccount } from 'wagmi'
 import { AddToWalletButton } from '../components/AddToWalletButton'
 import { ListingPipeline } from '../components/ListingPipeline'
 import { SeedBasketModal } from '../components/SeedBasketModal'
+import { ThesisEditor } from '../components/ThesisEditor'
+import { PoweredByPrism } from '../components/PoweredByPrism'
+import { resolveAsset, seedLaunchDraft } from '../components/launch/BasketBuilder'
+import { isRetryableDetection } from '../lib/pools'
+import { setActiveChainId } from '../lib/chain/active-chain'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 
 function Notice({ children }: { children: ReactNode }) {
   return (
@@ -51,29 +64,224 @@ function ShareButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-md border border-white/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint press hover:border-cyan/50 hover:text-cyan"
+      className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.18em] text-ink-dim press hover:border-cyan/50 hover:text-cyan"
     >
       Share
-      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M7 17L17 7M7 7h10v10" />
       </svg>
     </button>
   )
 }
 
+// Remix (lab 2026-07-28): seed the launch builder with THIS basket's recipe —
+// constituents + target weights, re-resolved live (routes/depth re-checked at
+// click time, not copied blind) — and hand off via the same seedLaunchDraft
+// path the Composer uses. Name/ticker stay empty: a remix is the user's own
+// basket, not a clone. Shown only when the launch page ships on this site.
+function RemixButton({ holdings, chainId }: { holdings: Holding[]; chainId: number }) {
+  const navigate = useNavigate()
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  if (!pageEnabled(brand.pages, 'launch') || holdings.length < 2) return null
+
+  async function remix() {
+    if (busy) return
+    setBusy(true)
+    setFailed(false)
+    try {
+      const settled = await Promise.allSettled(
+        holdings.map((h) => resolveAsset(h.asset, chainId, h.symbol)),
+      )
+      // "Could not CHECK" is a retry, never a verdict: silently remixing
+      // without that leg ships a shorter recipe than the one on screen
+      // (verify pass F5). Definitive no-pool rejections still drop the leg —
+      // a since-dead pool has no place in a fresh remix.
+      if (settled.some((r) => r.status === 'rejected' && isRetryableDetection(r.reason))) {
+        setFailed(true)
+        return
+      }
+      const assets = settled
+        .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof resolveAsset>>> => r.status === 'fulfilled')
+        .map((r) => r.value)
+      const kept = holdings.filter((_, i) => settled[i].status === 'fulfilled')
+      if (assets.length < 2) {
+        setFailed(true)
+        return
+      }
+      // Target weights (the creator's design, not live drift), re-normalized to
+      // a 100 total over the legs that still resolve; the heaviest leg absorbs
+      // the integer-rounding residual.
+      const total = kept.reduce((s, h) => s + h.targetWeightPct, 0) || 1
+      const weights = kept.map((h) => Math.max(1, Math.round((h.targetWeightPct / total) * 100)))
+      const drift = 100 - weights.reduce((s, w) => s + w, 0)
+      weights[weights.indexOf(Math.max(...weights))] += drift
+      // The launch builder lives on the app's VIEWING network and restores the
+      // draft keyed by that chain — remixing a basket moves the view to the
+      // basket's chain first, or the seeded draft would never be found.
+      setActiveChainId(chainId)
+      seedLaunchDraft(chainId, { assets, weights })
+      navigate('/launch')
+    } catch {
+      setFailed(true)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={remix}
+      disabled={busy}
+      className={`inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.18em] press ${
+        failed ? 'text-magenta' : 'text-ink-dim hover:border-cyan/50 hover:text-cyan'
+      } disabled:cursor-wait disabled:opacity-60`}
+      title="Start your own basket from this recipe"
+    >
+      {busy ? 'Remixing…' : failed ? 'Remix unavailable' : 'Remix'}
+      {!busy && !failed && (
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 3v6a3 3 0 0 0 3 3h6" />
+          <path d="M18 3v14a4 4 0 0 1-4 4" />
+          <path d="M15 9l3 3 3-3" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+// The deployer's own words about a version — an on-chain release note
+// (kind "update", trust = authorship) rendered inside the WhatChanged fold;
+// the composer shows only to the deployer. One setNote tx; latest wins.
+function VersionNote({
+  basket,
+  chainId,
+  deployer,
+  isDeployer,
+}: {
+  basket: string
+  chainId: number
+  deployer: string | null
+  isDeployer: boolean
+}) {
+  const registry = chainCfg(chainId).notesRegistry
+  const note = useVersionNote(chainId, deployer, basket)
+  const publicClient = usePublicClient({ chainId })
+  const { writeContractAsync } = useWriteContract()
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!registry || !deployer) return null
+  if (!note.data && !isDeployer) return null
+
+  async function publish() {
+    if (!publicClient || busy || !draft.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      const h = await writeContractAsync({
+        address: registry as Address,
+        abi: notesRegistryAbi,
+        functionName: 'setNote',
+        args: [basket as Address, NOTE_KINDS.update, encodeUpdateNoteJson(draft)],
+        chainId,
+      })
+      await publicClient.waitForTransactionReceipt({ hash: h })
+      setEditing(false)
+      void queryClient.invalidateQueries({ queryKey: ['spectrum', 'version-note', chainId] })
+    } catch (e) {
+      setError(e instanceof Error ? (e.message.split('\n')[0] ?? 'Could not publish.') : 'Could not publish.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mb-3">
+      {note.data && !editing ? (
+        <blockquote className="rounded-xl border border-cyan/20 bg-cyan/[0.04] px-4 py-3">
+          <p className="whitespace-pre-line text-sm leading-relaxed text-ink-dim">{note.data.text}</p>
+          <footer className="mt-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-wide text-ink-faint">
+            <span>the creator, on-chain</span>
+            {isDeployer && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(note.data!.text)
+                  setEditing(true)
+                }}
+                className="press hover:text-cyan"
+              >
+                Edit
+              </button>
+            )}
+          </footer>
+        </blockquote>
+      ) : isDeployer && !editing ? (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="press font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint hover:text-cyan"
+        >
+          + Add a release note (publishes on-chain)
+        </button>
+      ) : null}
+      {editing && (
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value.slice(0, MAX_POST_CHARS))}
+            rows={3}
+            placeholder="What changed and why — sold X, added Y, because…"
+            className="w-full resize-y rounded-lg border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-cyan/50 focus:outline-none"
+          />
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setEditing(false)}
+              className="press rounded-lg px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy || !draft.trim()}
+              onClick={publish}
+              className="press rounded-lg bg-cyan px-4 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-black hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busy ? 'Publishing…' : 'Publish'}
+            </button>
+          </div>
+          {error && <p className="mt-2 font-mono text-[11px] text-magenta">{error}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // "What changed in this version" as a collapsible callout behind a glowing
 // spectral gradient border — visible enough to invite a click, folded so the
-// diff table doesn't push the holdings below the fold. On-chain facts only.
+// diff table doesn't push the holdings below the fold. On-chain facts only
+// plus, when published, the deployer's own on-chain release note.
 function WhatChanged({
   predSymbol,
   prevAddr,
   nextAddr,
   chainId,
+  deployer,
+  isDeployer,
 }: {
   predSymbol: string
   prevAddr: string
   nextAddr: string
   chainId: number
+  deployer: string | null
+  isDeployer: boolean
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -116,6 +324,7 @@ function WhatChanged({
               A new version of ${predSymbol}. The previous version stays live and immutable; holders
               move only if they choose to.
             </p>
+            <VersionNote basket={nextAddr} chainId={chainId} deployer={deployer} isDeployer={isDeployer} />
             <BasketDiff prevAddr={prevAddr} nextAddr={nextAddr} chainId={chainId} />
           </div>
         )}
@@ -143,6 +352,23 @@ export function Token() {
   const [migrateOpen, setMigrateOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const { address: viewer } = useAccount()
+
+  // Phone mini-buy bar (mobile UX review 1): below lg the grid linearizes and
+  // the swap rail lands 3-4 screens deep on the page whose job is converting.
+  // A slim fixed bar above the tab bar appears once the console has scrolled
+  // out of reach; tapping it scrolls back to the console. Observation, not a
+  // second console — one state machine, no keyboard fights.
+  const [buyBarShow, setBuyBarShow] = useState(false)
+  useEffect(() => {
+    if (!SWAP_ENABLED) return
+    const el = document.getElementById('buy-console')
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(([e]) => setBuyBarShow(!e.isIntersecting), { rootMargin: '0px 0px -20% 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+    // re-observe when the basket resolves (the console mounts with ix)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addr, !!ix])
 
   // Intro: the hero opens as the basket's colors ALONE (the warp doubles as
   // the loading state), then eases to its resting subtlety while the hero
@@ -226,7 +452,10 @@ export function Token() {
         >
           ← All baskets
         </Link>
-        <ShareButton onClick={() => setShareOpen(true)} />
+        <div className="flex items-center gap-2">
+          {ix && <RemixButton holdings={ix.holdings} chainId={chainId} />}
+          <ShareButton onClick={() => setShareOpen(true)} />
+        </div>
       </div>
 
       {/* LAYOUT: one card. Full-width hero (identity · price · fee), then the
@@ -311,14 +540,14 @@ export function Token() {
                     <span
                       key={h.asset}
                       title={`${h.symbol} · ${h.targetWeightPct.toFixed(0)}%`}
-                      className={`relative rounded-full ring-[2.5px] ring-panel/90 shadow-[0_3px_12px_rgba(0,0,0,0.45)] transition-transform duration-200 hover:-translate-y-0.5 ${i > 0 ? '-ml-3' : ''}`}
+                      className={`relative rounded-full ring-[3px] ring-panel/90 shadow-[0_4px_14px_rgba(0,0,0,0.5)] transition-transform duration-200 hover:-translate-y-0.5 ${i > 0 ? '-ml-4' : ''}`}
                       style={{ zIndex: top.length - i }}
                     >
-                      <AssetLogo address={h.asset} symbol={h.symbol} chainId={chainId} size={38} />
+                      <AssetLogo address={h.asset} symbol={h.symbol} chainId={chainId} size={52} />
                     </span>
                   ))}
                 {holdings.length > 7 && (
-                  <span className="z-0 -ml-3 grid h-[38px] w-[38px] place-items-center rounded-full bg-white/10 font-mono text-[11px] font-semibold text-ink ring-[2.5px] ring-panel/90 backdrop-blur-sm">
+                  <span className="z-0 -ml-4 grid h-[52px] w-[52px] place-items-center rounded-full bg-white/10 font-mono text-[12px] font-semibold text-ink ring-[3px] ring-panel/90 backdrop-blur-sm">
                     +{holdings.length - 7}
                   </span>
                 )}
@@ -414,6 +643,7 @@ export function Token() {
         <div className="border-b border-white/10 px-4 py-5 sm:px-6">
           <BasketChart
             chainId={chainId}
+            address={ix.address}
             assets={ix.holdings.map((h) => ({
               address: h.asset,
               weight: h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct,
@@ -433,7 +663,7 @@ export function Token() {
             basket (owner 2026-07-07); on-chain facts only, hidden otherwise */}
         {lineage.hasPredecessor && lineage.predecessor && (
           <div className="border-b border-white/10 px-4 py-5 sm:px-6">
-            <WhatChanged predSymbol={predSymbol} prevAddr={lineage.predecessor} nextAddr={addr} chainId={chainId} />
+            <WhatChanged predSymbol={predSymbol} prevAddr={lineage.predecessor} nextAddr={addr} chainId={chainId} deployer={ix.deployer} isDeployer={isDeployer} />
           </div>
         )}
 
@@ -480,8 +710,13 @@ export function Token() {
             )}
 
             {/* the full DEX console, locked to this basket (replaces the old
-                fixed-direction TradePanel) */}
-            {SWAP_ENABLED && <DexSwapCard chainId={chainId} fixedBasket={ix} />}
+                fixed-direction TradePanel). id anchors the phone mini-buy bar's
+                scroll (below). */}
+            {SWAP_ENABLED && (
+              <div id="buy-console" className="scroll-mt-24">
+                <DexSwapCard chainId={chainId} fixedBasket={ix} />
+              </div>
+            )}
 
             {/* add-to-wallet right under the swap (owner 2026-07-06) — the
                 natural next step after a buy; self-hides without a wallet */}
@@ -525,12 +760,16 @@ export function Token() {
                 {ix.deployer && <FollowButton deployer={ix.deployer} />}
               </div>
 
-              <div className="mt-3.5 border-t border-white/10 pt-3">
+              <div className="relative mt-3.5 min-h-[240px] border-t border-white/10 pt-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
                     The creator&rsquo;s thesis
                   </div>
-                  {(meta?.postUrl || meta?.xUrl) && (
+                  {/* the deployer's corner belongs to the Edit pen — visitors get the
+                      launch-post link. On a chain with NO notes registry the pen never
+                      renders, so the deployer keeps the link too (audit). */}
+                  {(meta?.postUrl || meta?.xUrl) &&
+                    !(chainCfg(chainId).notesRegistry && viewer && ix.deployer && viewer.toLowerCase() === ix.deployer.toLowerCase()) && (
                     <a
                       href={meta.postUrl ?? meta.xUrl ?? '#'}
                       target="_blank"
@@ -545,28 +784,32 @@ export function Token() {
                   )}
                 </div>
                 {meta?.tagline && (
-                  <p className="mt-2 font-display text-base font-semibold leading-snug text-ink">{meta.tagline}</p>
+                  <p className="mt-3.5 font-display text-lg font-bold leading-snug tracking-tight text-ink">{meta.tagline}</p>
                 )}
                 {meta?.thesis ? (
-                  <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-ink-dim">{meta.thesis}</p>
+                  <p className="mt-3 max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-dim">{meta.thesis}</p>
                 ) : !meta?.tagline ? (
-                  <p className="mt-1.5 text-sm leading-relaxed text-ink-faint">
+                  <p className="mt-3 text-sm leading-relaxed text-ink-faint">
                     Not published yet. The creator hasn&rsquo;t written a thesis for this basket. Only the
                     on-chain facts are shown.
                   </p>
                 ) : null}
+                {/* deployer-only: write/edit the thesis as an on-chain note */}
+                {ix.deployer && (
+                  <ThesisEditor basket={addr} chainId={chainId} deployer={ix.deployer} meta={meta} />
+                )}
                 {((meta?.sectors && meta.sectors.length > 0) || meta?.timeHorizon) && (
-                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                  <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/[0.07] pt-4">
                     {meta?.sectors?.map((sct) => (
                       <span
                         key={sct}
-                        className="rounded-full border border-white/12 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-dim"
+                        className="rounded-full border border-violet/30 bg-violet/[0.07] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-violet-bright"
                       >
                         {sct}
                       </span>
                     ))}
                     {meta?.timeHorizon && (
-                      <span className="rounded-full border border-cyan/25 bg-cyan/[0.06] px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-cyan">
+                      <span className="rounded-full border border-cyan/30 bg-cyan/[0.07] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan">
                         {meta.timeHorizon}
                       </span>
                     )}
@@ -583,6 +826,21 @@ export function Token() {
         <div className="border-t border-white/10 p-4 sm:p-6">
           <HoldingsView holdings={ix.holdings} chainId={chainId} />
         </div>
+
+        {/* ── the holder wall: emoji signatures from wallets that hold this
+               basket, with chain-proven age + size (owner 2026-07-29). Renders
+               nothing until the chain has a notes registry configured. ── */}
+        {chainCfg(chainId).notesRegistry && (
+          <div className="border-t border-white/10 p-4 sm:p-6">
+            <HolderWall
+              basket={addr as Address}
+              chainId={chainId}
+              symbol={ix.symbol}
+              decimals={ix.decimals}
+              totalSupply={ix.totalSupply}
+            />
+          </div>
+        )}
 
         {/* ── deployer-only: get this basket listed & discoverable (owner
                2026-07-07). Same isDeployer gate as the version actions; renders
@@ -658,6 +916,33 @@ export function Token() {
         </div>
         )}
       </div>
+
+      {/* ecosystem credit — links out to PrismBeat (owner 2026-07-30) */}
+      <div className="mt-8 flex justify-center">
+        <PoweredByPrism />
+      </div>
+
+      {/* phone mini-buy: fixed above the tab bar once the console is out of
+          view; tap scrolls back to the one real console (mobile UX review 1) */}
+      {SWAP_ENABLED && ix && buyBarShow && (
+        <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 border-t border-line bg-void/90 px-4 py-2.5 backdrop-blur-xl lg:hidden">
+          <div className="mx-auto flex max-w-md items-center gap-3">
+            <BasketAvatar address={ix.address} symbol={ix.symbol} size={30} />
+            <div className="min-w-0 flex-1 leading-tight">
+              <div className="truncate font-display text-sm font-bold text-ink">${ix.symbol}</div>
+              <div className="font-num text-[11px] tabular-nums text-ink-dim">${formatNav(navUp, 4)}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => document.getElementById('buy-console')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              className="press shrink-0 rounded-xl px-5 py-2 font-display text-[12px] font-bold uppercase tracking-[0.12em] text-black"
+              style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }}
+            >
+              Buy ${ix.symbol}
+            </button>
+          </div>
+        </div>
+      )}
 
       {ix && (
         <>

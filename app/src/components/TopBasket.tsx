@@ -116,7 +116,7 @@ export function TopBasket({ ix, label = 'Largest by total value' }: { ix: Basket
               <Stat label="Assets" value={String(ix.basketLength)} />
             </div>
 
-            {/* 7d trend — a proper full-width band */}
+            {/* Trend — a proper full-width band */}
             <div className="mt-1 min-h-[9rem] flex-1" style={reveal(5)}>
               <BasketSpark
                 chainId={ix.chainId}
@@ -124,12 +124,15 @@ export function TopBasket({ ix, label = 'Largest by total value' }: { ix: Basket
                 navPerToken={ix.navPerToken}
                 fallback={ix.navSeries}
                 range="7D"
-                interactive={false}
+                address={ix.address}
+                symbol={ix.symbol}
+                legs={ix.top.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct }))}
+                withRanges
               />
             </div>
 
             <div className="pt-1" style={reveal(6)}>
-              <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-faint">7d trend</span>
+              <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-faint">Trend</span>
             </div>
           </div>
 

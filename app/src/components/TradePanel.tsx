@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useAccount, useSwitchChain } from 'wagmi'
+import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
+import { erc20Abi, formatUnits } from 'viem'
 import type { BasketData } from '../lib/spectrum/basket-data'
+import { deploymentFor } from '../lib/chain/deployments'
+import { clientFor } from '../lib/chain/rpc'
+import { findMaxSafe } from '../lib/spectrum/swap-sim'
 import {
   clampSlippageBps,
   DEFAULT_SLIPPAGE_BPS,
   MAX_SLIPPAGE_BPS,
   WARN_SLIPPAGE_BPS,
 } from '../lib/spectrum/hook-data'
-import { buildSwapQuote, type SwapQuote } from '../lib/spectrum/swap-quote'
+import { buildSwapQuote, toRaw, type SwapQuote } from '../lib/spectrum/swap-quote'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
+import { useSwapSim } from '../lib/spectrum/use-swap-sim'
 import { useBasketSwap, type Side, type TxState } from '../lib/spectrum/use-basket-swap'
 import { SWAP_ENABLED } from '../lib/config/features'
 import { chainCfg } from '../lib/chain/chains'
@@ -26,6 +31,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
   const [slippageBps, setSlippageBps] = useState<number>(DEFAULT_SLIPPAGE_BPS)
   const [customSlip, setCustomSlip] = useState('')
   const [showLegs, setShowLegs] = useState(false)
+  const { address } = useAccount()
   const { data: fees } = useBasketFees(ix.address, ix.chainId)
 
   const feeFrac = fees ? fees.basketFeeBps / 10_000 : null
@@ -41,6 +47,32 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
 
   const inUnit = side === 'buy' ? 'USDC' : `$${ix.symbol}`
   const outUnit = side === 'buy' ? `$${ix.symbol}` : 'USDC'
+
+  const swap = useBasketSwap(ix)
+
+  // ── BOTH SIDES: price the REAL path on-chain, don't trust spot/NAV ───────────
+  // Spot and `ix.navPerToken` (exchangeRate()) are FRICTIONLESS — they charge nothing
+  // for the hub swap, each leg's swap, or (on a buy) the mint min-rule's discarded
+  // cross-leg imbalance. Floors derived from them sat ABOVE what the chain pays:
+  // measured live on Robinhood 2026-07-14, sells reverted above ~5 shares and buys
+  // reverted at EVERY size (−10% to −68%). So simulate the real trade and haircut THAT.
+  const tradeAmountRaw = valid
+    ? toRaw(amt, side === 'buy' ? 6 : Math.min(ix.decimals, 18))
+    : 0n
+  const sim = useSwapSim({
+    enabled: valid && swap.configured,
+    side,
+    basket: ix.address as `0x${string}`,
+    chainId: ix.chainId,
+    amountRaw: tradeAmountRaw,
+    legCount: ix.holdings.length,
+    holder: address,
+    allowanceCovers: tradeAmountRaw > 0n && !swap.needsApproval(side, tradeAmountRaw),
+  })
+
+  // Only a simulation measured for exactly this side+amount may seed the floor.
+  const simMatches =
+    sim.out != null && sim.out > 0n && sim.forSide === side && sim.forAmountRaw === tradeAmountRaw
 
   // The broadcast-grade swap inputs + per-leg minimums — ONE source for the
   // preview and the signed tx (legMin = quotedLeg × (1 − slippage), exactly as
@@ -66,10 +98,87 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
       slippageBps,
       holdings: ix.holdings,
       basketDecimals: ix.decimals,
+      // Haircut the SIMULATED realised output, not the frictionless spot/NAV. Only
+      // honoured when the figure was measured for THIS side+size — a realised number
+      // from a different trade is not a valid floor basis (see use-swap-sim).
+      realisedOutRaw: simMatches ? (sim.out as bigint) : undefined,
     })
-  }, [valid, side, amt, ix, slippageBps, feeFrac])
+  }, [valid, side, amt, ix, slippageBps, feeFrac, simMatches, sim.out])
+
+  // ── PREVIEW = THE SIGNED QUOTE ───────────────────────────────────────────────
+  // Show what the floor was actually derived from. On a simulated sell that number
+  // is achievable; the old NAV figure was not (it ignored two hops of swap fees +
+  // price impact), so the UI used to promise proceeds the chain would never pay.
+  const outDecimals = side === 'buy' ? Math.min(ix.decimals, 18) : 6
+  const shownOut = trade ? Number(trade.expectedOutRaw) / 10 ** outDecimals : out
+  const shownMinOut = trade ? Number(trade.minOutRaw) / 10 ** outDecimals : minOut
+  // How far the realised sell lands under frictionless NAV. Small = ordinary venue
+  // fees. Large = the basket's pools are too thin to exit at this size, which no
+  // slippage tolerance should paper over — say so instead.
+  const depthGapPct = trade?.basis === 'simulated' && out > 0
+    ? (1 - shownOut / out) * 100
+    : 0
+  const thinExit = depthGapPct >= 5
 
   const legPreview = trade?.legs ?? []
+
+  // ── quick sizing (lab 2026-07-29): preset chips + the balance + "max safe" ──
+  // Chips remove the "how much do I type" hesitation; "max safe" runs the
+  // simulator's binary search for the largest size that still fills within the
+  // slippage tolerance — the same engine that already floors every trade, made
+  // visible instead of silent.
+  const dep = deploymentFor(ix.chainId)
+  const shareDec = Math.min(ix.decimals, 18)
+  const { data: usdcBal } = useReadContract({
+    address: (dep.usdc ?? undefined) as `0x${string}` | undefined,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    chainId: ix.chainId,
+    query: { enabled: !!address && !!dep.usdc && side === 'buy' },
+  })
+  const { data: shareBal } = useReadContract({
+    address: ix.address as `0x${string}`,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    chainId: ix.chainId,
+    query: { enabled: !!address && side === 'sell' },
+  })
+  const balRaw = side === 'buy' ? usdcBal : shareBal
+  const balDec = side === 'buy' ? 6 : shareDec
+  const [maxSafeBusy, setMaxSafeBusy] = useState(false)
+  const [maxSafeNote, setMaxSafeNote] = useState<string | null>(null)
+  useEffect(() => setMaxSafeNote(null), [side, ix.address])
+
+  async function fillMaxSafe() {
+    if (!address || !dep.swapRouter || !dep.usdc || balRaw == null || balRaw <= 0n || feeFrac == null || maxSafeBusy) return
+    setMaxSafeBusy(true)
+    setMaxSafeNote(null)
+    try {
+      const safe = await findMaxSafe(clientFor(ix.chainId), {
+        side,
+        basket: ix.address as `0x${string}`,
+        settlement: dep.usdc as `0x${string}`,
+        router: dep.swapRouter as `0x${string}`,
+        legCount: ix.holdings.length,
+        holder: address,
+        capRaw: balRaw,
+        navPerToken: ix.navPerToken,
+        feeFrac,
+        basketDecimals: ix.decimals,
+        slippageBps,
+      })
+      if (safe <= 0n) {
+        setMaxSafeNote('No size fills within your slippage right now — the pools are too thin.')
+      } else {
+        setAmount(formatUnits(safe, balDec))
+        if (safe < balRaw) setMaxSafeNote('Sized to what fills within your slippage; your full balance would fill worse.')
+      }
+    } finally {
+      setMaxSafeBusy(false)
+    }
+  }
 
   // FIRST-BUY SEED MINIMUM — SpectrumBasket.sol MIN_FIRST_DEPOSIT (10 USDC, an
   // internal constant with no getter; the click-time simulate is the binding
@@ -80,7 +189,6 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
   const belowSeedMin = side === 'buy' && valid && ix.effectiveSupply === 0 && amt < SEED_MIN_USDC
   const armedTrade = belowSeedMin ? null : trade
 
-  const swap = useBasketSwap(ix)
   // A broadcast in flight: the inputs (side toggle + amount) are locked while this
   // is true, so the trade parameters can't change mid-tx — closing the
   // double-submit window and keeping the status line attached to the trade that is
@@ -102,7 +210,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
     const pct = parseFloat(raw)
     if (isFinite(pct) && pct > 0) setSlippageBps(clampSlippageBps(Math.round(pct * 100)))
   }
-  const customActive = slippageBps !== 50 && slippageBps !== 100
+  const customActive = slippageBps !== 100 && slippageBps !== DEFAULT_SLIPPAGE_BPS
 
   return (
     <div className="rounded-2xl border border-white/12 bg-white/[0.03] p-4">
@@ -130,7 +238,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
         </div>
         <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-void/40 px-3 py-2.5 focus-within:border-cyan/50">
           <input
-            inputMode="decimal"
+            inputMode="decimal" enterKeyHint="done" autoComplete="off"
             placeholder="0.0"
             value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
@@ -139,15 +247,67 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
           />
           <span className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-ink-dim">{inUnit}</span>
         </div>
+        {/* quick sizing: buy = dollar chips, sell = balance fractions; both get max-safe */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {side === 'buy'
+            ? [10, 50, 100].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  disabled={txBusy}
+                  onClick={() => setAmount(String(v))}
+                  className="press rounded-md border border-white/10 px-2.5 py-1 font-mono text-[10px] tabular-nums text-ink-faint hover:border-cyan/50 hover:text-cyan disabled:opacity-50"
+                >
+                  ${v}
+                </button>
+              ))
+            : [25, 50].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  disabled={txBusy || balRaw == null || balRaw <= 0n}
+                  onClick={() => balRaw != null && setAmount(formatUnits((balRaw * BigInt(pct)) / 100n, balDec))}
+                  className="press rounded-md border border-white/10 px-2.5 py-1 font-mono text-[10px] tabular-nums text-ink-faint hover:border-cyan/50 hover:text-cyan disabled:opacity-50"
+                >
+                  {pct}%
+                </button>
+              ))}
+          <button
+            type="button"
+            disabled={txBusy || maxSafeBusy || balRaw == null || balRaw <= 0n}
+            onClick={() => void fillMaxSafe()}
+            title="The largest size the on-chain simulation fills within your slippage tolerance"
+            className="press rounded-md border border-teal/30 bg-teal/[0.06] px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-teal hover:border-teal/60 disabled:opacity-50"
+          >
+            {maxSafeBusy ? 'sizing…' : 'Max safe'}
+          </button>
+          {address && balRaw != null && (
+            <span className="ml-auto font-mono text-[10px] tabular-nums text-ink-faint">
+              bal {formatNav(Number(formatUnits(balRaw, balDec)), side === 'buy' ? 2 : 4)}
+            </span>
+          )}
+        </div>
+        {maxSafeNote && (
+          <p className="mt-1 font-mono text-[10px] leading-relaxed text-amber-300/90">{maxSafeNote}</p>
+        )}
       </div>
 
       {/* estimated out */}
       <div className="mt-3 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2.5">
         <div className="font-mono text-[10px] uppercase tracking-wider text-ink-faint">You receive (est.)</div>
         <div className="mt-1 flex items-baseline gap-1.5">
-          <span className="font-num text-xl tabular-nums text-ink">{valid ? formatNav(out, side === 'buy' ? 4 : 2) : '0.0'}</span>
+          <span className="font-num text-xl tabular-nums text-ink">{valid ? formatNav(shownOut, side === 'buy' ? 4 : 2) : '0.0'}</span>
           <span className="font-mono text-[11px] uppercase tracking-wider text-ink-dim">{outUnit}</span>
         </div>
+        {valid && sim.loading && !trade && (
+          <div className="mt-1 font-mono text-[10px] tracking-wide text-ink-faint">pricing this trade on-chain…</div>
+        )}
+        {thinExit && (
+          <div className="mt-1.5 font-mono text-[10px] leading-relaxed tracking-wide text-amber-300/90">
+            This size fills {depthGapPct.toFixed(1)}% worse than NAV — the basket's pools are thin at
+            this amount. A smaller trade gets a better price{side === 'sell' ? '; the in-kind exit avoids the pools entirely' : ''}.
+          </div>
+        )}
       </div>
 
       {/* slippage tolerance — always-on per-leg protection; no off switch exists */}
@@ -158,8 +318,8 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
         </div>
         <div className="flex items-center gap-1.5">
           {[
-            { bps: 50, label: '0.5%' },
             { bps: 100, label: '1%' },
+            { bps: DEFAULT_SLIPPAGE_BPS, label: `${DEFAULT_SLIPPAGE_BPS / 100}%` },
           ].map((p) => (
             <button
               key={p.bps}
@@ -186,7 +346,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
               value={customSlip}
               onChange={(e) => applyCustom(e.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="custom"
-              inputMode="decimal"
+              inputMode="decimal" enterKeyHint="done" autoComplete="off"
               aria-label="Custom slippage percent"
               className="w-14 bg-transparent text-right font-num text-[11px] tabular-nums text-ink outline-none placeholder:text-ink-faint"
             />
@@ -215,7 +375,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
         </div>
         <div className="flex justify-between">
           <dt>Minimum received</dt>
-          <dd className="tabular-nums text-ink-dim">{valid ? `${formatNav(minOut, side === 'buy' ? 4 : 2)} ${outUnit}` : '—'}</dd>
+          <dd className="tabular-nums text-ink-dim">{valid ? `${formatNav(shownMinOut, side === 'buy' ? 4 : 2)} ${outUnit}` : '—'}</dd>
         </div>
       </dl>
 

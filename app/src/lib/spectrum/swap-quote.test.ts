@@ -114,3 +114,86 @@ describe('buildSwapQuote — stale bound', () => {
     expect(buildSwapQuote(base({ priceAgeMs: DEFAULT_MAX_PRICE_AGE_MS - 1 }))).not.toBeNull()
   })
 })
+
+// ── the SELL floor basis (the "cannot sell" regression) ──────────────────────
+// navPerToken (exchangeRate()) is FRICTIONLESS: it charges nothing for the per-leg
+// asset→ETH swaps or the hub ETH→settlement swap. Deriving the floor from it made
+// realised proceeds fall short and every non-trivial sell revert SlippageExceeded.
+// When a simulated realised output is supplied it MUST become the basis.
+describe('buildSwapQuote — sell floor basis', () => {
+  const sellBase = (o: Partial<SwapQuoteInput> = {}) =>
+    base({ side: 'sell', amount: 10, navPerToken: 2, feeFrac: 0.01, slippageBps: 300, ...o })
+
+  it('haircuts the SIMULATED realised output when given, not NAV', () => {
+    // NAV would imply 10 × 2 × 0.99 = 19.8 USDC; the chain will really pay 15.
+    const realised = 15_000_000n // 15 USDC @6dp
+    const q = buildSwapQuote(sellBase({ realisedOutRaw: realised }))!
+    expect(q.basis).toBe('simulated')
+    expect(q.expectedOutRaw).toBe(realised)
+    // floor = realised × (1 − 3%), exact bigint math (no float drift above the payable amount)
+    expect(q.minOutRaw).toBe((realised * 9_700n) / 10_000n)
+    // and it must sit BELOW what the chain pays — the whole point
+    expect(q.minOutRaw).toBeLessThan(realised)
+  })
+
+  it('degrades to the NAV estimate when no simulation is available', () => {
+    const q = buildSwapQuote(sellBase())!
+    expect(q.basis).toBe('nav')
+    expect(q.expectedOutRaw).toBe(toRaw(10 * 2 * 0.99, 6))
+  })
+
+  it('a NAV-derived floor can exceed the realised output (the bug being fixed)', () => {
+    const realised = 15_000_000n
+    const navQuote = buildSwapQuote(sellBase())!
+    // This is exactly the failure: the NAV floor is above what the sell returns,
+    // so the basket reverts SlippageExceeded before paying out.
+    expect(navQuote.minOutRaw).toBeGreaterThan(realised)
+    const simQuote = buildSwapQuote(sellBase({ realisedOutRaw: realised }))!
+    expect(simQuote.minOutRaw).toBeLessThan(realised)
+  })
+
+  it('a BUY also haircuts the SIMULATED shares (buys reverted at every size on NAV)', () => {
+    // frictionless would be 1000 x 0.99 / 1 = 990 shares; the chain really mints 800.
+    const realised = 800n * 10n ** 18n
+    const q = buildSwapQuote(base({ side: 'buy', slippageBps: 300, realisedOutRaw: realised }))!
+    expect(q.basis).toBe('simulated')
+    expect(q.expectedOutRaw).toBe(realised)
+    expect(q.minOutRaw).toBe((realised * 9_700n) / 10_000n)
+    expect(q.minOutRaw).toBeLessThan(realised)
+  })
+
+  it('a BUY deflates the per-leg floors by the MEASURED survival ratio', () => {
+    // The encoder re-derives legMins from quotedLegAmounts, so the deflation must be
+    // visible THERE or the broadcast would still ship frictionless floors.
+    const frictionless = buildSwapQuote(base({ side: 'buy', slippageBps: 300 }))!
+    const realised = 800n * 10n ** 18n // ~80.8% of the frictionless 990 shares
+    const simulated = buildSwapQuote(base({ side: 'buy', slippageBps: 300, realisedOutRaw: realised }))!
+    for (let i = 0; i < frictionless.quotedLegAmounts.length; i++) {
+      expect(simulated.quotedLegAmounts[i]).toBeLessThan(frictionless.quotedLegAmounts[i])
+      expect(simulated.quotedLegAmounts[i]).toBeGreaterThan(0n) // never a zero floor
+      expect(simulated.legs[i].min).toBeLessThan(frictionless.legs[i].min)
+    }
+  })
+
+  it('a better-than-expected fill never TIGHTENS the per-leg floors above the quote', () => {
+    const frictionless = buildSwapQuote(base({ side: 'buy', slippageBps: 300 }))!
+    const generous = buildSwapQuote(
+      base({ side: 'buy', slippageBps: 300, realisedOutRaw: 5_000n * 10n ** 18n }),
+    )!
+    // survival ratio is capped at 1x
+    expect(generous.quotedLegAmounts).toEqual(frictionless.quotedLegAmounts)
+  })
+
+  it('refuses (null) when the realised fill is so small a leg floor rounds to zero', () => {
+    // 123 wei of shares vs a ~990e18 expectation ⇒ deflated legs round to 0 ⇒ the
+    // never-a-zero-floor invariant must win over emitting an unprotected quote.
+    expect(buildSwapQuote(base({ side: 'buy', realisedOutRaw: 123n }))).toBeNull()
+  })
+
+  it('refuses a zero/negative realised output rather than emitting a zero floor', () => {
+    // 0n is treated as "unpriced" ⇒ falls back to NAV, never a zero floor.
+    const q = buildSwapQuote(sellBase({ realisedOutRaw: 0n }))!
+    expect(q.basis).toBe('nav')
+    expect(q.minOutRaw).toBeGreaterThan(0n)
+  })
+})

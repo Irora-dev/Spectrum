@@ -218,7 +218,7 @@ export function MigrateModal({
                         onBlur={applyAmount}
                         onKeyDown={(e) => e.key === 'Enter' && applyAmount()}
                         disabled={busy || m.redeemDone}
-                        inputMode="decimal"
+                        inputMode="decimal" enterKeyHint="done" autoComplete="off"
                         className="w-36 rounded-lg border border-white/10 bg-transparent px-2 py-1 text-right font-mono text-[12px] text-ink outline-none focus:border-cyan/50 disabled:opacity-50"
                       />
                       <span className="font-mono text-[11px] text-ink-dim">${fromSymbol}</span>

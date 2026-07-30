@@ -29,11 +29,17 @@ site; arm transactions with the `VITE_ENABLE_*` flags in the dashboard afterward
 What happens: Cloudflare copies the template into your GitHub and creates a Pages project with
 the Vite build detected. It does **not** always prompt for env vars, so after it builds, set
 them in the dashboard and redeploy — exactly the
-[Cloudflare Pages steps 4–5](cloudflare-pages.md#4-set-the-environment-variables).
+[Cloudflare Pages steps 4–5](cloudflare-pages.md#4-set-the-environment-variable).
 
 > If a button ever stalls or the build settings look wrong, don't fight it — use
 > **[Use this template](github-template.md)** then **[connect your host](cloudflare-pages.md)**.
 > Same result, fully spelled out.
+
+Either button ends on the host's temporary subdomain. To finish properly: add your **custom
+domain** (the host guide's step 5 — [Cloudflare](cloudflare-pages.md#5-add-your-custom-domain) /
+[Vercel](vercel.md#5-add-your-custom-domain)), **set the site URL to it** and redeploy, and lock
+your RPC key to the domain. Then run the
+[30-second check](README.md#after-its-live--the-30-second-check).
 
 ---
 
@@ -53,7 +59,7 @@ The query parameters, decoded:
 | Param | Value | Purpose |
 |---|---|---|
 | `repository-url` | the template repo URL | what Vercel clones |
-| `env` | `VITE_ALCHEMY_API_KEY` | the one field Vercel must prompt for (tier/site URL/fee wallet travel committed in `app/src/site.config.json`) |
+| `env` | the four names in the URL above | what Vercel prompts for — a TEMPLATE clone has a blank committed `site.config.json` (no wizard ran), so the fee-wallet halves + RPC key are collected here; factory blank = the canonical deployment |
 | `envDescription` | short help text | shown above the form |
 | `envLink` | link to the config docs | the "Learn more" link |
 | `project-name` / `repository-name` | `my-spectrum-site` | sensible defaults the user can rename |

@@ -210,11 +210,16 @@ export const factoryAbi = parseAbi([
   // INTERFACE_SHARE_BPS, CRANK_BOUNTY_BPS) are NOT factory getters — they are
   // fixed protocol constants the FE mirrors from verified bytecode (fee-model.ts).
   // Do not re-add them here.
-  // ── Dutch auction — only currentDeployPrice() is exposed; the
-  // named auction getters never existed on-chain (slotStartPrice/lastDeployBlock
-  // are public if a richer readout is wanted later). ──
+  // ── Launch price — currentDeployPrice() (V2 auctions it, the new lineage's
+  // flat fee is ABI-identical; both revert SlotNotOpen for 10 blocks after a
+  // launch). lastDeployBlock is public and feeds the slot-reopen countdown. ──
   'function currentDeployPrice() view returns (uint256)',
+  'function lastDeployBlock() view returns (uint256)',
 ])
+
+/** The factories' post-launch cooldown, in blocks (public constant on-chain,
+ *  identical across lineages — the rate limit, not a price mechanism). */
+export const SLOT_DURATION_BLOCKS = 10n
 
 // Deploy + salt-mining surface. predictTokenAddress includes the fee config —
 // the fee config is CREATE2-committed, so it is a salt-mining input.

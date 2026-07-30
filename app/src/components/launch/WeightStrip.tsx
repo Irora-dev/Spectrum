@@ -2,6 +2,72 @@ import { useRef } from 'react'
 import { AssetLogo } from '../AssetLogo'
 import { tokenVisual, readableInk } from '../../lib/spectrum/token-meta'
 
+// Read-only mini composition bar — the weight strip's look without its editor.
+// Wizard chrome (owner 2026-07-29): on steps that aren't about assets (fees,
+// review, name, deploy) the basket's contents must stay obvious, so this slim
+// bar rides under the stepper showing the picked assets at their weights.
+export function CompositionBar({
+  assets,
+  weights,
+  chainId,
+  className = '',
+}: {
+  assets: { symbol: string; address: string }[]
+  weights: number[]
+  chainId: number
+  className?: string
+}) {
+  if (assets.length === 0) return null
+  const total = weights.slice(0, assets.length).reduce((s, x) => s + (x > 0 ? x : 0), 0) || 1
+  return (
+    <div
+      role="img"
+      aria-label={`Current basket: ${assets.map((a, i) => `${a.symbol} ${Math.round(weights[i] ?? 0)}%`).join(', ')}`}
+      className={`flex h-10 w-full select-none overflow-hidden rounded-lg shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] ${className}`}
+    >
+      {assets.map((a, i) => {
+        const w = weights[i] ?? 0
+        const vis = tokenVisual(a.symbol, a.address)
+        const ink = readableInk(vis.color)
+        return (
+          <div
+            key={a.address}
+            className="relative h-full min-w-0"
+            style={{ width: `${((w > 0 ? w : 0) / total) * 100}%`, background: vis.color }}
+          >
+            <div
+              aria-hidden
+              className="absolute inset-0"
+              style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0) 45%, rgba(0,0,0,0.18))' }}
+            />
+            <div className="relative flex h-full items-center justify-center gap-1.5 px-1">
+              {w >= 8 && (
+                <AssetLogo
+                  address={a.address}
+                  symbol={a.symbol}
+                  chainId={chainId}
+                  size={18}
+                  discColor={`color-mix(in srgb, ${vis.color} 55%, #000)`}
+                />
+              )}
+              {w >= 14 && (
+                <span className="max-w-full truncate font-display text-[10px] font-bold uppercase leading-none" style={{ color: ink }}>
+                  {a.symbol}
+                </span>
+              )}
+              {w >= 22 && (
+                <span className="font-num text-[10px] font-bold tabular-nums leading-none" style={{ color: ink }}>
+                  {Math.round(w)}%
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // Stable, ordered weight editor: each asset is a tile whose width = its weight, and
 // the shared edge between two adjacent tiles is a draggable handle. Pull an edge left
 // or right to transfer weight between just those two neighbours — tiles never reorder

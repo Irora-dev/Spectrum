@@ -57,3 +57,29 @@ export async function loadSiteMetadata(chainId: number, basket: Address): Promis
     return null
   }
 }
+
+/** The bundle key for a creator's IDENTITY blob (creator-identity.ts) — the same
+ *  glob, its own `creators/` namespace so it can never collide with a basket key
+ *  (basket keys are `/metadata/<chainId>/…`, never nested deeper). */
+export function siteCreatorIdentityKey(chainId: number, creator: string): string {
+  return `/metadata/creators/${chainId}/${creator.toLowerCase()}.json`
+}
+
+/**
+ * Load the site-bundled signed IDENTITY blob for a creator, or null. Same
+ * shape-guard-only contract — the signature gate lives in creator-identity.ts
+ * (type-only import there keeps this module cycle-free at runtime).
+ */
+export async function loadSiteCreatorIdentity(
+  chainId: number,
+  creator: Address,
+): Promise<import('./creator-identity').SignedCreatorIdentity | null> {
+  const loader = MODULES[siteCreatorIdentityKey(chainId, creator)]
+  if (!loader) return null
+  try {
+    const v = await loader()
+    return looksLikeBlob(v) ? (v as unknown as import('./creator-identity').SignedCreatorIdentity) : null
+  } catch {
+    return null
+  }
+}

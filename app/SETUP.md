@@ -44,6 +44,15 @@ npm run init:env       # copies .env.example → .env.local (Vite reads .env.loc
 > of this in the browser and — in dev — its **Apply** button writes `brand.config.ts` +
 > `.env.local` straight into the project (the server restarts itself with the new setup).
 
+**Two files, two jobs.** `.env.local` (below) carries addresses + your RPC.
+`src/brand.config.ts` carries your **look and which surfaces exist** — name,
+tagline, style, palette, which pages ship, and the default-ON product knobs
+(`stocks`, `starterTokens`, `prismCredit`, `setupStudio`, `defaultChainId`).
+Omitting a knob means ON; only an explicit `false` turns it off. The `/setup`
+studio edits every one of them visually, and the CLI wizard takes the matching
+`--no-stocks` / `--no-starter-tokens` / `--no-prism-credit` / `--no-setup-studio`
+/ `--no-<page>` flags. Full table: `OPERATORS.md` → "Product knobs".
+
 Edit `.env.local`. **On the canonical deployment there is no minimum** — leave every
 address blank and the site runs on the shipped `deployments.json`. To serve **your own
 deployment** instead, override:
@@ -76,9 +85,10 @@ npm run check:config
 This catches the footguns **before** you build: a transactional flag without the
 wallet flag (the same invariant the app throws on at load), malformed/typo'd
 addresses, `VITE_ENABLE_SWAP` with no router, an activated chain with no factory,
-and a **missing site URL — that one is fatal** (set in `src/site.config.json` by the
-studio/wizard, or via `VITE_SITE_URL`; a build needs it for the social cards +
-sitemap). It also prints which **build tier** your flags express. Warnings don't
+and a **missing site URL — a warning, not a blocker** (fine for a first deploy;
+your host assigns the URL, then you set it in `src/site.config.json` via the
+studio/wizard — or `VITE_SITE_URL` — and rebuild so the social cards + sitemap
+carry it). It also prints which **build tier** your flags express. Warnings don't
 block; a fatal error does. It runs **automatically before every `npm run build`**
 (via the `prebuild` hook).
 
@@ -116,6 +126,15 @@ npm run preview        # load it and confirm no module-load error in the console
 - [ ] No-CLI option: `npm run package` emits a drop-ready `<name>-site.zip` (dist/
       contents, `_redirects` inside) — drag it or the `dist/` folder onto Netlify Drop
       (https://app.netlify.com/drop) or Cloudflare Pages → Upload assets.
+- [ ] **Use your own domain, not the host's subdomain.** Every host supports it and none
+      of them require you to stay on `*.pages.dev` / `*.netlify.app`. On **Cloudflare
+      Pages**: `npx wrangler pages domain add <project> yourdomain.com` — if the domain is
+      already in that Cloudflare account, Cloudflare adds the DNS record and issues HTTPS
+      itself, with no registrar step (registered elsewhere: move the nameservers to
+      Cloudflare, or add the CNAME it shows you at your registrar). Netlify:
+      `npx netlify domains:add`. Vercel: `npx vercel domains add`. **Then set your site URL
+      to the custom domain and rebuild** — otherwise link previews and the sitemap keep
+      advertising the host subdomain.
 - [ ] **Your own server (VPS — nginx / Apache / Caddy):** the build is plain static
       files — no Node, no process manager. Upload the *contents* of `dist/` to your
       web root (`rsync -av --delete app/dist/ user@server:/var/www/your-site/` —

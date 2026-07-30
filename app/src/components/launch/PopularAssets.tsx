@@ -38,6 +38,10 @@ async function fetchLiquidity(addresses: string[], chainId: number): Promise<Map
   const uniq = [...new Set(addresses.map((a) => a.toLowerCase()))].slice(0, 30)
   if (uniq.length === 0) return out
   const slug = chainCfg(chainId).dexscreenerSlug
+  // '' = DexScreener doesn't index this chain (chains.ts contract): skip the
+  // fetch instead of firing a guaranteed-404 `/tokens/v1//0x…` request — on
+  // 4663 the starter set made that fire on every builder mount (audit).
+  if (!slug) return out
   try {
     const r = await fetch(`https://api.dexscreener.com/tokens/v1/${slug}/${uniq.join(',')}`, {
       headers: { Accept: 'application/json' },
@@ -136,9 +140,13 @@ export function PopularAssets({
   return (
     <div className={compact ? 'mt-3.5 border-t border-white/8 pt-3.5' : 'mt-5 border-t border-white/8 pt-5'}>
       <div className={`flex items-center justify-between ${compact ? 'mb-2.5' : 'mb-3'}`}>
+        {/* "Trending" is only true of the ORGANIC pool (constituents of live
+            baskets, re-ranked by live market data). When the pool is only the
+            curated starter seeds — a young chain, or one with no market data —
+            calling them trending would be a claim nothing backs (kit audit). */}
         <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-wide text-ink-dim">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
-          Trending tokens · {chainName}
+          {ranked.some((r) => r.change != null) ? 'Trending tokens' : 'Tokens to start from'} · {chainName}
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -165,7 +173,7 @@ export function PopularAssets({
       </div>
 
       {/* -my-2/py-2 give slack so the hover glow isn't clipped by overflow-x-auto. */}
-      <div ref={railRef} className={`no-scrollbar -mx-2 flex overflow-x-auto scroll-smooth px-2 ${compact ? '-my-1.5 gap-2 py-1.5' : '-my-3 gap-3 py-3'}`}>
+      <div ref={railRef} className={`no-scrollbar rail-fade -mx-2 flex overflow-x-auto scroll-smooth px-2 ${compact ? '-my-1.5 gap-2 py-1.5' : '-my-3 gap-3 py-3'}`}>
         {ranked.map((t) => {
           const color = tokenVisual(t.symbol, t.address).color
           const chg = t.change

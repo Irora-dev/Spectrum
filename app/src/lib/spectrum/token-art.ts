@@ -96,7 +96,7 @@ export function coingeckoInfo(address: string, chainId: number): Promise<Coingec
         .then((j): CoingeckoInfo | null => {
           // A definitive miss (unknown token) caches as an all-null info so it
           // doesn't re-spend rate limit every visit; transient failures (catch
-          // below) stay uncached and retry next session.
+          // below) stay uncached and retry on the next ask.
           const info: CoingeckoInfo = {
             image: j?.image?.large ?? j?.image?.small ?? null,
             marketCapUsd: j?.market_data?.market_cap?.usd ?? null,
@@ -105,7 +105,13 @@ export function coingeckoInfo(address: string, chainId: number): Promise<Coingec
           cacheSet(`cg:${key}`, info, 7 * DAY_MS)
           return info
         })
-        .catch(() => null)
+        .catch(() => {
+          // Transient (429/5xx/network): a settled-null promise in the session
+          // memo would blackhole ranks + the CG logo rung until reload — the
+          // exact pattern the Blockscout rung below fixes. Drop the memo.
+          cgLookups.delete(key)
+          return null
+        })
     }
     cgLookups.set(key, p)
   }
@@ -116,3 +122,37 @@ export function coingeckoInfo(address: string, chainId: number): Promise<Coingec
 export function coingeckoLogoUrl(address: string, chainId: number): Promise<string | null> {
   return coingeckoInfo(address, chainId).then((i) => i?.image ?? null)
 }
+
+// ── Blockscout icon lookup (Robinhood Chain) ─────────────────────────────────
+// No static logo CDN covers 4663, but the chain's Blockscout DOES track token
+// icons (Coingecko art for listed memecoins, Robinhood's own CDN for stocks).
+// One JSON fetch per token, memoized for the session (owner 2026-07-29: RH
+// tokens were falling to monograms with real art available).
+const bsIconMem = new Map<string, Promise<string | null>>()
+export function blockscoutIconUrl(address: string, chainId: number): Promise<string | null> {
+  if (chainId !== 4663) return Promise.resolve(null)
+  const key = address.toLowerCase()
+  let p = bsIconMem.get(key)
+  if (!p) {
+    p = fetch(`https://robinhoodchain.blockscout.com/api/v2/tokens/${key}`, { headers: { Accept: 'application/json' } })
+      .then((r) => {
+        // Only DEFINITIVE answers are cacheable: 200 (icon or none) and 404.
+        // A 429/5xx/network blip must NOT blackhole the icon for the session
+        // (sweep catch — it was re-breaking the very fix this rung shipped).
+        if (r.ok) return r.json() as Promise<{ icon_url?: string | null }>
+        if (r.status === 404) return null
+        throw new Error(`blockscout ${r.status}`)
+      })
+      .then((j) => {
+        const u = (j?.icon_url ?? '').trim()
+        return u && u.startsWith('https://') ? u : null
+      })
+      .catch(() => {
+        bsIconMem.delete(key) // transient — retry on the next render
+        return null
+      })
+    bsIconMem.set(key, p)
+  }
+  return p
+}
+

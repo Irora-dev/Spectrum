@@ -21,9 +21,20 @@ import { INTERFACE_TAG_ADDRESS } from '../config/operator'
 // → the kickback slice follows the creator's routing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const DEFAULT_SLIPPAGE_BPS = 100 // 1%
+// Slippage here must absorb REAL execution friction, not just volatility: a sell
+// unwinds every leg (asset→ETH, each pool's fee + price impact) and then the hub
+// leg (ETH→settlement, again fee + impact), while the FE's expected-out is derived
+// from the basket's FRICTIONLESS exchangeRate() NAV. Measured live on Robinhood
+// 2026-07-14: realised proceeds land ~1.8% under NAV at ~1 share and degrade with
+// size, so a 1% default made every sell above ~5 shares revert SlippageExceeded
+// (the "cannot sell at all" report). 3% restores small/mid sells.
+// NOTE: raising this does NOT fix large sells — past a few % of basket reserves the
+// shortfall is structural price impact (measured −44% at 500/5452 shares), which no
+// tolerance should paper over. The real fix is deriving minOut from a SIMULATED
+// realised quote instead of NAV; see the 1400 redteam/bug note in colby-os.
+export const DEFAULT_SLIPPAGE_BPS = 300 // 3%
 export const MAX_SLIPPAGE_BPS = 500 // hard UI cap: 5%
-export const WARN_SLIPPAGE_BPS = 200 // entries above 2% warn in the UI
+export const WARN_SLIPPAGE_BPS = 400 // entries above 4% warn in the UI (3% is now the default)
 
 const BPS = 10_000n
 
