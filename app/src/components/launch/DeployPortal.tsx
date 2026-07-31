@@ -163,6 +163,42 @@ export interface DeployPortalDeploy {
 
 const shortHex = (h?: string | null) => (h ? `${h.slice(0, 6)}…${h.slice(-4)}` : '—')
 
+// ── the mining pixel bar (owner 2026-07-31: "a cool pixel bar that fills as
+// you go") — HONEST progress for a luck-of-the-draw search: fill follows the
+// cumulative probability of having found the salt by now, 1 − e^(−attempts/k)
+// with k = 65,536 (the expected probe count for the 0x88 suffix), capped at
+// 96% because the search has no guaranteed finish. Never a timer, never 100%.
+const MINE_CELLS = 24
+const MINE_EXPECTED = 65_536
+function MiningProgress({ attempts }: { attempts: number }) {
+  const p = Math.min(0.96, 1 - Math.exp(-attempts / MINE_EXPECTED))
+  const filled = Math.round(p * MINE_CELLS)
+  return (
+    <span className="mt-2 flex items-center gap-2">
+      <span className="flex gap-[3px]" role="progressbar" aria-valuenow={Math.round(p * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Salt search progress (probabilistic)">
+        {Array.from({ length: MINE_CELLS }, (_, i) => (
+          <span
+            key={i}
+            className={i === filled ? 'animate-pulse' : undefined}
+            style={{
+              width: 7,
+              height: 10,
+              borderRadius: 2,
+              background:
+                i < filled
+                  ? `color-mix(in srgb, var(--color-cyan) ${100 - (i / MINE_CELLS) * 45}%, var(--color-violet))`
+                  : i === filled
+                    ? 'color-mix(in srgb, var(--color-cyan) 45%, transparent)'
+                    : 'rgba(255,255,255,0.08)',
+            }}
+          />
+        ))}
+      </span>
+      <span className="font-num text-[11px] tabular-nums text-ink-faint">≈{Math.round(p * 100)}%</span>
+    </span>
+  )
+}
+
 export function DeployPortal({
   open,
   onClose,
@@ -680,9 +716,12 @@ export function DeployPortal({
                 ) : deploy.status === 'mining' ? (
                   <>
                     Mining the 0x88 hook address… {deploy.attempts.toLocaleString()} salts tried (CREATE2)
-                    {/* expectation-setter (owner 2026-07-30): the salt search is
-                        luck-of-the-draw, so quiet minutes are normal, not a hang */}
-                    <span className="mt-1 block text-ink-faint">Could take a few minutes…</span>
+                    <MiningProgress attempts={deploy.attempts} />
+                    {/* expectation-setter (owner 2026-07-30, enlarged 07-31): the salt
+                        search is luck-of-the-draw — quiet minutes are normal, not a hang */}
+                    <span className="mt-2 block font-display text-sm font-semibold uppercase tracking-[0.14em] text-ink-dim">
+                      Could take a few minutes…
+                    </span>
                   </>
                 ) : deploy.status === 'preparing' ? (
                   <>Hook address mined · reading the launch price…</>

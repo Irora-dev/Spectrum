@@ -231,6 +231,17 @@ Typical run: **under 10 minutes** of agent work; the user's dashboard steps add 
 
 ### Updating — when the user says "update my site" (you run all of it)
 
+**How you know an update exists:** `npm run doctor` (from `app/`) compares this checkout
+against the published release manifest AND the kit repo's actual commits — it names the
+new version and says update when there is one. Run it whenever the user asks "am I
+current?", and read its verdict to them in plain words.
+
+**What an update never touches:** the user's name/colours/pages (`brand.config.ts`),
+their site URL + fee wallet (`site.config.json`), their creator metadata, their RPC key
+(`.env.local`), and their **hosting: domain, DNS and HTTPS all stay exactly as they
+are** — an update changes the site's code, then redeploys the same way they always
+deploy. Nothing about where the site lives moves.
+
 **The one-command path (preferred — macOS, Windows, and Linux alike):**
 
 ```sh

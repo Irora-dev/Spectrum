@@ -20,8 +20,17 @@ your own infrastructure. It's yours to run.
 
 ## Three ways in
 
+The whole thing from nothing, one command chain (needs [Node 20+](https://nodejs.org) and git):
+
+```sh
+git clone https://github.com/Irora-dev/Spectrum my-site && cd my-site && node create/index.mjs
+```
+
+The wizard asks a few plain-language questions (name, colours, pages, your fee wallet), writes
+your config, and ends by printing the exact deploy steps for the host you pick.
+
 1. **Paste one prompt into an AI assistant** — the guided path ([`START-HERE.md`](START-HERE.md)).
-2. **Run the setup wizard** — `create/` writes your site's config from a few questions (or use the in-site **`/setup`** studio once the app is running — design in the browser with a live preview; in dev, **Apply** writes your config straight into the project).
+2. **Run the setup wizard** — the command above (or use the in-site **`/setup`** studio once the app is running — design in the browser with a live preview; in dev, **Apply** writes your config straight into the project).
 3. **Fork the template + deploy** — see [`docs/deploy/`](docs/deploy/) (Cloudflare Pages / Vercel, with a custom domain).
 
 Each path ends the same way: a Vite + React site, themed to your colours, listing **every** basket

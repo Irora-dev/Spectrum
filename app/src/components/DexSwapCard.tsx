@@ -22,6 +22,7 @@ import { AssetLogo } from './AssetLogo'
 import { BasketAvatar } from './BasketAvatar'
 import { BridgeBanner, BridgeFund } from './BridgeFund'
 import { PayTokenPicker } from './PayTokenPicker'
+import { RevertCauses } from './RevertCauses'
 import { SwapPendingOverlay } from './SwapPendingOverlay'
 import { ShareEarnNudge } from './ShareEarnNudge'
 import { hasFinePointer } from '../lib/wallet/mobile'
@@ -925,6 +926,7 @@ export function DexSwapCard({
       {dex.error && (
         <p className="mt-3 rounded-xl border border-magenta/30 bg-magenta/[0.06] px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink-dim">
           {dex.error}
+          <RevertCauses error={dex.error} />
         </p>
       )}
       {dex.done && (

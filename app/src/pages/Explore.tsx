@@ -40,7 +40,7 @@ import { useWalletAssets } from '../lib/spectrum/use-wallet-assets'
 import { tagAllowed } from '../lib/spectrum/tags'
 import { DexSwapCard } from '../components/DexSwapCard'
 import { SWAP_ENABLED } from '../lib/config/features'
-import { DEFAULT_CHAIN_ID } from '../lib/chain/chains'
+import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { SpectralSearch } from '../components/SpectralSearch'
 import { BasketChart } from '../components/BasketChart'
 import { BlueprintBasket } from '../components/BlueprintBasket'
@@ -58,7 +58,11 @@ import { useActiveChainId } from '../lib/chain/active-chain'
 // factual labels + a past-performance disclaimer, no ratings (compliance §9).
 // ─────────────────────────────────────────────────────────────────────────────
 
-type ChainFilter = 'all' | 1 | 8453
+// Any configured chain id — the chip row derives from the chains that actually
+// have baskets (it was hardcoded 1|8453, which on a Robinhood-Chain site meant
+// every chip filtered ALL baskets out and 4663 had no chip at all — owner's
+// live-site report 2026-07-31).
+type ChainFilter = 'all' | number
 type View = 'thesis' | 'baskets' | 'creators' | 'bundles'
 
 function pctColor(p: number | null | undefined): string {
@@ -811,7 +815,14 @@ export function Explore() {
 
   const all = useMemo(() => data ?? [], [data])
   const chainScoped = useMemo(() => (chain === 'all' ? all : all.filter((b) => b.chainId === chain)), [all, chain])
-  const hasBoth = all.some((b) => b.chainId === 1) && all.some((b) => b.chainId === 8453)
+  // The chains that actually hold baskets, in configured order — the chip row
+  // renders from THIS, so no chain can be missing its chip and no chip can
+  // filter to nothing. One chain = no row (nothing to scope).
+  const chainsPresent = useMemo(
+    () => SUPPORTED_CHAIN_IDS.filter((id) => all.some((b) => b.chainId === id)),
+    [all],
+  )
+  const hasBoth = chainsPresent.length > 1
   const ql = q.trim().toLowerCase()
   // NL smart search (owner 2026-07-06): "i'm interested in agents" → ["agent"]
   const qTerms = useMemo(() => (ql ? parseQueryTerms(ql) : []), [ql])
@@ -1003,8 +1014,11 @@ export function Explore() {
           {hasBoth && (
             <>
               <Pill active={chain === 'all'} onClick={() => setChain('all')}>All</Pill>
-              <Pill active={chain === 8453} onClick={() => setChain(8453)}>Base</Pill>
-              <Pill active={chain === 1} onClick={() => setChain(1)}>ETH</Pill>
+              {chainsPresent.map((id) => (
+                <Pill key={id} active={chain === id} onClick={() => setChain(id)}>
+                  {chainCfg(id).name}
+                </Pill>
+              ))}
             </>
           )}
           {view === 'creators' && (followCount > 0 || onlyFollowing) && (

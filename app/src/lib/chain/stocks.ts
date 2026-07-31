@@ -5,11 +5,15 @@
 // captured + on-chain-verified 2026-07-04, pools re-probed live 2026-07-28.
 //
 // Surfacing ≠ routability: the picker offers these, and the builder's own
-// findBestPool resolution stays the honest judge — a stock only routes on THIS
-// lineage where a real {ETH, stock} hookless v4 pool exists (NVDA proven to
-// fill; several others initialized), and the existing thin-pool warnings fire
-// where depth is missing (AAPL/TSLA liquidity is USDG-quoted today — those
-// legs become routable with the V4Q lineage, spectrum-contracts V3).
+// findBestPool resolution stays the honest judge — a stock routes as a basket
+// leg only where a real {ETH, stock} hookless v4 pool exists (the deployed
+// factory validates exactly that key at construction), and the thin-pool
+// warnings fire where depth is missing. Don't pin per-ticker pool claims
+// HERE — they age in hours (AAPL was "USDG-quoted only" when first written;
+// its ETH pool was initialized and basket-proven on launch night 2026-07-30).
+// The deepest liquidity for some tickers remains on USDG-paired pools, which
+// the CLEAN lineage cannot use as legs — that class waits on the separate
+// stocks (V4Q) lineage.
 //
 // These are issuer-backed tracking tokens (a Robinhood entity's liability),
 // globally pausable, with corporate actions via ERC-8056 uiMultiplier — and

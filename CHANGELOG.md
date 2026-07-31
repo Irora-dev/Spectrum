@@ -7,6 +7,33 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.07.31
+
+Sacred: launch, swap — display surfaces on both paths changed (the launch popup's mining
+readout; the swap console's error presentation). No calldata, floor, route or address
+changed. `impact: config` is the sacred-release floor — there are no new keys and
+nothing to reconfigure; update and redeploy.
+
+The first live-launch-night feedback, fixed same-day:
+
+- **The Explore chain filter now offers every chain that has baskets.** It was hardcoded
+  to All / Base / ETH — on a Robinhood Chain site every chip filtered your baskets out and
+  4663 had no chip at all. The row now derives from the chains actually holding baskets.
+- **`LegMinNotMet` explains itself.** The trade revert now carries an ⓘ ranking its likely
+  causes, most-likely first: a thin pool where your own trade's price impact exceeds the
+  tolerance (deterministic at that size — a smaller amount is the test and the fix), the
+  price moving between quote and signing, a refused sandwich, or a rare mid-trade rebase.
+- **Basket-launch mining shows honest progress.** "Could take a few minutes…" at proper
+  display size plus a pixel bar that fills with the cumulative probability of having found
+  the salt (capped below 100% — the search is luck-of-the-draw, and the bar never lies).
+- **Updating is spelled out for AI agents.** The install guide now says how an agent
+  discovers a new version (`npm run doctor`) and guarantees what an update never touches:
+  your name, colours, pages, site URL, fee wallet, RPC key, creator metadata — and your
+  domain, DNS and HTTPS, which stay exactly as they are. `node create/update.mjs` remains
+  the one-command path; you redeploy the same way you always deploy.
+- Also: the README opens with the from-nothing one-liner (clone + wizard), and the stocks
+  shelf's guidance stopped pinning per-ticker pool claims that age within hours.
+
 ## 2026.07.30
 
 Sacred: launch, swap — the launch page's suggestion shelf changed, the swap console's

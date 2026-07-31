@@ -8,6 +8,7 @@ import { AssetLogo } from './AssetLogo'
 import { BasketAvatar } from './BasketAvatar'
 import { BasketBento, type BentoItem } from './BasketBento'
 import { ShareEarnNudge } from './ShareEarnNudge'
+import { RevertCauses } from './RevertCauses'
 
 // A pop-up shown while a buy/sell is in flight — a Spectrum-flavoured prism
 // refraction to pass the wait, over the live step progress. Purely presentational:
@@ -457,6 +458,7 @@ export function SwapPendingOverlay({
           <div className="mt-4 rounded-lg border border-magenta/40 bg-magenta/[0.08] px-3 py-2.5 text-left">
             <p className="break-words font-mono text-[11px] leading-relaxed text-magenta">
               {steps.map((s) => txOf(s.key).error).find(Boolean) ?? error}
+              <RevertCauses error={steps.map((s) => txOf(s.key).error).find(Boolean) ?? error} />
             </p>
           </div>
         )}
