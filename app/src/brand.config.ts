@@ -13,6 +13,12 @@ export const brand: BrandConfig = {
   name: 'Spectrum',
   style: 'spectral',
   palette: { ...SPECTRUM_DNA },
+  // Bundles ship OFF as of 2026-08-01 (Colby): the cross-chain bundle idea is
+  // becoming its own product on its own branch, and shipping a half-built
+  // creation flow here meanwhile is worse than shipping none. Nothing was
+  // removed — deleting this line restores the pages exactly as they were, and
+  // the setup studio still lists the toggle.
+  pages: { bundle: false },
   // No `defaultChainId` here on purpose: the kit ships BASE-first. The lab branch
   // sets 4663 for the stocks-forward demo, and that override is deliberately not
   // promoted — an operator picks their own default in /setup or this file.

@@ -198,7 +198,7 @@ export function FeePanel({ address, chainId }: { address: string; chainId: numbe
         {/* Quarantine rule: never "holders earn / are paid". */}
         <Row
           label="Reserve for holders"
-          caption="everything left · claimable by anyone holding the basket"
+          caption="everything left · accrues per token beside NAV · claim yours on the fee console"
           value={`≈${fmtShare(split.holders)}`}
         />
       </div>

@@ -171,26 +171,13 @@ async function wrongNetworkNote(
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
-// Hoverable (and keyboard-focusable) ⓘ explainer — a small popover card above
-// the icon. Purely informational; never load-bearing.
+// The ⓘ explainer — now the SHARED InfoDot (2026-08-01). This was a third fork:
+// a CSS-only hover card pinned ABOVE the dot, which meant it clipped against
+// the top of the step card on Step 1 and against the Composer's scroll
+// container everywhere else. The shared one portals to <body>, so it flips and
+// clamps to the viewport instead of to whatever box it happens to sit in.
 function InfoTip({ children }: { children: ReactNode }) {
-  return (
-    <span className="group/tip relative inline-flex align-middle">
-      <button
-        type="button"
-        aria-label="What is this?"
-        className="grid h-[18px] w-[18px] place-items-center rounded-full border border-white/25 font-serif text-[10px] font-bold italic text-ink-faint transition-colors hover:border-cyan hover:text-cyan focus-visible:border-cyan focus-visible:text-cyan"
-      >
-        i
-      </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-40 mb-2.5 w-72 -translate-x-1/2 rounded-xl border border-white/12 bg-panel-2 p-3.5 font-mono text-[10.5px] normal-case leading-relaxed tracking-normal text-ink-dim opacity-0 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.9)] transition-opacity duration-150 group-hover/tip:opacity-100 group-focus-within/tip:opacity-100"
-      >
-        {children}
-      </span>
-    </span>
-  )
+  return <InfoDot>{children}</InfoDot>
 }
 
 // A fee dial: big live value, a spectral-fill range slider spanning the

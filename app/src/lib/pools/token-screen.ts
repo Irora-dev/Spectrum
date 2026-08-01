@@ -121,8 +121,10 @@ function isContractRefusal(e: unknown): boolean {
 /** Identity screen — cheap deterministic reads, run in parallel with venue discovery. */
 export async function screenTokenIdentity(
   client: Client,
-  // Only chainId + factory are read — V4-only chains (no WETH/V2/V3 infra) screen too.
-  cfg: Pick<PoolReadyChainCfg, 'chainId' | 'factory'>,
+  // Only chainId + the factories are read — V4-only chains (no WETH/V2/V3
+  // infra) screen too. `legacy` is included because a basket minted by a
+  // RETIRED factory is still a basket.
+  cfg: Pick<PoolReadyChainCfg, 'chainId' | 'factory' | 'legacy'>,
   asset: Address,
 ): Promise<TokenScreen> {
   const lower = asset.toLowerCase()
@@ -158,11 +160,24 @@ export async function screenTokenIdentity(
         args: [asset, ERC777_TOKEN_HASH],
       })
       .catch(() => zeroAddress),
-    cfg.factory
-      ? client
-          .readContract({ address: cfg.factory, abi: factoryTokensAbi, functionName: 'tokens', args: [asset] })
+    // EVERY lineage, not just the live factory. Since retired lineages became
+    // listable (2026-08-01) their baskets are ordinary tradable tokens, and one
+    // would otherwise sail through this screen and be accepted as a leg.
+    // SpectrumContracts confirmed the same day that the on-chain guard is NOT
+    // present in the deployed bytecode on any of the three factories, so this
+    // screen is the only thing standing between a basket token and a nested
+    // leg. A read that FAILS yields zeroAddress and does not accuse — only a
+    // positive hit is a verdict.
+    (async () => {
+      const factories = [cfg.factory, ...(cfg.legacy ?? []).map((l) => l.factory)].filter(Boolean) as Address[]
+      for (const factory of factories) {
+        const deployer = await client
+          .readContract({ address: factory, abi: factoryTokensAbi, functionName: 'tokens', args: [asset] })
           .catch(() => zeroAddress)
-      : Promise.resolve(zeroAddress),
+        if (deployer && deployer.toLowerCase() !== zeroAddress) return deployer
+      }
+      return zeroAddress
+    })(),
   ])
 
   if (code === '0x') {

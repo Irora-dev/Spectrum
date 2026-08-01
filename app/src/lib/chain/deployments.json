@@ -1,9 +1,9 @@
 {
   "8453": {
-    "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
+    "factory": "0xa60ce83A4048f2157A65d596002541311D694E5D",
     "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "poolManager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
-    "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA",
+    "swapRouter": "0x2E39Ae825C697BE3e15ACd003d1398287C83D4b6",
     "weth": "0x4200000000000000000000000000000000000006",
     "uniV2Factory": "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
     "uniV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
@@ -11,13 +11,20 @@
     "uniV3Quoter": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
     "aerodromeFactory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
     "v4Quoter": "0x0d5e0F971ED27FBfF6c2837bf31316121532048D",
-    "universalRouter": "0x6fF5693b99212Da76ad316178A184AB56D299b43"
+    "universalRouter": "0x6fF5693b99212Da76ad316178A184AB56D299b43",
+    "notesRegistry": "0xd30C187db729F7af160709d384dA1A2a3886ac3b",
+    "legacy": [
+      {
+        "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
+        "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA"
+      }
+    ]
   },
   "1": {
-    "factory": "0xEf520C7f354d03253149388F6338189Bc1A0Ba01",
+    "factory": "0x4d3590a5B0aCee04Bb7Ab721B23fDdae8B880486",
     "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
-    "swapRouter": "0x15D9C385dC3d3f4fB50321F6e224b25A391F0025",
+    "swapRouter": "0x2eC8C0C87946ead5f9AE436374F6A6d0191c6803",
     "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
     "uniV2Factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
     "uniV3Factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
@@ -25,7 +32,14 @@
     "uniV3Quoter": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
     "aerodromeFactory": "",
     "v4Quoter": "0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203",
-    "universalRouter": "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"
+    "universalRouter": "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af",
+    "notesRegistry": "0xd30C187db729F7af160709d384dA1A2a3886ac3b",
+    "legacy": [
+      {
+        "factory": "0xEf520C7f354d03253149388F6338189Bc1A0Ba01",
+        "swapRouter": "0x15D9C385dC3d3f4fB50321F6e224b25A391F0025"
+      }
+    ]
   },
   "4663": {
     "factory": "0x07Bfce0976b205FcfDF115F7aD1401Ab1f197e6f",

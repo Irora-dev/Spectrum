@@ -1,5 +1,5 @@
 import { formatUnits, isAddress, parseAbi, type Address } from 'viem'
-import { clientFor, hasAlchemyTier, hasPrivateRpc } from '../chain/rpc'
+import { clientFor, hasPrivateRpc, publicWideLogsRisky } from '../chain/rpc'
 import { ZERO_ADDRESS } from '../chain/constants'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
 import { nativeEthUsdOnChain, v4LegUsd } from '../pools/v4-usd'
@@ -75,6 +75,10 @@ export interface BasketData {
   ageHours: number | null
   /** Creator (deployer) address from the factory registry; null if unknown. */
   deployer: string | null
+  /** The swap router THIS basket trades through (its own lineage's; a
+   *  superseded basket keeps its original router). null = unknown → the
+   *  current chain default. */
+  router?: string | null
   /** effectiveSupply() — the NAV denominator (excludes tokens pending burn). null if the view reverts. */
   effectiveSupply: number | null
   updatedAt: string
@@ -100,6 +104,10 @@ export interface BasketSummary {
   navSeries: NavPoint[]
   /** Creator (deployer) address from the factory registry; null if unknown. */
   deployer: string | null
+  /** The swap router THIS basket trades through (its own lineage's; a
+   *  superseded basket keeps its original router). null = unknown → the
+   *  current chain default. */
+  router?: string | null
   /** Address of a verified signed successor that supersedes this version, else
    *  null (a head / single version). Discovery surfaces show heads only; the
    *  full list stays available for the version strip. */
@@ -311,7 +319,12 @@ async function loadLaunchIndex(chainId: number, forceTopUp = false): Promise<Lau
   // handles full-range fine — the same convention as the V4 sweep
   // (find-best-pool.ts). Was hasAlchemyKey()-only: URL-configured sites
   // silently lost this index (owner report, 2026-07-12).
-  if (!hasPrivateRpc(chainId) && hasAlchemyTier(chainId)) return null
+  // publicWideLogsRisky, NOT hasAlchemyTier (2026-08-01): when Alchemy added
+  // Robinhood the tier flag flipped true there, and this gate — still keyed on
+  // it — silently disabled the launch index for KEYLESS RH sites whose own
+  // public node serves full-range logs fine. The pools scanners were migrated
+  // to the split flag the same day the tier flipped; this one was missed.
+  if (!hasPrivateRpc(chainId) && publicWideLogsRisky(chainId)) return null
   const factory = chainCfg(chainId).factory
   if (!factory) return null
 
@@ -319,7 +332,7 @@ async function loadLaunchIndex(chainId: number, forceTopUp = false): Promise<Lau
   if (inflight) return inflight
 
   const run = (async (): Promise<LaunchIndex | null> => {
-    let idx = launchIndexMem.get(chainId) ?? cacheGet<LaunchIndex>(`launch-index:v1:${chainId}`)
+    let idx = launchIndexMem.get(chainId) ?? cacheGet<LaunchIndex>(`launch-index:v2:${chainId}`)
     if (idx && typeof idx.upToBlock !== 'string') idx = null // shape guard for stale/foreign blobs
     const last = launchIndexLastScanMs.get(chainId) ?? 0
     const needScan = !idx || (forceTopUp && Date.now() - last >= LAUNCH_INDEX_MIN_RESCAN_MS)
@@ -332,12 +345,16 @@ async function loadLaunchIndex(chainId: number, forceTopUp = false): Promise<Lau
       const latest = await client.getBlockNumber()
       const fromBlock = idx ? BigInt(idx.upToBlock) + 1n : 0n
       if (idx && fromBlock > latest) return idx
-      const logs = await client.getLogs({
-        address: factory,
-        event: launchedEvent,
-        fromBlock,
-        toBlock: latest,
-      })
+      // Every lineage's factory (current + legacy) — kept-listed superseded
+      // baskets need their inception too. One filtered call per factory.
+      const factories = [factory, ...chainCfg(chainId).legacy.map((l) => l.factory)]
+      const logs = (
+        await Promise.all(
+          factories.map((f) =>
+            client.getLogs({ address: f, event: launchedEvent, fromBlock, toBlock: latest }),
+          ),
+        )
+      ).flat()
       const tsByBlock = await timestampsForBlocks(chainId, logs.map((l) => l.blockNumber))
       const entries: Record<string, number> = { ...(idx?.entries ?? {}) }
       for (const l of logs) {
@@ -348,7 +365,7 @@ async function loadLaunchIndex(chainId: number, forceTopUp = false): Promise<Lau
       const next: LaunchIndex = { upToBlock: latest.toString(), entries }
       launchIndexMem.set(chainId, next)
       launchIndexLastScanMs.set(chainId, Date.now())
-      cacheSet(`launch-index:v1:${chainId}`, next, 0)
+      cacheSet(`launch-index:v2:${chainId}`, next, 0)
       return next
     } catch {
       return idx ?? null
@@ -438,12 +455,18 @@ export async function getDeployer(token: Address, chainId: number): Promise<stri
     deployerCache.set(key, persisted)
     return persisted
   }
-  const factory = chainCfg(chainId).factory
-  if (!factory) return null
+  // The basket's OWN lineage registry answers (current or legacy) — the new
+  // factory knows nothing about superseded baskets, which would have wiped
+  // creator attribution for every kept-listed legacy basket.
+  const lin = await lineageFor(chainId, token)
+  if (!lin) {
+    deployerCache.set(key, null)
+    return null
+  }
   try {
     const client = clientFor(chainId)
     const deployer = await client.readContract({
-      address: factory,
+      address: lin.factory,
       abi: factoryAbi,
       functionName: 'tokens',
       args: [token],
@@ -770,6 +793,7 @@ export async function getBasketData(
     inceptionTs,
     ageHours,
     deployer,
+    router: lineageMem.get(lineageKey(chainId, address))?.router ?? (await lineageFor(chainId, address))?.router ?? null,
     effectiveSupply,
     updatedAt: new Date().toISOString(),
   }
@@ -811,26 +835,97 @@ const HIDDEN_BASKETS: ReadonlySet<string> = new Set([
   ...parseHiddenBaskets(import.meta.env.VITE_HIDDEN_BASKETS),
 ])
 
-// Enumerate every basket from the factory's append-only array (keyless-first).
-// Falls back to a bounded Launched-log scan if enumeration is unavailable.
+// ── lineage registry ─────────────────────────────────────────────────────────
+// Which factory + router serves each basket. Superseded lineages stay LISTED
+// and TRADABLE through their own contracts (owner 2026-08-01) while launches
+// read only the current factory. Filled by discovery; direct token-page loads
+// (address in hand, no list pass) resolve lazily via the factories' `tokens`
+// registries — current first, then each legacy — and memoize.
+export interface BasketLineage {
+  factory: Address
+  router: Address | null
+}
+const lineageMem = new Map<string, BasketLineage>()
+const lineageKey = (chainId: number, addr: string) => `${chainId}:${addr.toLowerCase()}`
+
+function rememberLineage(chainId: number, addr: string, l: BasketLineage): void {
+  lineageMem.set(lineageKey(chainId, addr), l)
+}
+
+export async function lineageFor(chainId: number, basket: string): Promise<BasketLineage | null> {
+  const hit = lineageMem.get(lineageKey(chainId, basket))
+  if (hit) return hit
+  const cfg = chainCfg(chainId)
+  if (!cfg.factory) return null
+  const client = clientFor(chainId)
+  const candidates: BasketLineage[] = [
+    { factory: cfg.factory, router: cfg.swapRouter ?? null },
+    ...cfg.legacy.map((l) => ({ factory: l.factory, router: l.swapRouter as Address | null })),
+  ]
+  for (const cand of candidates) {
+    try {
+      const deployer = await client.readContract({
+        address: cand.factory,
+        abi: factoryAbi,
+        functionName: 'tokens',
+        args: [basket as Address],
+      })
+      if (deployer && deployer !== ZERO_ADDRESS) {
+        rememberLineage(chainId, basket, cand)
+        return cand
+      }
+    } catch {
+      /* this registry can't answer — try the next lineage */
+    }
+  }
+  return null
+}
+
+// Enumerate every basket from each lineage's append-only array (keyless-first;
+// current factory then legacy). Falls back to a bounded Launched-log scan of
+// the CURRENT factory if enumeration is unavailable.
 async function discoverBaskets(chainId: number): Promise<Address[]> {
   const cfg = chainCfg(chainId)
   if (!cfg.factory) return [] // shipped default: no deployment configured → honestly empty
   const client = clientFor(chainId)
 
-  try {
-    const len = Number(
-      await client.readContract({ address: cfg.factory, abi: factoryAbi, functionName: 'allBasketsLength' }),
-    )
-    const addrs = await Promise.all(
-      Array.from({ length: len }, (_, i) =>
-        client.readContract({ address: cfg.factory!, abi: factoryAbi, functionName: 'allBaskets', args: [BigInt(i)] }),
-      ),
-    )
-    return addrs
-  } catch {
-    /* enumeration unavailable — fall through to the bounded log scan */
-  }
+  const lineages: BasketLineage[] = [
+    { factory: cfg.factory, router: cfg.swapRouter ?? null },
+    ...cfg.legacy.map((l) => ({ factory: l.factory, router: l.swapRouter as Address | null })),
+  ]
+  // PER-LINEAGE fault isolation: one throttled read used to reject the whole
+  // Promise.all and drop everything into the log-scan fallback below, which
+  // sees only the CURRENT factory over the last 60k blocks — so a single RPC
+  // hiccup silently hid every legacy basket AND every basket older than ~a
+  // day, app-wide, until the next poll happened to succeed. A lineage that
+  // can't answer now costs only its own baskets.
+  let anyFailed = false
+  const perLineage = await Promise.all(
+    lineages.map(async (lin) => {
+      try {
+        const len = Number(
+          await client.readContract({ address: lin.factory, abi: factoryAbi, functionName: 'allBasketsLength' }),
+        )
+        const addrs = await Promise.all(
+          Array.from({ length: len }, (_, i) =>
+            client.readContract({ address: lin.factory, abi: factoryAbi, functionName: 'allBaskets', args: [BigInt(i)] }),
+          ),
+        )
+        for (const a of addrs) rememberLineage(chainId, a as string, lin)
+        return addrs
+      } catch {
+        anyFailed = true
+        return [] as Address[]
+      }
+    }),
+  )
+  const enumerated = perLineage.flat()
+  // Fall back ONLY when enumeration produced nothing AND something actually
+  // failed. An empty answer from a healthy chain is a real answer — Base sits
+  // at zero baskets today, and treating that as a failure would burn a
+  // 60k-block log scan on every poll. A partial result is real data too, and
+  // must not be thrown away for a 60k-block window.
+  if (!anyFailed || enumerated.length > 0) return enumerated
 
   try {
     const latest = await client.getBlockNumber()
@@ -977,6 +1072,7 @@ export async function listBasketsForChain(chainId: number): Promise<BasketSummar
           top,
           navSeries: d.navSeries,
           deployer: d.deployer,
+          router: d.router ?? null,
         }
       } catch {
         return null

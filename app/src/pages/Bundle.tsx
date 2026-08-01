@@ -7,7 +7,8 @@ import { clientFor } from '../lib/chain/rpc'
 import { useActiveChainId } from '../lib/chain/active-chain'
 import { NOTE_KINDS, notesRegistryAbi } from '../lib/spectrum/profile-registry'
 import { encodeBundleNote, useCreatorBundles } from '../lib/spectrum/notes-social'
-import { PageHeader } from '../components/PageHeader'
+import { BundleHero } from '../components/BundleHero'
+import { creatorHref } from '../lib/spectrum/short-url'
 import { BundleBento as SharedBundleBento } from '../components/BundleBento'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { ChainBadge } from '../components/ChainBadge'
@@ -90,6 +91,10 @@ interface Held {
 function useBundleHoldings(resolved: Resolved[]): {
   byLeg: Map<string, Held>
   heldCount: number
+  /** Legs whose balance could not be READ — not held, not zero, unknown. */
+  unknownCount: number
+  /** Held legs whose basket didn't resolve, so their value can't be priced. */
+  unpricedHeld: number
   combinedUsd: number
   /** Value-weighted 24h change across the legs actually held, or null. */
   change24hPct: number | null
@@ -131,6 +136,8 @@ function useBundleHoldings(resolved: Resolved[]): {
     const byLeg = new Map<string, Held>()
     let combinedUsd = 0
     let heldCount = 0
+    let unknownCount = 0
+    let unpricedHeld = 0
     let changeNumer = 0
     let changeDenom = 0
     for (const r of resolved) {
@@ -138,9 +145,21 @@ function useBundleHoldings(resolved: Resolved[]): {
       const nav = r.ix?.navPerToken ?? 0
       const valueUsd = bal != null && nav > 0 ? bal * nav : 0
       byLeg.set(legKey(r.leg), { balance: bal, valueUsd })
-      if (bal != null && bal > 0) {
+      // A balance we COULDN'T READ is not a balance of zero. The read path is
+      // careful to record null for that, and the aggregate used to throw the
+      // distinction away — so an RPC hiccup rendered as "you hold 2 of 3" and
+      // put a buy CTA on a leg the wallet may already own. Counted apart, and
+      // never folded into the held tally either way.
+      if (bal == null) {
+        unknownCount++
+        continue
+      }
+      if (bal > 0) {
         heldCount++
         combinedUsd += valueUsd
+        // Held but unpriceable (the basket itself didn't resolve) — it belongs
+        // in the count, but the dollar total it contributes is a floor.
+        if (nav <= 0) unpricedHeld++
         if (r.ix?.change24hPct != null && valueUsd > 0) {
           changeNumer += r.ix.change24hPct * valueUsd
           changeDenom += valueUsd
@@ -150,6 +169,8 @@ function useBundleHoldings(resolved: Resolved[]): {
     return {
       byLeg,
       heldCount,
+      unknownCount,
+      unpricedHeld,
       combinedUsd,
       change24hPct: changeDenom > 0 ? changeNumer / changeDenom : null,
       loading: q.isLoading,
@@ -171,7 +192,8 @@ function AllocationHeadline({
   if (!address) return null
   const total = resolved.length
   const pct = total > 0 ? (holdings.heldCount / total) * 100 : 0
-  const complete = holdings.heldCount === total && total > 0
+  // "Complete" is a claim about every leg, so an unreadable one forfeits it.
+  const complete = holdings.heldCount === total && total > 0 && holdings.unknownCount === 0
   return (
     <section className="rounded-2xl border border-white/12 bg-white/[0.03] px-5 py-4">
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
@@ -195,7 +217,18 @@ function AllocationHeadline({
         </div>
         <div className="min-w-[12rem] flex-1">
           <div className="flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
-            <span>{complete ? 'allocation complete' : `you hold ${holdings.heldCount} of ${total} legs`}</span>
+            <span>
+              {holdings.loading
+                ? 'reading your balances…'
+                : complete
+                  ? 'allocation complete'
+                  : `you hold ${holdings.heldCount} of ${total} legs`}
+              {/* An unreadable leg is stated, never rounded into "not held" —
+                  and it is why `complete` can't be trusted while any is unknown. */}
+              {holdings.unknownCount > 0 && !holdings.loading && (
+                <span className="text-amber-300/80"> · {holdings.unknownCount} unreadable</span>
+              )}
+            </span>
             {!complete && <span className="tabular-nums">{Math.round(pct)}%</span>}
           </div>
           <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-white/[0.08]">
@@ -234,24 +267,31 @@ function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: 
 
   return (
     <div className="py-4">
-      <PageHeader size="lg" className="mb-2" title={bundle.name || 'Cross-chain bundle'} />
-      <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-ink-dim">
-        <span>{bundle.legs.length} baskets · {chains.length} chains</span>
-        {published && (
-          <span
-            title="This bundle is published on-chain by its creator, so this page works even without the original share link."
-            className="inline-flex items-center gap-1 rounded-full border border-teal/40 bg-teal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-teal"
-          >
-            published on-chain
-          </span>
-        )}
-        {bundle.by && (
-          <span>
-            by{' '}
-            <Link to={`/creator/${bundle.by}`} className="text-cyan hover:underline">{shortAddr(bundle.by)}</Link>
-          </span>
-        )}
-      </div>
+      {/* the bundle hero art, on every bundle page (owner 2026-08-01). This
+          page used to open on a bare PageHeader with no art at all. */}
+      <BundleHero minH="34svh">
+        <h1 className="max-w-[18ch] font-display text-4xl font-bold uppercase leading-[0.95] tracking-tight text-ink sm:text-5xl md:text-6xl">
+          {bundle.name || 'Cross-chain bundle'}
+        </h1>
+        <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-ink-dim">
+          <span>{bundle.legs.length} baskets · {chains.length} chains</span>
+          {published && (
+            <span
+              title="This bundle is published on-chain by its creator, so this page works even without the original share link."
+              className="inline-flex items-center gap-1 rounded-full border border-teal/40 bg-teal/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-teal"
+            >
+              published on-chain
+            </span>
+          )}
+          {bundle.by && (
+            <span>
+              by{' '}
+              <Link to={creatorHref(bundle.by)} className="text-cyan hover:underline">{shortAddr(bundle.by)}</Link>
+            </span>
+          )}
+        </div>
+      </BundleHero>
+      <div className="mb-6" />
 
       {dropped > 0 && (
         <p className="mb-5 font-mono text-[10px] text-amber-200/80">
@@ -292,7 +332,12 @@ function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: 
           <div className="flex flex-col divide-y divide-white/8 border-y border-white/10">
             {resolved.map((r, i) => {
               const held = holdings.byLeg.get(`${r.leg.chainId}:${r.leg.address.toLowerCase()}`)
-              const has = (held?.balance ?? 0) > 0
+              // null means we COULDN'T READ it, which is not the same as zero. Folding the
+                // two together put a cyan "buy this leg" CTA on a position the wallet may
+                // already hold — the exact thing the aggregate above was fixed to stop doing.
+                const balKnown = held?.balance != null
+                const has = balKnown && (held?.balance ?? 0) > 0
+                const unknownBal = !balKnown && !holdings.loading
               return (
                 <div key={`${r.leg.chainId}:${r.leg.address}`} className="flex items-center gap-3 py-2.5">
                   <span
@@ -301,7 +346,7 @@ function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: 
                       has ? 'border-teal/60 bg-teal/15 text-teal' : 'border-white/20 text-ink-faint'
                     }`}
                   >
-                    {has ? '✓' : i + 1}
+                    {has ? '✓' : unknownBal ? '?' : i + 1}
                   </span>
                   {r.ix && <BasketAvatar address={r.ix.address} symbol={r.ix.symbol} size={30} />}
                   <div className="min-w-0 flex-1">
@@ -312,12 +357,22 @@ function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: 
                     <div className="font-mono text-[10px] tabular-nums text-ink-faint">
                       {Math.round(r.pct)}% · {chainCfg(r.leg.chainId).name}
                       {has && held?.valueUsd ? ` · you hold $${Math.round(held.valueUsd).toLocaleString('en-US')}` : ''}
+                      {unknownBal ? ' · balance unreadable' : ''}
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="font-num text-sm tabular-nums text-ink">
                       {budgetNum > 0 ? `$${splits[i].toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
                     </div>
+                    {/* NO `amt` here, deliberately. `splits[i]` is DOLLARS, but
+                        /swap feeds `amt` straight into the pay field and parses
+                        it with the PAY TOKEN's decimals — and the console
+                        defaults to ETH. Passing $500 opened the buy at 500 ETH,
+                        roughly 2,400x the intended trade, with a live Buy
+                        button for any wallet that could cover it. Handing the
+                        number across needs /swap to accept a USD-denominated
+                        amount, or this to convert first; until then the plan
+                        states the figure and the console starts empty. */}
                     <Link
                       to={`/swap?basket=${r.leg.address}&chain=${r.leg.chainId}${refq}`}
                       className={`press mt-0.5 inline-block rounded-md border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide ${

@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { Address } from 'viem'
-import { useBasketData, useCreatorMeta, useLineage, useAllBaskets } from '../lib/spectrum/hooks'
-import type { Holding } from '../lib/spectrum/basket-data'
+import { useBasketData, useCreatorMeta, useLineage, useAllBaskets, useNavHistory } from '../lib/spectrum/hooks'
+import { computeReturns } from '../lib/spectrum/history'
+import { MEASURABLE_TVL_FLOOR_USD } from '../lib/spectrum/leaderboard'
+import { InfoDot } from '../components/InfoDot'
+import type { BasketData, Holding } from '../lib/spectrum/basket-data'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
 import { chainCfg } from '../lib/chain/chains'
 import { BasketAvatar } from '../components/BasketAvatar'
@@ -17,6 +20,7 @@ import { usePublicClient, useWriteContract } from 'wagmi'
 import { NOTE_KINDS, notesRegistryAbi } from '../lib/spectrum/profile-registry'
 import { MAX_POST_CHARS, encodeUpdateNoteJson, useVersionNote } from '../lib/spectrum/notes-social'
 import { DexSwapCard } from '../components/DexSwapCard'
+import { PositionPnl } from '../components/PositionPnl'
 import { FeePanel } from '../components/FeePanel'
 import { VersionStrip } from '../components/VersionStrip'
 import { VersionButton } from '../components/VersionButton'
@@ -41,9 +45,11 @@ import { ListingPipeline } from '../components/ListingPipeline'
 import { SeedBasketModal } from '../components/SeedBasketModal'
 import { ThesisEditor } from '../components/ThesisEditor'
 import { PoweredByPrism } from '../components/PoweredByPrism'
+import { BundleForge } from '../components/BundleForge'
 import { resolveAsset, seedLaunchDraft } from '../components/launch/BasketBuilder'
 import { isRetryableDetection } from '../lib/pools'
 import { setActiveChainId } from '../lib/chain/active-chain'
+import { basketHref, chainFromSlug, resolveBasketRef } from '../lib/spectrum/short-url'
 import brand from '../brand.config'
 import { pageEnabled } from '../theme/brand'
 
@@ -334,23 +340,200 @@ function WhatChanged({
 }
 
 
+/** Who made this basket and why — the header's width-based content block
+ *  (owner 2026-08-01). This used to sit in the swap rail, where a paragraph of
+ *  thesis had one narrow column to fall down; in the header it gets the card's
+ *  width and reads across. Same signed source as before: the DEPLOYER-SIGNED
+ *  metadata blob, attributed and verifiable — never operator-written copy. */
+function CreatorThesis({
+  basket,
+  chainId,
+  creator,
+  meta,
+  deployer,
+  sig,
+  viewer,
+}: {
+  basket: string
+  chainId: number
+  creator: NonNullable<ReturnType<typeof resolveCreator>>
+  meta: ReturnType<typeof useCreatorMeta>['data']
+  deployer: string | null
+  sig: string
+  viewer?: string
+}) {
+  // The deployer's corner belongs to the Edit pen — visitors get the launch-post
+  // link instead. On a chain with NO notes registry the pen never renders, so
+  // the deployer keeps the link too (audit).
+  const showPostLink =
+    (meta?.postUrl || meta?.xUrl) &&
+    !(chainCfg(chainId).notesRegistry && viewer && deployer && viewer.toLowerCase() === deployer.toLowerCase())
+
+  return (
+    // gap-8, not gap-4: the byline, the thesis and the tags are three separate
+    // groups, so they sit on the between-groups step rather than the
+    // within-a-group one (owner 2026-08-01: "add some padding above this").
+    <div className="flex flex-col gap-8">
+      <div className="flex items-center gap-3.5">
+        <div className="relative shrink-0">
+          <div aria-hidden className="absolute -inset-1 rounded-full opacity-60 blur-[9px]" style={{ background: sig }} />
+          <div className="relative overflow-hidden rounded-full ring-2 ring-white/15">
+            <BasketAvatar
+              address={creator.address ?? basket}
+              symbol={creator.kind === 'address' ? 'x' : creator.label.replace(/^@/, '')}
+              imageUrl={meta?.avatarUrl ?? undefined}
+              size={44}
+            />
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-ink-dim">Created by</div>
+          {deployer ? (
+            <Link
+              to={`/creator/${deployer}`}
+              className="press block truncate font-display text-lg font-semibold leading-tight text-ink hover:text-cyan"
+            >
+              {creator.label}
+            </Link>
+          ) : (
+            <span className="block truncate font-display text-lg font-semibold leading-tight text-ink">{creator.label}</span>
+          )}
+          {deployer && <div className="truncate font-mono text-[10px] text-ink-faint">{shortAddr(deployer)}</div>}
+        </div>
+        {deployer && <FollowButton deployer={deployer} />}
+        {showPostLink && (
+          <a
+            href={meta?.postUrl ?? meta?.xUrl ?? '#'}
+            target="_blank"
+            rel="noreferrer"
+            className="press inline-flex shrink-0 items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-cyan hover:underline"
+          >
+            {meta?.postUrl ? 'Launch post' : 'On X'}
+            <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M7 17L17 7M7 7h10v10" />
+            </svg>
+          </a>
+        )}
+      </div>
+
+      <div>
+        {meta?.tagline && (
+          <p className="max-w-[70ch] font-display text-lg font-bold leading-snug tracking-tight text-ink">{meta.tagline}</p>
+        )}
+        {meta?.thesis ? (
+          <p className={`max-w-[70ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-dim ${meta?.tagline ? 'mt-3' : ''}`}>
+            {meta.thesis}
+          </p>
+        ) : !meta?.tagline ? (
+          <p className="max-w-[70ch] text-sm leading-relaxed text-ink-faint">
+            No thesis published yet — the creator hasn&rsquo;t written one for this basket. Only the
+            on-chain facts are shown.
+          </p>
+        ) : null}
+        {deployer && <ThesisEditor basket={basket} chainId={chainId} deployer={deployer} meta={meta} />}
+      </div>
+
+      {((meta?.sectors && meta.sectors.length > 0) || meta?.timeHorizon) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {meta?.sectors?.map((sct) => (
+            <span
+              key={sct}
+              className="rounded-full border border-violet/30 bg-violet/[0.07] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-violet-bright"
+            >
+              {sct}
+            </span>
+          ))}
+          {meta?.timeHorizon && (
+            <span className="rounded-full border border-cyan/30 bg-cyan/[0.07] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan">
+              {meta.timeHorizon}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** How far the basket has moved since it was created, under the hero price
+ *  (owner 2026-08-01). This is NAV per token now vs at creation — a ratio, so
+ *  it is NOT moved by how much money is in the basket and cannot be flattered
+ *  by a big or small TVL. What CAN flatter it is a thin basket whose NAV a
+ *  single small trade shifts, so under the measurability floor the number is
+ *  shown muted and says so rather than posing as a track record. */
+function InceptionReturn({ ix, chainId }: { ix: BasketData; chainId: number }) {
+  const ageSec = ix.ageHours != null ? ix.ageHours * 3600 : null
+  const assets = ix.holdings.map((h) => ({
+    address: h.asset,
+    weight: h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct,
+  }))
+  const { data } = useNavHistory({ chainId, assets, navPerToken: ix.navPerToken, ageSec, range: 'ALL' })
+  const all = computeReturns(data.length >= 2 ? data : ix.navSeries, ageSec).find((r) => r.range === 'ALL')
+  if (!all) return null
+
+  // Same floor perfMeasurable() applies; compared inline because that helper
+  // takes a BasketSummary and this page holds the fuller BasketData.
+  const solid = (ix.aumUsd || 0) >= MEASURABLE_TVL_FLOOR_USD
+  const up = all.pct >= 0
+  const tone = !solid ? 'text-ink-dim' : up ? 'text-cyan' : 'text-magenta'
+
+  return (
+    <div className="mt-4 sm:text-right">
+      <div className="flex items-center gap-2 sm:justify-end">
+        <span className="font-mono text-[10px] uppercase tracking-[0.28em] text-ink-dim">Since inception</span>
+        <InfoDot>
+          The basket&rsquo;s value per token today against its value at creation. It is a ratio, so the
+          size of the basket doesn&rsquo;t flatter it and neither does fee income — fees are already
+          inside the per-token value.
+          {!solid && (
+            <>
+              {' '}
+              This basket holds under ${MEASURABLE_TVL_FLOOR_USD.toLocaleString('en-US')}, where one
+              small trade can move the per-token value on its own — read the number as an
+              indication, not a track record.
+            </>
+          )}
+        </InfoDot>
+      </div>
+      <div className={`mt-1 font-num text-xl font-semibold tabular-nums ${tone}`}>
+        {up ? '+' : ''}
+        {all.pct.toFixed(2)}%
+      </div>
+      {!solid && (
+        <div className="mt-0.5 font-mono text-[10px] text-ink-faint">too thin to call a track record</div>
+      )}
+    </div>
+  )
+}
+
 export function Token() {
   const [params] = useSearchParams()
-  const addr = params.get('addr') ?? undefined
-  const chainId = Number(params.get('chain')) || 8453
+  // TWO shapes reach this page and both are permanent (owner 2026-08-01):
+  //   /token?addr=0x…&chain=4663   the original, still minted by nothing but
+  //                                shared everywhere — it must never break
+  //   /t/r/T2-29374eaa             the short form the app mints from now on
+  // The short one resolves against the discovered list, so it stays in the
+  // address bar rather than bouncing through a redirect.
+  const route = useParams()
+  const { data: allBaskets } = useAllBaskets()
+  const routeChain = route.chain ? chainFromSlug(route.chain) : null
+  const match = route.ref ? resolveBasketRef(route.ref, routeChain, allBaskets ?? []) : null
+  const shortPending = !!route.ref && !allBaskets
+  const addr = match?.hit?.address ?? params.get('addr') ?? undefined
+  const chainId = match?.hit?.chainId ?? (Number(params.get('chain')) || routeChain || 8453)
   const { data: ix, isLoading, isError } = useBasketData(addr, chainId)
   // count the headline price up once the basket resolves (hook stays unconditional)
   const navUp = useCountUp(ix?.navPerToken ?? 0, !!ix)
   // Verified, deployer-signed creator metadata (null until published + verified).
   const { data: meta } = useCreatorMeta(addr, chainId)
-  // Version lineage (deployer-signed `supersedes` claims) + the full list for symbols.
+  // Version lineage (deployer-signed `supersedes` claims); `allBaskets` above
+  // doubles as the symbol table for the lineage strip.
   const lineage = useLineage(addr, chainId)
-  const { data: allBaskets } = useAllBaskets()
   // The headline fee % is surfaced in the hero; the full waterfall reads at
   // the bottom of the card (FeePanel re-uses the same cached query).
   const { data: fees } = useBasketFees(addr, chainId)
   const [migrateOpen, setMigrateOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [forgeOpen, setForgeOpen] = useState(false)
   const { address: viewer } = useAccount()
 
   // Phone mini-buy bar (mobile UX review 1): below lg the grid linearizes and
@@ -387,6 +570,33 @@ export function Token() {
     return () => window.clearTimeout(t)
   }, [loaded])
 
+  // A short link can't be judged until discovery has answered — a pending list
+  // is not a missing basket.
+  if (shortPending) return <Notice>Finding this basket…</Notice>
+  // A bare ticker with a twin: say which ones, never pick. Guessing here sends
+  // someone to the wrong basket with money in hand.
+  if (match && !match.hit && match.ambiguous.length > 1) {
+    return (
+      <div className="py-10">
+        <div className="mx-auto max-w-md rounded-2xl border border-white/12 bg-white/[0.03] p-6">
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Two baskets share that ticker</div>
+          <p className="mt-2 text-sm text-ink-dim">Pick the one you meant — the link you followed didn&rsquo;t say.</p>
+          <div className="mt-4 space-y-2">
+            {match.ambiguous.map((c) => (
+              <Link
+                key={`${c.chainId}:${c.address}`}
+                to={basketHref(c)}
+                className="press flex items-center justify-between rounded-xl border border-white/10 px-3 py-2.5 font-mono text-[12px] text-ink-dim hover:border-cyan/50 hover:text-ink"
+              >
+                <span className="font-semibold">${c.symbol}</span>
+                <span className="text-ink-faint">{shortAddr(c.address)}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
   if (!addr) return <Notice>No basket address provided (?addr=0x…).</Notice>
   if (isError || (!ix && !isLoading)) return <Notice>Couldn&rsquo;t load this basket. Try again, or check the RPC configuration.</Notice>
 
@@ -430,7 +640,11 @@ export function Token() {
   const predSymbol = symbolOf(lineage.predecessor) ?? '?'
 
   return (
-    <div className="py-6">
+    // The basket page runs ~10% wider than the site's 1000px column (owner
+    // 2026-08-01) — the extra 100px all goes to the chart, since the swap rail
+    // is a fixed track. Breakout starts at xl, not lg: at 1024px the column is
+    // already within 48px of the viewport and -50px a side would overflow.
+    <div className="py-6 xl:-mx-[50px]">
       {/* the creator's unseeded basket demands its first buy (R+C 18:26) */}
       {ix && <SeedBasketModal ix={ix} chainId={chainId} />}
       {justDeployed && ix && (
@@ -453,6 +667,20 @@ export function Token() {
           ← All baskets
         </Link>
         <div className="flex items-center gap-2">
+          {/* Bundle this basket (owner 2026-08-01). The basket page had ZERO
+              bundle references, which made "create a bundle from the one basket
+              they have" impossible from the one place you'd try it. Opens the
+              forge over this page with this basket already in it. */}
+          {ix && pageEnabled(brand.pages, 'bundle') && (
+            <button
+              type="button"
+              onClick={() => setForgeOpen(true)}
+              className="press inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.18em] text-ink-dim hover:border-violet-bright/50 hover:text-[#cabdff]"
+              title="Build a bundle starting from this basket"
+            >
+              Bundle
+            </button>
+          )}
           {ix && <RemixButton holdings={ix.holdings} chainId={chainId} />}
           <ShareButton onClick={() => setShareOpen(true)} />
         </div>
@@ -473,9 +701,13 @@ export function Token() {
           style={{ background: sig }}
         />
 
-        {/* ── header: identity (left) · price (right) — the hero gets real
-               breathing room: taller padding, wider gaps, larger scale ──── */}
-        <div className={`relative flex min-h-[260px] flex-col gap-8 overflow-hidden border-b px-6 py-8 transition-colors duration-700 sm:flex-row sm:items-start sm:justify-between sm:gap-12 sm:px-10 sm:py-12 ${intro === 'swirl' ? 'rounded-2xl border-transparent' : 'border-white/10'}`}>
+        {/* ── header (restructured on the owner's 2026-08-01 read-order): the
+               left column carries identity → pills → WHO MADE IT + THE THESIS
+               (width-based, where the constituent discs used to sit); the right
+               column carries the price with the discs right-aligned beneath it;
+               the version controls get their own centred row underneath both.
+               The hero keeps its breathing room: taller padding, wider gaps. ── */}
+        <div className={`relative min-h-[260px] overflow-hidden border-b px-6 py-8 transition-colors duration-700 sm:px-10 sm:py-12 ${intro === 'swirl' ? 'rounded-2xl border-transparent' : 'border-white/10'}`}>
           {/* signature glow */}
           <div
             aria-hidden
@@ -498,7 +730,8 @@ export function Token() {
           />
           {/* identity — absent until data lands, hidden while the intro swirls */}
           {ix && creator && (<>
-          <div className={`relative z-10 flex flex-col gap-5 transition-opacity duration-700 ${intro === 'swirl' ? 'opacity-0' : 'opacity-100'}`}>
+          <div className="relative z-10 flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between sm:gap-12">
+          <div className={`flex min-w-0 flex-col gap-5 transition-opacity duration-700 ${intro === 'swirl' ? 'opacity-0' : 'opacity-100'}`}>
             <h1 className="break-words font-display text-4xl font-bold uppercase leading-[0.92] tracking-tight text-ink sm:text-5xl md:text-6xl">
               {ix.name || ix.symbol}
             </h1>
@@ -507,14 +740,18 @@ export function Token() {
                 headline fee, one 24px rounded-full badge set. The address is
                 the basket's one unforgeable identity; the full fee waterfall
                 reads at the card's bottom. */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex h-6 items-center rounded-full bg-white/10 px-2.5 font-mono text-[11px] font-semibold text-cyan">
+            {/* 32px pills at 13px, up from 24px at 11px (owner 2026-08-01:
+                "a little bigger and easier to read") — this row carries the
+                ticker, the chain and the basket's one unforgeable identity,
+                so it should not be the smallest type on the page. */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="inline-flex h-8 items-center rounded-full bg-white/10 px-3 font-mono text-[13px] font-semibold text-cyan">
                 ${ix.symbol}
               </span>
-              <ChainBadge chainId={chainId} className="h-6 px-2.5" />
+              <ChainBadge chainId={chainId} className="h-8 px-3 text-[13px]" />
               <CopyChip text={addr} label={shortAddr(addr)} pill />
               {fees && (
-                <span className="inline-flex h-6 items-center gap-1 rounded-full border border-white/12 bg-white/[0.04] px-2.5 font-mono text-[11px] text-ink-dim">
+                <span className="inline-flex h-8 items-center gap-1 rounded-full border border-white/12 bg-white/[0.04] px-3 font-mono text-[13px] text-ink-dim">
                   <span className="font-semibold text-ink">
                     {(fees.basketFeeBps / 100).toFixed(2).replace(/\.?0+$/, '')}%
                   </span>
@@ -522,58 +759,20 @@ export function Token() {
                 </span>
               )}
               {/* personal watchlist toggle for this basket (browser-only) */}
-              <WatchButton basket={addr} chainId={chainId} variant="icon" className="h-6 w-6" />
+              <WatchButton basket={addr} chainId={chainId} variant="icon" className="h-8 w-8" />
             </div>
 
-            {/* the constituents at a glance: overlapping logo discs, heaviest
-                first (and on top), dark rims lifting them off the warp — with the
-                deployer's version actions riding the SAME row on the right
-                (owner 2026-07-07: side by side next to the token icons, matched
-                pills, never stacking under the hero and pushing it down). Both
-                are deployer-restricted and render null for everyone else. */}
-            <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-2">
-              <div className="flex items-center">
-                {[...holdings]
-                  .sort((a, b) => b.targetWeightPct - a.targetWeightPct)
-                  .slice(0, 7)
-                  .map((h, i, top) => (
-                    <span
-                      key={h.asset}
-                      title={`${h.symbol} · ${h.targetWeightPct.toFixed(0)}%`}
-                      className={`relative rounded-full ring-[3px] ring-panel/90 shadow-[0_4px_14px_rgba(0,0,0,0.5)] transition-transform duration-200 hover:-translate-y-0.5 ${i > 0 ? '-ml-4' : ''}`}
-                      style={{ zIndex: top.length - i }}
-                    >
-                      <AssetLogo address={h.asset} symbol={h.symbol} chainId={chainId} size={52} />
-                    </span>
-                  ))}
-                {holdings.length > 7 && (
-                  <span className="z-0 -ml-4 grid h-[52px] w-[52px] place-items-center rounded-full bg-white/10 font-mono text-[12px] font-semibold text-ink ring-[3px] ring-panel/90 backdrop-blur-sm">
-                    +{holdings.length - 7}
-                  </span>
-                )}
-              </div>
-              {DEPLOY_ENABLED && isDeployer && (
-                <div className="flex items-center gap-2 sm:ml-auto">
-                  {/* Repair path: declare this basket's predecessor when the
-                      launch-time publish was skipped/lost. */}
-                  <LinkPredecessorButton
-                    basket={addr}
-                    deployer={ix.deployer}
-                    chainId={chainId}
-                    hasPredecessor={lineage.hasPredecessor}
-                    meta={meta ?? null}
-                  />
-                  <VersionButton basket={addr} deployer={ix.deployer} chainId={chainId} prominent />
-                </div>
-              )}
-            </div>
-
-            {/* Version lineage strip (public, only when a chain of versions exists). */}
-            {lineage.count > 1 && (
-              <div className="flex w-full flex-wrap items-center gap-3">
-                <VersionStrip lineage={lineage} current={addr} chainId={chainId} />
-              </div>
-            )}
+            {/* who made it + why — moved up out of the swap rail (owner
+                2026-08-01), sitting where the constituent discs used to. */}
+            <CreatorThesis
+              basket={addr}
+              chainId={chainId}
+              creator={creator}
+              meta={meta}
+              deployer={ix.deployer}
+              sig={sig}
+              viewer={viewer}
+            />
           </div>
 
           {/* price — the 24h change chip rides the "Price" LABEL row, not the number */}
@@ -604,7 +803,64 @@ export function Token() {
                 Diverges {ix.navDivergencePct!.toFixed(1)}% from spot · see docs
               </div>
             )}
+
+            {/* how far it has come since creation, right under the price */}
+            <InceptionReturn ix={ix} chainId={chainId} />
+
+            {/* the constituents at a glance: overlapping logo discs, heaviest
+                first (and on top), dark rims lifting them off the warp. They
+                now hang under the price on the RIGHT, sharing its alignment
+                (owner 2026-08-01) — the left column is the reading column. */}
+            <div className="mt-8 flex items-center sm:justify-end">
+              {[...holdings]
+                .sort((a, b) => b.targetWeightPct - a.targetWeightPct)
+                .slice(0, 7)
+                .map((h, i, top) => (
+                  <span
+                    key={h.asset}
+                    title={`${h.symbol} · ${h.targetWeightPct.toFixed(0)}%`}
+                    className={`relative rounded-full ring-[3px] ring-panel/90 shadow-[0_4px_14px_rgba(0,0,0,0.5)] transition-transform duration-200 hover:-translate-y-0.5 ${i > 0 ? '-ml-4' : ''}`}
+                    style={{ zIndex: top.length - i }}
+                  >
+                    <AssetLogo address={h.asset} symbol={h.symbol} chainId={chainId} size={52} />
+                  </span>
+                ))}
+              {holdings.length > 7 && (
+                <span className="z-0 -ml-4 grid h-[52px] w-[52px] place-items-center rounded-full bg-white/10 font-mono text-[12px] font-semibold text-ink ring-[3px] ring-panel/90 backdrop-blur-sm">
+                  +{holdings.length - 7}
+                </span>
+              )}
+            </div>
           </div>
+          </div>
+
+          {/* version controls, centred on their own header row (owner
+              2026-08-01). The deployer's two actions — link the predecessor
+              when the launch-time publish was skipped, or cut a new version —
+              sit above the public lineage strip. Both are deployer-restricted
+              and render null for everyone else, so the row itself only exists
+              when there is something in it. */}
+          {((DEPLOY_ENABLED && isDeployer) || lineage.count > 1) && (
+            <div className={`relative z-10 mt-8 flex flex-col items-center gap-3 border-t border-white/10 pt-6 transition-opacity duration-700 ${intro === 'swirl' ? 'opacity-0' : 'opacity-100'}`}>
+              {DEPLOY_ENABLED && isDeployer && (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <LinkPredecessorButton
+                    basket={addr}
+                    deployer={ix.deployer}
+                    chainId={chainId}
+                    hasPredecessor={lineage.hasPredecessor}
+                    meta={meta ?? null}
+                  />
+                  <VersionButton basket={addr} deployer={ix.deployer} chainId={chainId} prominent />
+                </div>
+              )}
+              {lineage.count > 1 && (
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <VersionStrip lineage={lineage} current={addr} chainId={chainId} />
+                </div>
+              )}
+            </div>
+          )}
           </>)}
         </div>
 
@@ -613,6 +869,7 @@ export function Token() {
             swap / holdings rise in beneath it */}
         {ix && creator && intro === 'done' && (
         <div className="content-rise">
+
         {/* a newer version exists → opt-in upgrade (read-only callout) — bigger,
             brighter bar with a prominent CTA (owner ask) */}
         {lineage.hasSuccessor && lineage.head && (
@@ -654,7 +911,12 @@ export function Token() {
             fallback={ix.navSeries}
             underlyingAssets={ix.holdings.map((h) => ({ address: h.asset, symbol: h.symbol, change24hPct: h.change24hPct }))}
             change24hPct={ix.change24hPct}
-            heightClass="h-64 sm:h-72"
+            // Taller on desktop (owner 2026-08-01: "make the chart area a bit
+            // bigger"). It also keeps the grid honest now that the assets table
+            // and stats moved out from under it — otherwise the chart column
+            // ends well short of the swap rail beside it. 432 = 18 × the 24px
+            // vertical rhythm.
+            heightClass="h-64 sm:h-72 lg:h-[432px]"
             className="w-full"
           />
         </div>
@@ -667,22 +929,9 @@ export function Token() {
           </div>
         )}
 
-        {/* ── the assets themselves: price, movement, weight, value (owner
-               15:32: "details on the actual assets being held and their current
-               price and the individual asset performance") ──────────────── */}
-        <div className="border-b border-white/10 px-4 py-5 sm:px-6">
-          <AssetsTable holdings={ix.holdings} chainId={chainId} />
-        </div>
-
-        {/* ── key stats + returns ─────────────────────────────────── */}
-        <div className="border-b border-white/10 px-6 py-5">
-          <BasketStats ix={ix} chainId={chainId} />
-        </div>
-
-        {/* The creator's thesis renders below (the thesis card), from the DEPLOYER-
-            SIGNED metadata blob (v3), attributed, verifiable, operator-moderated.
-            The verified @handle (CreatorChip) still links out to their own feed.
-            "What changed in this version" moved ABOVE the assets (owner 2026-07-07). */}
+        {/* The assets table and the stats row used to live here, inside the
+            chart column; they run FULL WIDTH below the grid now (owner
+            2026-08-01) so they carry on under the swap rail too. */}
 
         </div>
 
@@ -692,6 +941,11 @@ export function Token() {
                past narrow viewports ─── */}
         <div className="min-w-0 border-t border-white/10 p-4 sm:p-6 lg:border-t-0">
           <div className="space-y-4 lg:sticky lg:top-24">
+            {/* your holdings — top of the rail, buy/sell right below (owner
+                2026-08-01: chart left, holdings right, console beneath).
+                Shows whenever the connected wallet owns this basket. */}
+            <PositionPnl basket={addr} chainId={chainId} navPerToken={ix.navPerToken} symbol={ix.symbol} />
+
             {/* optional operator-configured external app link (VITE_PARTNER_APP_URL);
                 unset by default → no CTA renders (the package anoints no venue). */}
             {partnerUrl && (
@@ -718,107 +972,32 @@ export function Token() {
               </div>
             )}
 
+
             {/* add-to-wallet right under the swap (owner 2026-07-06) — the
                 natural next step after a buy; self-hides without a wallet */}
             <div className="flex justify-center">
               <AddToWalletButton address={addr} symbol={ix.symbol} chainId={chainId} />
             </div>
 
-            {/* the human behind the basket — created-by, then their thesis
-                right below, beside the assets (owner 16:59: "created by and
-                the address, and below that the thesis, next to the assets
-                and underneath the swap column") */}
-            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-              <div className="flex items-center gap-3.5">
-                <div className="relative shrink-0">
-                  <div aria-hidden className="absolute -inset-1 rounded-full opacity-60 blur-[9px]" style={{ background: sig }} />
-                  <div className="relative overflow-hidden rounded-full ring-2 ring-white/15">
-                    <BasketAvatar
-                      address={creator.address ?? addr}
-                      symbol={creator.kind === 'address' ? 'x' : creator.label.replace(/^@/, '')}
-                      imageUrl={meta?.avatarUrl ?? undefined}
-                      size={48}
-                    />
-                  </div>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-ink-dim">Created by</div>
-                  <div className="mt-0.5 flex items-center gap-2.5">
-                    {ix.deployer ? (
-                      <Link
-                        to={`/creator/${ix.deployer}`}
-                        className="truncate font-display text-lg font-semibold leading-tight text-ink press hover:text-cyan"
-                      >
-                        {creator.label}
-                      </Link>
-                    ) : (
-                      <span className="truncate font-display text-lg font-semibold leading-tight text-ink">{creator.label}</span>
-                    )}
-                  </div>
-                  {ix.deployer && <div className="mt-0.5 truncate font-mono text-[10px] text-ink-faint">{shortAddr(ix.deployer)}</div>}
-                </div>
-                {ix.deployer && <FollowButton deployer={ix.deployer} />}
-              </div>
-
-              <div className="relative mt-3.5 min-h-[240px] border-t border-white/10 pt-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
-                    The creator&rsquo;s thesis
-                  </div>
-                  {/* the deployer's corner belongs to the Edit pen — visitors get the
-                      launch-post link. On a chain with NO notes registry the pen never
-                      renders, so the deployer keeps the link too (audit). */}
-                  {(meta?.postUrl || meta?.xUrl) &&
-                    !(chainCfg(chainId).notesRegistry && viewer && ix.deployer && viewer.toLowerCase() === ix.deployer.toLowerCase()) && (
-                    <a
-                      href={meta.postUrl ?? meta.xUrl ?? '#'}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-cyan press hover:underline"
-                    >
-                      {meta.postUrl ? 'Launch post' : 'On X'}
-                      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M7 17L17 7M7 7h10v10" />
-                      </svg>
-                    </a>
-                  )}
-                </div>
-                {meta?.tagline && (
-                  <p className="mt-3.5 font-display text-lg font-bold leading-snug tracking-tight text-ink">{meta.tagline}</p>
-                )}
-                {meta?.thesis ? (
-                  <p className="mt-3 max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-dim">{meta.thesis}</p>
-                ) : !meta?.tagline ? (
-                  <p className="mt-3 text-sm leading-relaxed text-ink-faint">
-                    Not published yet. The creator hasn&rsquo;t written a thesis for this basket. Only the
-                    on-chain facts are shown.
-                  </p>
-                ) : null}
-                {/* deployer-only: write/edit the thesis as an on-chain note */}
-                {ix.deployer && (
-                  <ThesisEditor basket={addr} chainId={chainId} deployer={ix.deployer} meta={meta} />
-                )}
-                {((meta?.sectors && meta.sectors.length > 0) || meta?.timeHorizon) && (
-                  <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/[0.07] pt-4">
-                    {meta?.sectors?.map((sct) => (
-                      <span
-                        key={sct}
-                        className="rounded-full border border-violet/30 bg-violet/[0.07] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-violet-bright"
-                      >
-                        {sct}
-                      </span>
-                    ))}
-                    {meta?.timeHorizon && (
-                      <span className="rounded-full border border-cyan/30 bg-cyan/[0.07] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan">
-                        {meta.timeHorizon}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
+            {/* created-by + the thesis used to close this rail; both moved into
+                the header on 2026-08-01 so the thesis reads across the card's
+                width instead of down a 380px column. */}
           </div>
         </div>
+        </div>
+
+        {/* ── the assets themselves: price, movement, weight, value (owner
+               15:32: "details on the actual assets being held and their current
+               price and the individual asset performance"). FULL WIDTH under
+               both columns — the table has four numeric columns and was being
+               squeezed into the chart track (owner 2026-08-01). ─────────── */}
+        <div className="border-t border-white/10 px-4 py-5 sm:px-6">
+          <AssetsTable holdings={ix.holdings} chainId={chainId} />
+        </div>
+
+        {/* ── key stats + returns, full width on the same rule ───────── */}
+        <div className="border-t border-white/10 px-6 py-5">
+          <BasketStats ix={ix} chainId={chainId} />
         </div>
 
 
@@ -955,6 +1134,11 @@ export function Token() {
             toSymbol={headSymbol}
             chainId={chainId}
           />
+
+          {/* the forge, over this page, with this basket already loaded */}
+          {forgeOpen && (
+            <BundleForge seed={{ chainId, address: addr }} overlay onClose={() => setForgeOpen(false)} />
+          )}
 
           <ShareModal
             open={shareOpen}

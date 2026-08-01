@@ -130,7 +130,9 @@ export function useDexSwap(
   const quoteSeq = useRef(0)
 
   const walletReady = isConnected && walletChainId === chainId
-  const spectrumRouter = dep.swapRouter
+  // The basket's OWN lineage router (superseded baskets keep trading through
+  // their original router — owner 2026-08-01); current chain default otherwise.
+  const spectrumRouter = (ix?.router as Address | undefined) ?? dep.swapRouter
   const usdc = dep.usdc
 
   // Price the basket leg by SIMULATING it, so the floors haircut the realised fill

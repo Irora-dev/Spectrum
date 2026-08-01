@@ -229,10 +229,12 @@ describe('countVersionSeries (shared)', () => {
   })
 })
 
-describe('listable — the $100 browse floor (R+C 2026-07-06)', () => {
-  it('hides sub-$100 baskets from browsing surfaces, keeps $100+ listed', () => {
-    expect(listable(b({ address: '0x1', deployer: A, aumUsd: 40 }))).toBe(false)
-    expect(listable(b({ address: '0x2', deployer: A, aumUsd: 100 }))).toBe(true)
+describe('listable — the $10 browse floor (owner 2026-08-01, was $100)', () => {
+  it('hides sub-$10 baskets from browsing surfaces, keeps $10+ listed', () => {
+    expect(listable(b({ address: '0x1', deployer: A, aumUsd: 4 }))).toBe(false)
+    expect(listable(b({ address: '0x2', deployer: A, aumUsd: 10 }))).toBe(true)
+    // the floor the owner lowered PAST: a $40 basket used to be hidden
+    expect(listable(b({ address: '0x3', deployer: A, aumUsd: 40 }))).toBe(true)
     expect(LISTING_TVL_FLOOR_USD).toBeLessThan(MEASURABLE_TVL_FLOOR_USD)
   })
 })

@@ -43,6 +43,10 @@ export interface PageToggles {
 export type PageKey = keyof PageToggles
 
 /** Runtime list of the toggleable pages (order = how the setup studio lists them). */
+// `bundle` STAYS in this list even though the kit now ships it off: this is the
+// set of pages an operator can TOGGLE, and dropping a key here removes it from
+// the setup studio and the exporter rather than disabling it. Disabling is
+// `pages: { bundle: false }` in brand.config.ts — omitted keys default ON.
 // Cross-chain bundles were hidden 2026-07-09 and REVIVED 2026-07-29 (owner) under the
 // portfolio-plus-completion framing: a bundle is ONE ALLOCATION made of several
 // single-chain basket tokens the buyer holds themselves. Never "one token".

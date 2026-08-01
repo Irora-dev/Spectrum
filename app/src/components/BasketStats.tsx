@@ -46,7 +46,16 @@ export function BasketStats({ ix, chainId }: { ix: BasketData; chainId: number }
     weight: h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct,
   }))
   const { data } = useNavHistory({ chainId, assets, navPerToken: ix.navPerToken, ageSec, range })
-  const returns = computeReturns(data.length >= 2 ? data : ix.navSeries, ageSec)
+  // computeReturns always appends an ALL row measured from the FIRST POINT OF
+  // THE SERIES IT WAS GIVEN — which, on a basket older than 30 days, is a
+  // 30-day-old point, not the basket's creation. Labelling that "Return since
+  // creation" put a second, contradicting since-inception number on the page
+  // beside the hero's true one (a 6-month-old basket read +4.10% up top and
+  // +38.20% here). The hero owns that figure; this strip drops the row rather
+  // than mislabel a clamped window.
+  const returns = computeReturns(data.length >= 2 ? data : ix.navSeries, ageSec).filter(
+    (r) => r.range !== 'ALL' || range === 'ALL',
+  )
 
   const changeColor =
     ix.change24hPct == null ? undefined : ix.change24hPct >= 0 ? 'var(--color-cyan)' : 'var(--color-magenta)'

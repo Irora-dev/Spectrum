@@ -9,8 +9,9 @@ import { useClaimAll } from '../lib/spectrum/use-fee-actions'
 import { refLinkFor } from '../lib/spectrum/referral'
 import { TRADING_ENABLED } from '../lib/config/features'
 import { shortAddr } from '../lib/spectrum/format'
-import { useAllBaskets } from '../lib/spectrum/hooks'
+import { useAllBaskets, usePortfolio } from '../lib/spectrum/hooks'
 import { CrownWinnings } from '../components/CrownWinnings'
+import { PortfolioClaims } from '../components/PortfolioClaims'
 
 const GRADIENT = 'linear-gradient(90deg,var(--color-amber),var(--color-magenta),var(--color-cyan))'
 const CARD_GRAD = 'linear-gradient(135deg, rgba(53,224,255,0.35), rgba(164,139,255,0.18) 45%, rgba(255,77,184,0.28))'
@@ -179,6 +180,13 @@ export function Refer() {
   // basket" (the creator fee pays creatorPayout, which may not be the
   // deployer, so the row never asserts WHICH slice filled the pot).
   const { data: allBaskets, chainsFailed } = useAllBaskets()
+  // Holder-fee reads are ~9 contract calls per basket, so they are scoped to the
+  // baskets this wallet actually HOLDS — the same subset the Portfolio's Earn
+  // card uses, and the same query keys, so the two pages share one cache. An
+  // earlier pass here passed EVERY basket on every chain and turned this page's
+  // per-basket cost from 1 read into ~10 (caught in review, 2026-08-01).
+  const { data: portfolio } = usePortfolio(address)
+  const heldBaskets = (portfolio?.holdings ?? []).map((h) => h.basket)
   const me = address?.toLowerCase()
   const created = me
     ? (allBaskets ?? []).filter((b) => b.deployer?.toLowerCase() === me && !b.supersededBy)
@@ -297,9 +305,23 @@ export function Refer() {
             {ca.skippedOtherChain > 0 && !ca.running ? ` ${ca.skippedOtherChain} on another network — switch to claim those.` : ''}
             {ca.error && !ca.running ? ` ${ca.error}` : ''}
             {chainsFailed > 0 ? ` ${chainsFailed} network${chainsFailed === 1 ? '' : 's'} unavailable right now — the total may be missing accruals there.` : ''}
-            {' '}Crown earnings from the creator league are separate and withdrawable any time, below.
+            {' '}This total is fee-TAG income only — fees your address earns because a trade, launch or
+            basket points at it. Fees you earn as a HOLDER accrue per token to each basket&rsquo;s own
+            reserve and are claimed per basket; they are listed separately below. Crown earnings from
+            the creator league are separate and withdrawable any time, also below.
           </p>
         </section>
+
+        {/* Holder fees — a DIFFERENT pot from the fee-tag total above: the
+            holder share accrues per token to each basket's reserve beside NAV,
+            so it never appears in pendingFrontendFees. It was visible only on
+            the Token holdings card and the Portfolio summary, which made this
+            page's "everything your address earns" line untrue for anyone
+            holding a basket (owner 2026-08-01: "the claim page isnt correctly
+            showing all fees accured, there definitely is fees on the wallet im
+            connected to for holder fees"). Same query keys as those two
+            surfaces, so it re-reads nothing. Self-hides with no claim. */}
+        <PortfolioClaims baskets={heldBaskets} holderOnly />
 
         {/* crown winnings — a won season is real money that lived only on
             /league before (owner 2026-07-30); self-hides until one exists */}

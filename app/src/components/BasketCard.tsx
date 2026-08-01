@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { basketHref } from '../lib/spectrum/short-url'
 import { ChainBadge } from './ChainBadge'
 import { BasketAvatar } from './BasketAvatar'
 import { BasketBento } from './BasketBento'
@@ -91,7 +92,7 @@ export function BasketCard({ ix, footer, fullBento = false }: { ix: BasketSummar
     <div className={`group relative overflow-hidden rounded-2xl border border-white/15 p-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] transition-[translate,border-color,background-color] duration-200 hover:-translate-y-0.5 hover:border-white/30 ${fullBento ? 'bg-panel hover:bg-panel-2' : 'bg-white/[0.045] backdrop-blur-md hover:bg-white/[0.06]'}`}>
       {/* whole-card link sits behind the content; the pager opts back into clicks */}
       <Link
-        to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+        to={basketHref(ix)}
         aria-label={`View $${ix.symbol}`}
         className="absolute inset-0 z-0"
       />

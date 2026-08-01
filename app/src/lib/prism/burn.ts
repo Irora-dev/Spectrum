@@ -25,8 +25,12 @@ import { PRISM_V2_HOOK } from './claim'
 //               quote, never a looser floor.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Flip to true WITH the new factory book — never before (see header). */
-export const BURNER_V2 = false
+/** Flipped WITH the Ethereum factory book edit (2026-08-01) — the new
+ *  factory's flushAuctionProceeds targets the NEW burner, so the canvas and
+ *  the book move together. The OLD factory's residual auction escrow stays
+ *  crankable against the incumbent via the old contracts, deliberately not
+ *  wired here. */
+export const BURNER_V2 = true
 
 /** The active burner. Literal ternary on purpose: scripts/verify-deployments.mjs
  *  parses both addresses out of this line and read-backs the active one. */

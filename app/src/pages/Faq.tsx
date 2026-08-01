@@ -115,6 +115,23 @@ export function Faq() {
             separately.
           </p>
         </Q>
+        <Q q="As a holder, how do I receive my share of the fees?">
+          {/* The community's own question, verbatim shape (Telegram 2026-08-01) —
+              the mechanism was real but undocumented. Quarantine framing holds:
+              a reserve accrues and is claimable; never "holders earn / are paid". */}
+          <p>
+            On-chain, per basket, as a pull. Each trade&rsquo;s holder share accrues inside the
+            basket contract to a fee reserve, tracked per token you hold (the contract keeps a
+            per-share accumulator, so your share is exact whenever your balance changes). It
+            accrues in the settlement currency and sits <em>beside</em> the basket&rsquo;s NAV —
+            it never inflates the token&rsquo;s price. You claim it whenever you like: the fee
+            console (the Flush page) shows your claimable amount per basket with a one-click
+            claim straight to your wallet, and your holdings card on any basket page shows the
+            same figure. Verifiable directly: <code>claimableFees(your address)</code> on the
+            basket contract is the number the site displays. Claiming is permissionless — no
+            operator holds the reserve, and nothing expires.
+          </p>
+        </Q>
         <Q q="Does Spectrum charge a management fee?">
           <p>
             No. There is no management or subscription fee. The only fee is the per-basket

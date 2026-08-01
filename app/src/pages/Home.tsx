@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
+import { basketHref } from '../lib/spectrum/short-url'
 import { useCountUp } from '../lib/motion'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { buildCreatorLeaderboard, listable, perfMeasurable, rankBaskets, versionChain } from '../lib/spectrum/leaderboard'
@@ -21,6 +22,7 @@ import { useActiveChainId } from '../lib/chain/active-chain'
 import { ROBINHOOD_CHAIN_ID } from '../lib/chain/constants'
 import { stocksEnabled } from '../theme/brand'
 import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 import homeHeroArt from '../assets/home-hero-v2.jpg'
 // 1280w variant: a phone decodes ~10× fewer pixels (systems audit) — srcSet
 // lets the browser pick; the 3840w original still serves large screens.
@@ -162,7 +164,7 @@ function HomeSwap({ baskets }: { baskets: BasketSummary[] }) {
               </div>
 
               <Link
-                to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+                to={basketHref(ix)}
                 className="press relative mt-4 block rounded-lg border border-white/15 py-2 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim hover:border-cyan/50 hover:text-cyan"
               >
                 See the whole basket →
@@ -306,7 +308,7 @@ function HeroShowcase({ baskets }: { baskets: BasketSummary[] }) {
           </div>
           <div className="mt-7 flex items-center gap-3">
             <Link
-              to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+              to={basketHref(ix)}
               className="press rounded-lg bg-cyan px-6 py-2.5 font-mono text-xs font-bold uppercase tracking-[0.16em] text-black hover:opacity-90"
             >
               View basket →
@@ -409,7 +411,7 @@ export function Home() {
 
   // Exactly Explore's rules: spotlight = the measurable top three by performance
   // to date; the thesis grid follows the same perf order (objective, not curated).
-  // Home has no search, so the $100 listing floor always applies (R+C)
+  // Home has no search, so the listing floor (LISTING_TVL_FLOOR_USD) always applies (R+C)
   const ranked = rankBaskets(data ?? [], { sort: 'perf' }).filter(listable)
   const spotlight = ranked.filter(perfMeasurable).slice(0, 9) // trio window pool
   const theses = ranked.slice(0, 6)
@@ -598,7 +600,7 @@ export function Home() {
             {/* the spotlight's companion: the deepest published BUNDLE, shown as
                 its bento (owner 2026-07-29). Renders only when one exists, so a
                 fresh deployment never shows an empty rail. */}
-            <FeaturedBundle chainId={activeChainId} />
+            {pageEnabled(brand.pages, 'bundle') && <FeaturedBundle chainId={activeChainId} />}
           </div>
 
           {/* the league advert — between the spotlight and the stats (owner);
@@ -673,7 +675,9 @@ export function Home() {
                 <TabBtn active={view === 'thesis'} onClick={() => setView('thesis')}>Top performers</TabBtn>
                 <TabBtn active={view === 'baskets'} onClick={() => setView('baskets')}>Baskets</TabBtn>
                 <TabBtn active={view === 'creators'} onClick={() => setView('creators')}>Creators</TabBtn>
-                <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
+                {pageEnabled(brand.pages, 'bundle') && (
+                  <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
+                )}
               </div>
 
               <div key={view}>

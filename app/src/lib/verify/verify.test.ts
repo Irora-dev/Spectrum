@@ -4,7 +4,7 @@ import { verdictFor, verifyChainConfig, DEPLOYER_ANCHOR_ENS } from './anchor'
 import canonicalBook from '../chain/deployments.json'
 import type { Address } from 'viem'
 
-const CANON_FACTORY = (canonicalBook as Record<string, Record<string, string | boolean | number>>)['8453'].factory as Address
+const CANON_FACTORY = (canonicalBook as Record<string, Record<string, unknown>>)['8453'].factory as Address
 
 describe('addressFingerprint', () => {
   it('is deterministic and case-insensitive', () => {
@@ -43,7 +43,7 @@ describe('anchor verdicts', () => {
     // so the assertion is: a SET field is canonical, an absent one is unset, and
     // nothing is ever 'override' for the shipped book.
     for (const chainId of [8453, 1, 4663]) {
-      const entry = (canonicalBook as Record<string, Record<string, string | boolean | number>>)[String(chainId)]
+      const entry = (canonicalBook as Record<string, Record<string, unknown>>)[String(chainId)]
       const at = (k: string) => {
         const v = entry[k]
         return typeof v === 'string' && v.length > 0 ? (v as Address) : null

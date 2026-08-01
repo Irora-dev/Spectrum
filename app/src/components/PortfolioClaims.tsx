@@ -49,12 +49,23 @@ export function usePortfolioClaimables(baskets: BasketSummary[]) {
   return { claimable, created, items, totalUsdc, degraded }
 }
 
-export function PortfolioClaims({ baskets, className = '', bare = false }: { baskets: BasketSummary[]; className?: string;
+export function PortfolioClaims({ baskets, className = '', bare = false, holderOnly = false }: { baskets: BasketSummary[]; className?: string;
   /** Content-only: the caller's card owns the chrome (the portfolio Earn card). */
-  bare?: boolean }) {
+  bare?: boolean;
+  /** Render ONLY the holder-fee bucket, hiding the created/fee-tag rows. /earn
+   *  already shows the fee-tag pot as its headline, with its own claim-all and
+   *  its own $10 mainnet crank floor — repeating `created` there would count the
+   *  same money twice, hand a sub-floor pot a Flush button that is guaranteed to
+   *  revert, and start a second claim-all whose re-entrancy guard the first one
+   *  cannot see (all three caught in review, 2026-08-01). */
+  holderOnly?: boolean }) {
   const { address } = useAccount()
   const ca = useClaimAll()
-  const { claimable, created, items, totalUsdc } = usePortfolioClaimables(baskets)
+  const agg = usePortfolioClaimables(baskets)
+  const { claimable } = agg
+  const created = holderOnly ? [] : agg.created
+  const items = holderOnly ? agg.items.filter((i) => i.kind === 'claim') : agg.items
+  const totalUsdc = holderOnly ? claimable.reduce((s, x) => s + x.usdc, 0) : agg.totalUsdc
   if (!TRADING_ENABLED || !address) return null
   if (claimable.length === 0 && created.length === 0) return null
   const rowCount = claimable.length + created.length

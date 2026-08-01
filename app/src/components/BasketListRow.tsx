@@ -1,5 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { basketHref } from '../lib/spectrum/short-url'
 import { Link } from 'react-router-dom'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { useCreatorMeta } from '../lib/spectrum/hooks'
@@ -323,7 +324,7 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
             )}
             <div className="mt-3 flex justify-end px-0.5">
               <Link
-                to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+                to={basketHref(ix)}
                 className="press rounded-lg border border-white/15 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
               >
                 Read the basket →

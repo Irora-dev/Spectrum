@@ -1,8 +1,11 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 
 // The teaching walkthrough — a fresh wallet's empty portfolio is a natural
 // "what even is this" moment (Colby 2026-07-29: every good surface). Lazy.
 import { BundleShelf } from '../components/BundleShelf'
+import { basketHref } from '../lib/spectrum/short-url'
 import { useActiveChainId } from '../lib/chain/active-chain'
 const LearnWalkthrough = lazy(() =>
   import('../components/LearnWalkthrough').then((m) => ({ default: m.LearnWalkthrough })),
@@ -16,6 +19,7 @@ import { TRADING_ENABLED as TRADING_ON } from '../lib/config/features'
 import { ShareEarnNudge } from '../components/ShareEarnNudge'
 import { BasketBento } from '../components/BasketBento'
 import { BasketWash } from '../components/BasketWash'
+import { PortfolioPnlSummary, PositionPnl } from '../components/PositionPnl'
 import { Link, Navigate } from 'react-router-dom'
 import { useAccount, useEnsName } from 'wagmi'
 import { DEPLOY_ENABLED, TRADING_ENABLED, WALLET_ENABLED } from '../lib/config/features'
@@ -185,6 +189,18 @@ function SummaryPanel({ p, shareArmed, onToggleShare, chainsFailed = 0 }: { p: P
             )}
           </div>
           </section>
+
+          {/* PnL across every holding (owner 2026-08-01) — same card language
+              as the Token page's, aggregated; sits right under the hero card */}
+          <PortfolioPnlSummary
+            className="mt-4"
+            holdings={p.holdings.map((h) => ({
+              address: h.basket.address,
+              chainId: h.basket.chainId,
+              navPerToken: h.basket.navPerToken,
+              balance: h.balance,
+            }))}
+          />
         </div>
 
         {/* ── the ONE earn card, CONDENSED (owner 2026-07-29 "a complete
@@ -335,7 +351,7 @@ function HoldingCard({ h, share }: { h: PortfolioHolding; share?: { url: string;
       />
 
       <Link
-        to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+        to={basketHref(ix)}
         aria-label={`View $${ix.symbol}`}
         className="relative z-10 flex flex-col gap-4 p-5 sm:p-6"
       >
@@ -379,6 +395,18 @@ function HoldingCard({ h, share }: { h: PortfolioHolding; share?: { url: string;
           )}
         </div>
       </Link>
+
+      {/* invested vs PnL for this holding (owner 2026-07-31) — a SIBLING of
+          the Link (its ⓘ is interactive; same rule as the share row below);
+          Portfolio's own balance rides in, so the row costs zero extra reads */}
+      <PositionPnl
+        basket={ix.address}
+        chainId={ix.chainId}
+        navPerToken={ix.navPerToken}
+        balanceTokens={h.balance}
+        variant="row"
+        className="relative z-10 border-t border-white/[0.08] px-5 pb-4 pt-3 sm:px-6"
+      />
 
       {/* share & earn — sibling of the Link, hidden when share is null (a basket
           the viewer created themselves) */}
@@ -647,7 +675,7 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
               publish, open to edit, retire. Only the wallet's own view — and
               only once a first basket EXISTS (first-basket-first, owner: a
               zero-basket creator sees one message, launch, not a bundles ad). */}
-          {view === 'created' && p.createdCount > 0 && (
+          {view === 'created' && p.createdCount > 0 && pageEnabled(brand.pages, 'bundle') && (
             <BundleShelf creator={p.address} chainId={activeChainId} manage basketCount={p.createdCount} />
           )}
         </div>

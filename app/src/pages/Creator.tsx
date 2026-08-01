@@ -5,6 +5,9 @@ import { CrownWinnings } from '../components/CrownWinnings'
 import { CreatorSignup } from '../components/creator/CreatorSignup'
 import { CreatorFeed } from '../components/creator/CreatorFeed'
 import { BundleShelf } from '../components/BundleShelf'
+import { BundleForge } from '../components/BundleForge'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 import { useActiveChainId } from '../lib/chain/active-chain'
 import { useFollowers as useFollowersOnchain } from '../lib/spectrum/notes-social'
 import { Link, useParams } from 'react-router-dom'
@@ -365,6 +368,7 @@ export function Creator() {
   const isDelegate =
     !!viewer && !!identityMeta?.delegate && viewer.toLowerCase() === identityMeta.delegate.toLowerCase()
   const [editing, setEditing] = useState(false)
+  const [forgeOpen, setForgeOpen] = useState(false)
 
   if (!address) return <Notice>No creator address provided.</Notice>
   if (isError) return <Notice>Couldn’t load this creator, the public RPC may be rate-limiting.</Notice>
@@ -436,12 +440,30 @@ export function Creator() {
           On your OWN page it's the manage view (owner 2026-07-29): with one
           basket it nudges the second launch, with more it invites the bundle —
           visitors still never see an empty section. */}
+      {pageEnabled(brand.pages, 'bundle') && (
       <BundleShelf
         creator={profile.address}
         chainId={activeChainId}
         manage={isMe}
         basketCount={profile.basketCount}
       />
+      )}
+      {/* Start a bundle from your own page (owner 2026-08-01). The shelf only
+          ever linked out from its EMPTY state, so the moment a creator had one
+          bundle there was no way to make another from here. Always present on
+          your own page; opens the forge over it. */}
+      {isMe && pageEnabled(brand.pages, 'bundle') && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => setForgeOpen(true)}
+            className="press inline-flex h-11 items-center gap-2 rounded-full border border-violet-bright/45 bg-violet-bright/10 px-6 font-mono text-[11px] uppercase tracking-[0.14em] text-[#cabdff] hover:border-violet-bright hover:bg-violet-bright/20"
+          >
+            + New bundle
+          </button>
+        </div>
+      )}
+      {forgeOpen && <BundleForge overlay onClose={() => setForgeOpen(false)} />}
       {identityMeta && <BullishOn identityMeta={identityMeta} />}
     </div>
   )

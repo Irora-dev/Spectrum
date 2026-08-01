@@ -7,6 +7,7 @@ import type { BrandConfig, DesignStyle, PageKey } from '../theme/brand'
 import { PAGE_KEYS, validateSiteName } from '../theme/brand'
 import { applyBrand } from '../theme/theme'
 import { AnnounceComposer } from '../components/AnnounceComposer'
+import { InfoDot } from '../components/InfoDot'
 import { GRADIENT_CATALOG } from '../theme/catalog'
 import { brandConfigToTs } from '../theme/export-brand'
 import type { DeployConfig, DeployIssues } from '../theme/export-env'
@@ -73,35 +74,9 @@ function updateCareLine(impact?: string, sacred?: string[]): string {
   return parts.join(' ')
 }
 
-// ⓘ disclosure (the /docs InfoDot pattern) — detail lives behind the dot, the label
-// stays one line. Opens on hover and on click/tap for touch + keyboard.
-function InfoDot({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <span
-      className="relative inline-flex align-middle"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-    >
-      <button
-        type="button"
-        aria-label="What this means"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className={`press grid h-5 w-5 place-items-center rounded-full border font-mono text-[11px] font-bold transition-colors ${
-          open ? 'border-cyan/60 bg-cyan/15 text-cyan' : 'border-white/25 bg-white/[0.07] text-ink-dim hover:border-cyan/50 hover:text-cyan'
-        }`}
-      >
-        i
-      </button>
-      {open && (
-        <span className="absolute left-1/2 top-6 z-30 w-[min(24rem,80vw)] -translate-x-1/2 rounded-xl border border-white/[0.2] bg-panel-2 p-4 pt-3 text-left text-[13px] font-normal normal-case leading-relaxed tracking-normal text-ink-dim shadow-[0_20px_60px_-20px_rgba(0,0,0,0.9)]">
-          {children}
-        </span>
-      )}
-    </span>
-  )
-}
+// The ⓘ disclosure is the SHARED component now (2026-08-01) — this page carried
+// a near-identical fork whose panel sat at z-30, i.e. under the z-40 band
+// canvas. One implementation, one set of escape rules.
 
 const STYLES: { id: DesignStyle; blurb: string }[] = [
   { id: 'spectral', blurb: 'The reference look' },

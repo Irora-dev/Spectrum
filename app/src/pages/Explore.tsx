@@ -1,5 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 import { Link } from 'react-router-dom'
+import { basketHref } from '../lib/spectrum/short-url'
 
 // The teaching walkthrough (Colby 2026-07-29: on every good surface) — lazy,
 // loads only on ask.
@@ -40,7 +43,7 @@ import { useWalletAssets } from '../lib/spectrum/use-wallet-assets'
 import { tagAllowed } from '../lib/spectrum/tags'
 import { DexSwapCard } from '../components/DexSwapCard'
 import { SWAP_ENABLED } from '../lib/config/features'
-import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
+import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { SpectralSearch } from '../components/SpectralSearch'
 import { BasketChart } from '../components/BasketChart'
 import { BlueprintBasket } from '../components/BlueprintBasket'
@@ -234,7 +237,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
           </div>
         ) : (
         <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25 sm:p-3.5">
-          <Link to={`/token?addr=${ix.address}&chain=${ix.chainId}`} className="relative block">
+          <Link to={basketHref(ix)} className="relative block">
             <BasketBento items={bentoItems(ix)} fill className={compact ? 'min-h-[160px] sm:min-h-[200px]' : 'min-h-[180px] sm:min-h-[270px]'} reveal={{ delayMs: 150, stepMs: 60 }} show={active && booted} />
           </Link>
           {/* the dither trend rides the DEFAULT face too (owner 2026-07-29:
@@ -269,7 +272,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
                  compact the slideshow pill pins to the column bottom, level
                  with the View-basket button (owner 18:04) ── */}
           <div className={`min-w-0 ${nav ? 'flex flex-col' : ''}`}>
-            <Link to={`/token?addr=${ix.address}&chain=${ix.chainId}`} className="block">
+            <Link to={basketHref(ix)} className="block">
               <span className="font-display text-4xl font-bold leading-none tracking-tight text-ink sm:text-5xl">${ix.symbol}</span>
             </Link>
             <div className="mt-2.5 truncate text-base text-ink-dim">{ix.name?.trim() || ix.symbol}</div>
@@ -342,7 +345,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
             )}
             <div className="mt-auto flex justify-end">
               <Link
-                to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+                to={basketHref(ix)}
                 className="press inline-flex items-center gap-2 rounded-xl border border-white/15 px-6 py-3 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
               >
                 View basket →
@@ -591,7 +594,7 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
           />
         </div>
       ) : (
-      <Link to={`/token?addr=${ix.address}&chain=${ix.chainId}`} className="relative block overflow-hidden rounded-xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25">
+      <Link to={basketHref(ix)} className="relative block overflow-hidden rounded-xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25">
         {/* …and unmasked BEHIND the bento — the colors bleed through the grid's gaps */}
         <BasketWash ix={ix} side="full" opacity={0.32} />
         <BasketBento items={bentoItems(ix)} aspect={2.3} />
@@ -599,7 +602,7 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
       )}
 
       <div className="relative mt-4 flex min-w-0 items-center justify-between gap-3">
-        <Link to={`/token?addr=${ix.address}&chain=${ix.chainId}`} className="min-w-0">
+        <Link to={basketHref(ix)} className="min-w-0">
           <span className="font-display text-xl font-bold leading-tight text-ink">${ix.symbol}</span>
           <span className="ml-2.5 truncate text-sm text-ink-dim">{ix.name?.trim() || ''}</span>
         </Link>
@@ -670,7 +673,7 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
           </span>
         </div>
         <Link
-          to={`/token?addr=${ix.address}&chain=${ix.chainId}`}
+          to={basketHref(ix)}
           className="press rounded-lg border border-white/15 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
         >
           View basket →
@@ -887,7 +890,7 @@ export function Explore() {
     let list = rankBaskets(chainScoped, { sort: 'perf', asset })
     if (tag) list = list.filter(basketHasTag)
     if (qTerms.length) list = list.filter((b) => matchesTerms(`${b.symbol} ${b.name} ${b.address} ${b.top.map((t) => t.symbol).join(' ')} ${(sectorsByBasket.get(keyOfB(b)) ?? []).join(' ')}`, qTerms))
-    // sub-$100 baskets browse hidden, search reachable (R+C listing floor)
+    // sub-floor baskets browse hidden (LISTING_TVL_FLOOR_USD), search reachable (R+C listing floor)
     if (!qTerms.length) list = list.filter(listable)
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -989,7 +992,9 @@ export function Explore() {
           <TabBtn active={view === 'baskets'} onClick={() => setView('baskets')}>Baskets</TabBtn>
           <TabBtn active={view === 'creators'} onClick={() => setView('creators')}>Creators</TabBtn>
           {/* bundles: several baskets held as one allocation (owner 2026-07-29) */}
-          <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
+          {pageEnabled(brand.pages, 'bundle') && (
+            <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
+          )}
         </div>
         {view !== 'thesis' && (
         <label className="relative flex min-w-0 flex-1 items-center sm:max-w-xs">
@@ -1196,7 +1201,14 @@ export function Explore() {
                   </Link>
                 </div>
                 <div className="lg:col-start-2 lg:row-start-2">
-                  <DexSwapCard chainId={chain === 'all' ? DEFAULT_CHAIN_ID : chain} strip />
+                  {/* On "All chains" this followed DEFAULT_CHAIN_ID (Base)
+                      rather than the network the site is on, so the rows beside
+                      it listed every chain's baskets while the picker listed
+                      Base's — on a Robinhood site that is an empty picker next
+                      to a full page (owner 2026-08-01: "the quick swap doesn't
+                      pick up all the launched baskets"). Every other swap
+                      surface already follows the active chain; so does this. */}
+                  <DexSwapCard chainId={chain === 'all' ? activeChainId : chain} strip />
                 </div>
               </>
             )}

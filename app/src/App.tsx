@@ -34,6 +34,7 @@ const Integrate = lazy(() => import('./pages/Integrate').then((m) => ({ default:
 const League = lazy(() => import('./pages/League').then((m) => ({ default: m.League })))
 const Bundle = lazy(() => import('./pages/Bundle').then((m) => ({ default: m.Bundle })))
 const PublishedBundlePage = lazy(() => import('./pages/Bundle').then((m) => ({ default: m.PublishedBundlePage })))
+const BundleForgePage = lazy(() => import('./components/BundleForge').then((m) => ({ default: m.BundleForgePage })))
 const Refer = lazy(() => import('./pages/Refer').then((m) => ({ default: m.Refer })))
 const PrismClaim = lazy(() => import('./pages/PrismClaim').then((m) => ({ default: m.PrismClaim })))
 const Terms = lazy(() => import('./pages/Terms').then((m) => ({ default: m.Terms })))
@@ -80,6 +81,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/earn': 'Earn',
   '/league': 'Creator league',
   '/bundle': 'Bundles',
+  '/bundle/new': 'New bundle',
   '/claim': 'PRISM claim',
   '/terms': 'Terms',
   '/verify': 'Verify contracts',
@@ -93,7 +95,17 @@ const homeTitle = () => `${brand.name} · ${brand.tagline?.trim() || 'onchain ba
 function RouteTitle() {
   const { pathname, search } = useLocation()
   useEffect(() => {
-    const label = ROUTE_LABELS[pathname] ?? (pathname.startsWith('/creator') ? 'Creator' : null)
+    // Exact match first, then the parameterised shapes. The short routes are
+    // prefixes, so they can never be exact-matched from the table above.
+    const label =
+      ROUTE_LABELS[pathname] ??
+      (pathname.startsWith('/creator') || pathname.startsWith('/c/')
+        ? 'Creator'
+        : pathname.startsWith('/t/')
+          ? 'Basket'
+          : pathname.startsWith('/b/')
+            ? 'Bundle'
+            : null)
     document.title = label ? `${label} · ${brand.name}` : homeTitle()
   }, [pathname])
   // Capture a `?ref=<address>` from any inbound link and persist it (FIRST-touch —
@@ -142,6 +154,13 @@ export function App() {
                 <Route path="/creators" element={gate('creators', <SlashCreators />)} />
                 <Route path="/token" element={<Token />} />
                 <Route path="/creator/:address" element={<Creator />} />
+                {/* SHORT LINKS (owner 2026-08-01). Additive, never a rename:
+                    every URL above keeps resolving forever because they are
+                    already shared publicly. These are simply what the app mints
+                    from now on. See lib/spectrum/short-url.ts. */}
+                <Route path="/t/:chain/:ref" element={<Token />} />
+                <Route path="/c/:address" element={<Creator />} />
+                <Route path="/b/:creator/:slug" element={gate('bundle', <PublishedBundlePage />)} />
                 <Route path="/portfolio" element={gate('portfolio', <Portfolio />)} />
                 <Route path="/launch" element={gate('launch', <Launch />)} />
                 <Route path="/compose" element={gate('launch', <Composer />)} />
@@ -152,6 +171,10 @@ export function App() {
                 {/* Cross-chain ALLOCATIONS — several single-chain baskets held as one
                     allocation (revived 2026-07-29; hidden 07-09). NOT one token. */}
                 <Route path="/bundle" element={gate('bundle', <Bundle />)} />
+                {/* THE FORGE. One segment, so it never collides with the
+                    two-segment :creator/:slug pattern below. `?from=&chain=`
+                    seeds a leg — that is the Token page's one-tap entry. */}
+                <Route path="/bundle/new" element={gate('bundle', <BundleForgePage />)} />
                 {/* a PUBLISHED bundle's own page — stable + shareable, reads the
                     on-chain note so it survives the share link being lost */}
                 <Route path="/bundle/:creator/:slug" element={gate('bundle', <PublishedBundlePage />)} />

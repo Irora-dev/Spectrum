@@ -14,6 +14,10 @@
 //   · factory answers allBasketsLength() (the cheapest canonical read)
 //   · leaguePool, where set, answers champion() (the live-stream ABI — the
 //     podium/pot models are SUPERSEDED and would revert here)
+//   · every `legacy` lineage pair (superseded factory + the router its baskets
+//     still trade through) has code, the factory answers allBasketsLength(),
+//     and it is not a duplicate of the live factory — a legacy entry that
+//     repeats the current one would list every basket twice
 //   · notesRegistry code is BYTE-IDENTICAL across every chain that sets it
 //     (the CREATE2 same-address invariant)
 //   · on Ethereum: the L1 PrismBurner named in src/lib/prism/burn.ts has code,
@@ -131,6 +135,42 @@ for (const [chainStr, entry] of Object.entries(book)) {
       if (field === 'notesRegistry') notesCode.set(chainId, code)
     } catch (e) {
       fail(`${field} ${addr}: ${e.message}`)
+    }
+  }
+
+  // Superseded lineages: their baskets stay listed and tradable, so a wrong
+  // pair here is as expensive as a wrong live address — it just fails quietly
+  // on old baskets instead of loudly on new ones.
+  const legacy = Array.isArray(entry.legacy) ? entry.legacy : []
+  for (const [i, lin] of legacy.entries()) {
+    const label = `legacy[${i}]`
+    if (!lin?.factory || !lin?.swapRouter) {
+      fail(`${label} needs BOTH factory and swapRouter (an unpaired entry is dropped at runtime)`)
+      continue
+    }
+    if (lin.factory.toLowerCase() === String(entry.factory).toLowerCase()) {
+      fail(`${label}.factory is the LIVE factory — every basket would be listed twice`)
+      continue
+    }
+    for (const [sub, addr] of [['factory', lin.factory], ['swapRouter', lin.swapRouter]]) {
+      try {
+        const code = await getCode(chainId, addr)
+        if (!code || code === '0x') {
+          fail(`${label}.${sub} ${addr} has NO CODE`)
+          continue
+        }
+        ok(`${label}.${sub} ${addr.slice(0, 10)}… has code (${(code.length - 2) / 2} bytes)`)
+        if (sub === 'factory') {
+          try {
+            const n = Number(BigInt(await call(chainId, addr, SEL.allBasketsLength)))
+            ok(`  ${label}.factory.allBasketsLength() = ${n}`)
+          } catch {
+            fail(`  ${label}.factory.allBasketsLength() reverted — not a basket factory`)
+          }
+        }
+      } catch (e) {
+        fail(`${label}.${sub} ${addr}: ${e.message}`)
+      }
     }
   }
 }

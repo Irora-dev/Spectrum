@@ -8,6 +8,7 @@ import { formatNav, formatPct, formatPrice } from '../lib/spectrum/format'
 import { AreaChart } from './dither-kit/area-chart'
 import { Area as DitherArea } from './dither-kit/area'
 import { XAxis as DXAxis } from './dither-kit/x-axis'
+import { YAxis as DYAxis } from './dither-kit/y-axis'
 import { Tooltip as DTooltip } from './dither-kit/tooltip'
 import { tokenVisual } from '../lib/spectrum/token-meta'
 
@@ -37,6 +38,19 @@ function fmtAxis(t: number, range: ChartRange): string {
   const d = new Date(t * 1000)
   if (range === '24H') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+/** Price-axis tick. One basket's NAV can sit at $2,600 and another's at
+ *  $0.0120, so the precision follows the magnitude instead of a fixed dp:
+ *  thousands compact, dollars to 2dp, sub-dollar to 4 significant places. */
+function fmtPriceTick(v: number): string {
+  const n = Math.abs(v)
+  if (!Number.isFinite(v)) return ''
+  if (n >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `$${(v / 1_000).toFixed(n >= 10_000 ? 0 : 1)}K`
+  if (n >= 1) return `$${v.toFixed(2)}`
+  if (n === 0) return '$0'
+  return `$${v.toPrecision(3)}`
 }
 
 function fmtFull(t: number): string {
@@ -237,6 +251,14 @@ export function BasketChart({
       </div>
 
       <div className={`relative w-full ${heightClass}`} aria-busy={isLoading}>
+        {/* names the left axis's unit — the ticks are dollars whether you are
+            reading the basket alone or the constituents over it (owner
+            2026-08-01: "a left axis say price which works for both"). */}
+        {series.length >= 2 && (
+          <span className="pointer-events-none absolute -top-1 left-0 z-10 font-mono text-[9px] uppercase tracking-[0.18em] text-ink-faint">
+            Price
+          </span>
+        )}
         {series.length < 2 ? (
           <div className="grid h-full w-full place-items-center rounded-lg bg-white/[0.02] font-mono text-[11px] uppercase tracking-widest text-ink-faint">
             {isLoading ? 'Loading price history…' : 'No price history yet'}
@@ -249,7 +271,7 @@ export function BasketChart({
           <div className="absolute inset-0">
           {under ? (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} margin={{ top: 6, right: 2, bottom: 0, left: 2 }}>
+              <ComposedChart data={rows} margin={{ top: 6, right: 2, bottom: 0, left: 6 }}>
                 <defs>
                   <linearGradient id={strokeId} x1="0" y1="0" x2="1" y2="0">
                     <stop offset="0%" stopColor="var(--color-amber)" />
@@ -268,7 +290,19 @@ export function BasketChart({
                   tickLine={false}
                   minTickGap={48}
                 />
-                <YAxis domain={domain} hide />
+                {/* left price axis (owner 2026-08-01). The scale is dollars
+                    either way: with the overlay on, each constituent is rebased
+                    to the basket's start, so the axis reads "what this line is
+                    worth" for every series on it. */}
+                <YAxis
+                  domain={domain}
+                  width={54}
+                  tickFormatter={(v) => fmtPriceTick(v as number)}
+                  tick={{ fill: 'var(--color-ink-faint)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickCount={4}
+                />
                 <Tooltip
                   cursor={{ stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1, strokeDasharray: '3 4' }}
                   content={<ChartTooltip symbol={symbol} lines={under ? underLines : undefined} basketChange={change24hPct} />}
@@ -309,7 +343,10 @@ export function BasketChart({
             <AreaChart
               data={rows}
               yDomain="data"
-              margins={{ top: 6, right: 2, bottom: 22, left: 2 }}
+              // left: 56 reserves the price axis's gutter. It was 2, and the
+              // axis draws its labels at -8 from the plot origin, so every tick
+              // rendered outside the plot and hard against the card edge.
+              margins={{ top: 6, right: 2, bottom: 22, left: 56 }}
               config={{
                 value: {
                   label: symbol,
@@ -333,6 +370,10 @@ export function BasketChart({
               className="h-full w-full"
             >
               <DXAxis dataKey="time" tickFormatter={(t) => fmtAxis(Number(t), active)} />
+              {/* same left price axis as the overlay renderer (owner
+                  2026-08-01) — the two views must not disagree about whether
+                  the chart has a scale. */}
+              <DYAxis tickFormatter={(v) => fmtPriceTick(Number(v))} tickCount={4} />
               <DTooltip labelKey="tl" valueFormatter={(v) => `$${formatNav(v, 4)}`} />
               <DitherArea dataKey="value" variant="gradient" />
             </AreaChart>

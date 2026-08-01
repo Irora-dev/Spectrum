@@ -3,6 +3,10 @@
     { "source": "/creator/assets/(.*)", "destination": "/assets/$1" },
     { "source": "/docs/assets/(.*)", "destination": "/assets/$1" },
     { "source": "/bundle/(.*)/assets/(.*)", "destination": "/assets/$2" },
+    { "source": "/bundle/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/t/(.*)/assets/(.*)", "destination": "/assets/$2" },
+    { "source": "/c/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/b/(.*)/assets/(.*)", "destination": "/assets/$2" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

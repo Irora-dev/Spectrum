@@ -82,6 +82,14 @@ export interface ChainDeployment {
    *  guess (a league chain showed the creator 24.00% where the contract paid
    *  22.80%, and the league slice nowhere at all). */
   leagueShareBps: number
+  /** Superseded lineages whose baskets stay LISTED and TRADABLE through their
+   *  own contracts (owner 2026-08-01: "the old baskets should continue to
+   *  show, but every new launch is solely from the new contracts"). Each pair
+   *  is a retired factory + the router its baskets trade through — discovery
+   *  enumerates them, the trade path routes per basket, and the LAUNCH path
+   *  never touches them (it reads only `factory`). json-only, no env override:
+   *  a lineage is a fact about deployed history, not a per-site knob. */
+  legacy: { factory: Address; swapRouter: Address }[]
 }
 
 function addr(v: unknown): Address | null {
@@ -105,7 +113,7 @@ const ENV_OVERRIDES: Partial<Record<AddressField, string | undefined>> = {
   leaguePool: import.meta.env.VITE_LEAGUE_POOL_ADDRESS,
 }
 
-type AddressField = Exclude<keyof ChainDeployment, 'v4qLineage' | 'leagueShareBps'>
+type AddressField = Exclude<keyof ChainDeployment, 'v4qLineage' | 'leagueShareBps' | 'legacy'>
 
 const FIELDS: AddressField[] = [
   'factory',
@@ -140,6 +148,17 @@ export function deploymentFor(chainId: number): ChainDeployment {
   // Bounded: a malformed or absurd value must degrade to "no league leg" rather
   // than silently rewrite every displayed fee split.
   out.leagueShareBps = Number.isFinite(league) && league > 0 && league <= 2_000 ? Math.round(league) : 0
+  // Legacy lineages: validated pairs only — a malformed entry is dropped, and a
+  // pair missing either address is dropped whole (a factory whose baskets have
+  // no router would list things the site can't trade).
+  out.legacy = Array.isArray(entry.legacy)
+    ? (entry.legacy as unknown[]).flatMap((l) => {
+        const rec = (l ?? {}) as Record<string, unknown>
+        const factory = addr(rec.factory)
+        const swapRouter = addr(rec.swapRouter)
+        return factory && swapRouter ? [{ factory, swapRouter }] : []
+      })
+    : []
   return out
 }
 

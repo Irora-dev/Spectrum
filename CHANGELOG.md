@@ -7,6 +7,107 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.01
+
+Sacred: launch, swap — the canonical address book moves Ethereum and Base to the
+launch-ceremony factories and routers, and the trade path now picks a basket's router
+from its own lineage. **`impact: breaking`** — not because anything needs reconfiguring
+to work, but because bundles ship disabled and an operator currently showing them must
+add `bundle` back to `pages` to keep them. Read the last section before you update.
+
+### Ethereum + Base are on the new contracts
+
+The canonical book now points both chains at the launch-ceremony deployment (read back
+live before seating, the same ritual as Robinhood's leg): flat **0.003 ETH** launch fee
+from genesis, the burn machinery aimed at the **v2 PRISM** burner, community-created
+baskets, and the notes registry live at the same CREATE2 address on all three chains.
+The auction-burn console on the fee page drives the new burner with its mandatory
+slippage floor and sized slices. Launch and trading on Ethereum and Base work exactly as
+on Robinhood Chain.
+
+### Superseded lineages keep their baskets
+
+A chain's entry in the address book can now name the lineages it has retired
+(`legacy: [{ factory, swapRouter }]`), and Ethereum and Base ship with theirs. Baskets
+launched on a retired factory **stay listed and stay tradable** — discovery walks every
+lineage, each basket remembers which one it belongs to, and its trades, deployer and
+inception date are read from the contracts that actually minted it rather than from the
+new factory, which knows nothing about them. A superseded basket keeps trading through
+its **own** router: pairing an old basket with a new router is a combination nobody has
+tested, and the money path does not gamble. Launching only ever uses the live factory,
+so every new basket starts on the current contracts. Cost basis covers the old baskets
+too — the position scan reads every lineage's router in the same single call.
+
+### Your position, honestly measured
+
+The Token page's right rail leads with a holdings card — current value, total invested,
+net PnL with its percentage — and each Portfolio holding carries the same strip, with an
+all-holdings summary under the Portfolio hero. The basis is average cost over what your
+wallet traded through this site's routers, in settlement dollars: tokens that arrived any
+other way are excluded rather than guessed, and the ⓘ says exactly what is covered. The
+whole feature costs about one RPC call per wallet (one trader-filtered log scan, cached
+and topped up incrementally).
+
+### Holder fee claims, visible where you look
+
+A holder asked how basket trading fees actually reach them — fair question, it was
+undocumented. Now: the holdings card on every basket page shows your claimable fee
+reserve with a one-click path to the fee console, the Portfolio summary aggregates it
+across holdings, and the FAQ answers it plainly ("As a holder, how do I receive my share
+of the fees?"): the holder share accrues per token to a reserve beside NAV — never
+inside it — and you pull it to your wallet whenever you like; `claimableFees(you)` on
+the basket contract is the same number.
+
+### The basket page, rebuilt around the thing you came for
+
+The card runs about 10% wider and all of the extra width goes to the chart, since the
+swap rail is a fixed track. The creator and their thesis move out of that rail and into
+the header, where a paragraph reads across the page instead of down a narrow column, and
+the constituent logos move under the price. Both chart renderers gained a **left price
+axis** — there was none before, on either. Under the price sits a **since-inception
+return**: value per token today against its value at creation, which being a ratio cannot
+be flattered by the size of the basket. Below the $1,000 measurability floor it renders
+muted and says "too thin to call a track record", because one trade can move a thin
+basket's price on its own.
+
+### Shorter links, and every old one still works
+
+A basket is now `/t/r/T2-29374eaa` rather than a 62-character query string; creators and
+published bundles get `/c/…` and `/b/…`. **Every existing URL keeps resolving exactly as
+before** — this is additive routing, never a rename, because links already shared are not
+ours to expire. The reference is `SYMBOL-<8 hex>`: the symbol for people, the address for
+the machine, and both halves must agree or the link is refused rather than guessed. A
+bare ticker still works, and when one is ambiguous the page lists the candidates instead
+of picking for you.
+
+### Fixes from a day of real use
+
+- **Info popups never get clipped.** Every ⓘ panel now escapes its card, so an explainer
+  can't be cut off by the rounded corner it sits behind.
+- **The quick swap lists the network you are on.** It was pinned to Base whenever the
+  chain filter was "All", so on a Robinhood site the picker looked empty beside a full
+  page of baskets.
+- **One slow RPC no longer hides baskets.** A single throttled read could collapse
+  discovery to a short recent-blocks scan, hiding retired-lineage baskets and anything
+  older than about a day until the next poll happened to succeed.
+- **`/earn` shows holder fees.** It claimed to list everything an address earns while
+  only summing the fee-tag pots; the holder share is a separate per-basket reserve and
+  was invisible there.
+- **The browse floor is $10, down from $100.** The old floor was set when launching cost
+  far more, and against a flat launch fee it was hiding real baskets rather than noise.
+  Search always reached them; this is about the browsing surfaces.
+- Cost basis now covers retired-lineage baskets, and a sell whose proceeds cannot be
+  priced books nothing rather than guessing.
+
+### Bundles are off by default
+
+The cross-chain bundle idea is becoming its own product and is being rebuilt elsewhere,
+so the `bundle` page ships **disabled**. Adding `bundle` back to `pages` in
+`brand.config.ts` restores the pages exactly as they were — nothing was removed. If your
+site currently shows bundles and you want to keep showing them, add that one entry when
+you update; otherwise the routes, the nav link and the home and explore tabs simply do
+not appear.
+
 ## 2026.07.31
 
 Sacred: launch, swap — display surfaces on both paths changed (the launch popup's mining

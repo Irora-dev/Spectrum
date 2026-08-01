@@ -69,13 +69,18 @@ export function perfMeasurable(b: BasketSummary): boolean {
 }
 
 /**
- * The LISTING floor (R+C 2026-07-06 18:26, both settled on $100): baskets under
- * it are hidden from every browsing surface — their price action is seed-size
- * noise — but stay fully reachable through search ("if you search for them,
- * you can find them"). Distinct from the $1k measurability floor, which only
- * gates perf/money CLAIMS on baskets that are listed.
+ * The LISTING floor: baskets under it are hidden from every browsing surface —
+ * their price action is seed-size noise — but stay fully reachable through
+ * search ("if you search for them, you can find them"). Distinct from the $1k
+ * measurability floor, which only gates perf/money CLAIMS on baskets that are
+ * listed.
+ *
+ * $10 since 2026-08-01 (owner: "surface all baskets created over 10 dollars not
+ * 100"). Set to $100 by R+C on 2026-07-06 18:26, when a launch cost far more
+ * than it does now — a flat 0.003 ETH launch puts real baskets under the old
+ * floor, so it was hiding genuine ones rather than seed noise.
  */
-export const LISTING_TVL_FLOOR_USD = 100
+export const LISTING_TVL_FLOOR_USD = 10
 export function listable(b: BasketSummary): boolean {
   return (b.aumUsd || 0) >= LISTING_TVL_FLOOR_USD
 }

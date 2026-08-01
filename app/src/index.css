@@ -697,3 +697,34 @@ p {
   }
   .league-hero-breathe { opacity: 0.14; }
 }
+
+/* The bundle forge's add-slot: a conic ring that rotates behind a masked core,
+   so the glow travels the BORDER rather than lighting the whole tile (owner
+   2026-08-01: "glowing a little bit with a cool rotating animation"). Animating
+   a CSS custom property keeps it on the compositor — no layout, no repaint of
+   the tile's contents. Honours reduced-motion by simply not spinning. */
+@property --forge-spin {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+.forge-add-ring {
+  background: conic-gradient(
+    from var(--forge-spin),
+    var(--color-cyan),
+    var(--color-violet-bright),
+    var(--color-magenta),
+    var(--color-cyan)
+  );
+  animation: forge-spin 4s linear infinite;
+}
+@keyframes forge-spin {
+  to {
+    --forge-spin: 360deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .forge-add-ring {
+    animation: none;
+  }
+}

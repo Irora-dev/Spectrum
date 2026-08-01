@@ -45,7 +45,7 @@ const eqAddr = (a?: string | null, b?: string | null): boolean =>
 function canonicalFor(chainId: number, key: 'factory' | 'swapRouter' | 'usdc' | 'uniV3SwapRouter' | 'uniV3Quoter' | 'weth' | 'poolManager'): Address | null {
   // string | boolean | number: an entry may carry the v4qLineage flag and
   // leagueShareBps beside its addresses
-  const entry = (canonicalBook as Record<string, Record<string, string | boolean | number>>)[String(chainId)]
+  const entry = (canonicalBook as Record<string, Record<string, unknown>>)[String(chainId)]
   const v = entry?.[key]
   return typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v) ? (v as Address) : null
 }
