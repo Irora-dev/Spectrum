@@ -7,6 +7,19 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.16b
+
+Deploy and CI fixes, no money-code changes. Netlify's edge-function bundling failed on
+2026.08.16 because Deno requires extension-explicit imports and two files in the edge
+graph (the OG meta module and the 0x-proxy handler) imported without `.ts` — the first
+deploy since those modules were split out. Both imports now carry their extensions; the
+functions' 43 tests and the app typecheck are unchanged-green. Separately, the
+release-proof workflow could not prove 2026.08.16: its node-20 matrix leg cannot install
+the locked tree at all (react-router 8.3 requires node >=22.22), and both build
+simulations hit the new compose-enabled config check, which refuses any build with no
+operator fee sink — correct behavior for a real deploy, so CI now simulates an operator
+who configured one (a placeholder address; nothing deploys from CI).
+
 ## 2026.08.16
 
 Sacred: launch, swap, executor — this release changes the fee model, both money contracts'

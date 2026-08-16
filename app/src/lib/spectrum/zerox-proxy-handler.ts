@@ -1,4 +1,4 @@
-import { browserFetchAllowed, buildZeroxUpstream, originAllowed, stripProxyPrefix } from './zerox-proxy-request'
+import { browserFetchAllowed, buildZeroxUpstream, originAllowed, stripProxyPrefix } from './zerox-proxy-request.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE 0x PROXY'S HANDLER — the whole request lifecycle, in a file that is

@@ -10,7 +10,7 @@
 // NAV/perf figure would mislead. og:image points at the branded generic card for
 // now; per-basket card IMAGES are a follow-up (see netlify/edge-functions/README).
 
-import { showSymbol } from '../spectrum/safe-copy'
+import { showSymbol } from '../spectrum/safe-copy.ts'
 
 export interface OgMeta {
   title: string

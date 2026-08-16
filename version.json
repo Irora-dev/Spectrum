@@ -1,12 +1,8 @@
 {
-  "version": "2026.08.16",
-  "note": "The fee model changes with this release: the portfolio batching fee is 0.25% (0x's own ~0.15% makes ~0.4% all-in on aggregator legs), the direct-swap fee is 0.4%, and 100% of every Spectrum fee now buys and burns PRISM; there is no integrator split. Both money contracts are a NEW deployed generation with new call shapes, seated per chain in deployments.json (feeGeneration: 2), and every safety gate (the shown-vs-signed laws, the selector pins, settlement-decimals verification against the token itself) is generation-aware. Version upgrades that the in-kind path cannot serve now run as a protected sell-then-buy through each version's own pool, spending only the measured proceeds. The portfolio's first open gains a guided tour; every refusal on a money surface now carries the button its sentence names. BREAKING: sites pinning the old batcher/wrapper call shapes must update; bundles ship enabled on the canonical config.",
-  "impact": "breaking",
-  "sacred": [
-    "launch",
-    "swap",
-    "executor"
-  ],
+  "version": "2026.08.16b",
+  "note": "Follow-up to 2026.08.16, no money-code changes: Netlify edge-function bundling is fixed (Deno requires extension-explicit imports; the og and 0x-proxy graphs gained their .ts suffixes), and the release-proof workflow drops its impossible node-20 leg and seats a placeholder fee sink in its build simulations, which the compose-enabled config check rightly demands.",
+  "impact": "safe",
+  "sacred": [],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }
