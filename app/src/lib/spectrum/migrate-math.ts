@@ -266,10 +266,53 @@ export function planRebalance(
   return { ok: true, targetShares, deposits, sells, buys }
 }
 
+/**
+ * Tokens MEASURED to accept `approve(non-zero → non-zero)` directly, so the
+ * zero-first dance can be skipped and the user signs ONE transaction instead of
+ * two (the owner, 2026-08-16: "why does it need to remove token approval only to
+ * approve the token again?").
+ *
+ * ⚠ MEASURED, NOT ASSUMED, and the direction of risk is why. Being wrong toward
+ * zero-first costs one cheap transaction; being wrong the other way makes the
+ * approval REVERT and the run fail. So this list holds only the settlement
+ * tokens this app actually funds with, each probed on its own chain
+ * (eth_simulateV1, 2026-08-16: approve(1.00) then approve(2.00) with no zero
+ * step, final allowance 2.00 on all three):
+ *
+ *   1     USDC  0xA0b8…eB48   direct re-approve OK
+ *   8453  USDC  0x8335…2913   direct re-approve OK
+ *   4663  USDG  0x5fc5…d168   direct re-approve OK
+ *
+ * Anything NOT on this list keeps the zero-first dance, because USDT-style
+ * tokens genuinely do revert and the default must stay the safe one. Add a
+ * token here only with a probe like the one above; a guess belongs nowhere near
+ * an approval.
+ */
+const DIRECT_REAPPROVE: Record<number, ReadonlySet<string>> = {
+  1: new Set(['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48']),
+  8453: new Set(['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913']),
+  4663: new Set(['0x5fc5360d0400a0fd4f2af552add042d716f1d168']),
+}
+
+/** Does this exact token on this exact chain accept a direct re-approve? */
+export function acceptsDirectReapprove(chainId: number, token: string): boolean {
+  return DIRECT_REAPPROVE[chainId]?.has(token.toLowerCase()) ?? false
+}
+
 /** Exact-amount approval plan (no infinite approve — the repo's standing-allowance
  *  red line). USDT-style tokens revert on approve(non-zero → non-zero), so a
- *  short existing allowance needs the zero-first dance. */
-export function approvalPlan(allowance: bigint, needed: bigint): 'none' | 'direct' | 'zero-first' {
+ *  short existing allowance needs the zero-first dance — UNLESS the token is on
+ *  the measured direct-re-approve list, in which case the zero step is pure
+ *  wasted gas and an extra wallet prompt.
+ *
+ *  `on` is optional so every existing caller keeps the conservative behaviour
+ *  unchanged; only callers that know which token on which chain can opt in. */
+export function approvalPlan(
+  allowance: bigint,
+  needed: bigint,
+  on?: { chainId: number; token: string },
+): 'none' | 'direct' | 'zero-first' {
   if (needed === 0n || allowance >= needed) return 'none'
-  return allowance === 0n ? 'direct' : 'zero-first'
+  if (allowance === 0n) return 'direct'
+  return on && acceptsDirectReapprove(on.chainId, on.token) ? 'direct' : 'zero-first'
 }

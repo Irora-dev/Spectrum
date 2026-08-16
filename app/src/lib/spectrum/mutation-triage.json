@@ -1,0 +1,654 @@
+{
+ "note": "HAND-MAINTAINED — the sweep never writes this file. Every survivor mutation-sweep-state.json records must be given a verdict here before its target counts as SWEPT_CLEAN. A survivor is an accepted equivalent, a missing pin, or dead code; only a human can say which, and a tool that triaged its own survivors would be a record agreeing with itself.",
+ "verdicts": {
+  "equivalent": "the mutant changes no observable behaviour — accept it, and NAME the class below. Never silently re-tally it.",
+  "pinned": "it was a real gap; a test now kills it. The entry records where that test lives, so the claim is checkable.",
+  "dead-code": "the mutated code is genuinely unreachable and was deleted. If the entry still exists, the deletion has not happened."
+ },
+ "classes": {
+  "degenerate-zero": "a guard where `x <= 0` -> `x < 0` (or the mirror) yields the same output because zero already produces zero: feeCentsOfTotal(0), rebalanceEthNeedRaw(0n), a zero weight mapping to zero. A family law in batcher.test.ts asserts the property once over every helper and every degenerate shape rather than pinning them one by one.",
+  "layered-guard": "deleting an outer condition leaves an INNER check that refuses identically, so the mutant is unobservable at the module boundary. UIGuy measured this on assemble-batch (2026-08-07): six tests against the highest-value survivors killed exactly ONE. The cheap way to tell before writing anything is to force the outer condition and see whether an inner layer still refuses. Named, not chased.",
+  "unobservable-then-refused": "the mutant DOES create a bad record, but the only path that reaches it guarantees the record is discarded before it can be read — the chain is refused and deleted, or the assembler's own filter drops the artefact. Distinct from layered-guard: nothing refuses the mutant, the evidence is simply thrown away. Fragile by nature, so each entry must name the discard step, because adding any consumer AFTER that step re-opens it.",
+  "defensive-redundancy": "the guard never fires today because an upstream invariant makes its condition always true, so widening it selects the same set. It is a belt to someone else's braces and its equivalence DEPENDS on that invariant — the entry must name the invariant, since the mutant stops being equivalent the moment the invariant breaks, which is precisely when the guard earns its place.",
+  "unreachable-by-fixture": "NOT a verdict — this is the desk-236-M10/M11 question itself. A survivor in a path the module's fixtures never construct is either dead code or an untested path, and those want opposite fixes. It stays UNTRIAGED until a fixture reaches it (then it becomes pinned or equivalent) or it is proven unreachable (then dead-code)."
+ },
+ "triaged": {
+  "batcher:191:49:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "feeCentsOfTotal's `totalCents <= 0` narrowed to `< 0`. A zero total already computes a zero fee, so the early return is an optimisation. This is the family the protocol named at the first batcher sweep; a family law in this module's suite asserts the property once over every helper rather than pinning each. Differential probe over ten numeric edges crossed with four fee rates: identical.",
+   "at": "2026-08-07"
+  },
+  "batcher:199:45:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "fundingTotalForLegCents' `legCents <= 0`, same family — grossing up zero cents yields zero either way. Differential probe: identical on every case.",
+   "at": "2026-08-07"
+  },
+  "batcher:210:24:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "rebalanceFeeRawOnBudget's `venueBuyBudgetRaw <= 0n`, same family — a fee on a zero budget is zero either way. Differential probe over four bigint edges by four fee rates: identical.",
+   "at": "2026-08-07"
+  },
+  "batcher:219:24:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "rebalanceEthNeedRaw's `venueBuyBudgetRaw <= 0n`, same family and named explicitly in the protocol. Differential probe: identical.",
+   "at": "2026-08-07"
+  },
+  "batcher:229:17:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "rebalanceFeeRawFromActual's `ethHaveRaw <= 0n`, same family — the fee share of nothing is nothing. Differential probe: identical.",
+   "at": "2026-08-07"
+  },
+  "plan-legs:94:31:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "`totalCents <= 0` narrowed to `< 0`, so a zero total no longer short-circuits to all-zero budgets. It does not need to: the largest-remainder split of zero cents allocates zero to every leg anyway, so the early return is an optimisation, not a behaviour. Differential probe: identical on every weight/total pair including the zero total.",
+   "at": "2026-08-07"
+  },
+  "pool-safety:412:31:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "`runnerUp.usd > 0` -> `>= 0`. A zero-usd runner-up divides to Infinity downstream, which fails the same finite check that a missing runner-up fails, so dominance switches off either way. Accepted and NAMED in ALLOCATOR-CHANGE-PROTOCOL.md at the first pool-safety sweep (2026-08-07); transcribed here, not newly decided.",
+   "at": "2026-08-07"
+  },
+  "batcher:257:51:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "rebalanceNeedCentsOnBudget's `budgetCents <= 0`, same family. Differential probe: identical. (Line moved 241→257 on 2026-08-08 — a DOCBLOCK correction above it, which the byte-level digest correctly treated as expiring the record. Code and reasoning unchanged; re-swept.)",
+   "at": "2026-08-07"
+  },
+  "batcher:289:63:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "`Number.isFinite(c) && c > 0 ? Math.floor(c) : 0` widened to `>= 0`. Math.floor(0) is 0, the same value the false arm supplies. Its SIBLING on this line is not equivalent: turning the `&&` into `||` lets a negative budget through to a negative FundingRaw, which now throws — that one is pinned. Two verdicts on one line, kept apart by the column in the signature. (Line moved 273→289 on 2026-08-08 — a DOCBLOCK correction above it, which the byte-level digest correctly treated as expiring the record. Code and reasoning unchanged; re-swept.)",
+   "at": "2026-08-07"
+  },
+  "batcher:291:16:<= → <": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`spendable <= 0n` narrowed to `< 0n` in the early return. A zero spendable falls through to the largest-remainder split, which then distributes zero units and returns all-zero budgets — the same array the early return produces. The `weightSum <= 0` term beside it still guards the divide. Differential probe over eleven leg vectors by five raw totals: identical. (Line moved 275→291 on 2026-08-08 — a DOCBLOCK correction above it, which the byte-level digest correctly treated as expiring the record. Code and reasoning unchanged; re-swept.)",
+   "at": "2026-08-07"
+  },
+  "batcher:299:28:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`b.frac > a.frac ? 1 : ...` widened to `>=` in the remainder comparator. On a tie this returns 1 instead of falling to the second branch, which returns 0 for equal fracs — and a comparator returning 1 versus 0 for equal elements leaves Array.prototype.sort's order unchanged for the pairs this code produces. Differential probe: identical on every vector. NOTE the other comparator mutant on this line IS real (it reverses ties and moves the odd unit to a different leg) and is now pinned — same line, different comparison. (Line moved 283→299 on 2026-08-08 — a DOCBLOCK correction above it, which the byte-level digest correctly treated as expiring the record. Code and reasoning unchanged; re-swept.)",
+   "at": "2026-08-07"
+  },
+  "batcher:300:49:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`order.length > 0` widened to `>= 0` in the remainder-distribution loop guard. The loop's other condition, `remainder > 0n`, is what actually terminates it, and remainder can only be non-zero when order is non-empty — the split that produces it derives both from the same weights. Differential probe: identical. If remainder ever becomes reachable with an empty order, this stops being equivalent and becomes an infinite loop, so it is worth re-opening if the split changes. (Line moved 284→300 on 2026-08-08 — a DOCBLOCK correction above it, which the byte-level digest correctly treated as expiring the record. Code and reasoning unchanged; re-swept.)",
+   "at": "2026-08-07"
+  },
+  "displayed-vs-signed:421:26:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`optionalLegs.length > 0` widened to `>= 0` in the all-skippable law. Always true then, but the two terms beside it still gate completely: `legs.length > 1` excludes the empty and single-leg cases, and `optionalLegs.length === legs.length` is false whenever any leg is required. Its SIBLING on this line, `legs.length > 1`, is NOT equivalent — dropping it false-refuses every legitimate single-asset buy, which I shipped for several hours — and is now pinned. Kept apart by the column. [re-keyed from displayed-vs-signed:420:26:> → >= at the 2026-08-13 re-sweep — line moved, code verbatim, context re-verified]",
+   "at": "2026-08-08"
+  },
+  "displayed-vs-signed:437:18:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`totalBudget > 0n` widened to `>= 0n` in the skippable-share loop. A zero total is unreachable with any leg present, because the per-leg `leg.budget > 0n` refusal sits above and every leg must clear it; with no legs the loop body never runs. Carried over from the pre-fix sig `displayed-vs-signed:414:18` — the line moved when the single-leg exemption was added; code and reasoning unchanged. Its sibling `legs.length > 1` on the same line IS real and is pinned. [re-keyed from displayed-vs-signed:436:18:> → >= at the 2026-08-13 re-sweep — line moved, code verbatim, context re-verified]",
+   "at": "2026-08-08"
+  },
+  "plan-legs:355:94:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "`t.weightPct > 0 ? t.weightPct : 0` in the weightSum reduce, widened to `>= 0`. A zero weight adds zero either way. Carried over from the pre-2026-08-08 sig `plan-legs:309:94` — the line moved when the ratio's denominator fix was inserted above it; the code and the reasoning are unchanged. Its `&&`-to-`||` sibling on the same line is NOT equivalent and remains pinned. (Line moved 324→352 on 2026-08-08 when the lone-leg ruling and the concentration policy landed above it; code and reasoning unchanged.) [re-keyed from plan-legs:352:94:> → >= at the 2026-08-13 re-sweep — line moved, code verbatim, context re-verified]",
+   "at": "2026-08-08"
+  },
+  "plan-legs:392:89:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`weightSum > 0` in the consentedCents reduce, widened to `>= 0`. Unreachable in combination: the conjunct `t.weightPct > 0` immediately before it can only pass when some target carries positive weight, and any such target makes weightSum positive — so weightSum can never be zero at the moment this term is evaluated true. Its SIBLING on the same line (`t.weightPct > 0`, col 72) was REAL — widened, a target consented at zero joined the consented denominator and deflated every honest leg's ratio, re-opening the exact fail-open the denominator fix had just closed — and is now pinned. Two verdicts on one line, kept apart by the column. (Line moved 361→389 on 2026-08-08 when the lone-leg ruling and the concentration policy landed above it; code and reasoning unchanged.) [re-keyed from plan-legs:389:89:> → >= at the 2026-08-13 re-sweep — line moved, code verbatim, context re-verified]",
+   "at": "2026-08-08"
+  },
+  "plan-legs:414:98:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`t.weightPct > 0` inside readableConsent, widened to `>= 0`. A zero-weight target still yields consentedPct 0 through the division that follows, so the row reads the same. Differential probe over five weight variants crossed with five composed sets: identical. (Line moved 336→397 on 2026-08-08 when the lone-leg ruling and the concentration policy landed above it; code and reasoning unchanged.) [re-keyed from plan-legs:397:81:> → >= at the 2026-08-13 re-sweep — line moved, code verbatim, context re-verified]",
+   "at": "2026-08-07"
+  },
+  "plan-legs:631:28:<= → <": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "The fixpoint's round bound, `round <= targets.length + 1`, narrowed by one iteration. The loop's own invariant — stated in the comment above it — is that each round either RETURNS or grows `excluded`, and `excluded` grows monotonically over at most N targets. The worst case is N rounds of exclusion followed by a returning round, which is N+1 iterations; the mutant still allows N+1. The `+1` is slack on top of slack, and the bound exists to turn a BROKEN invariant into a loud failure rather than a spin. It stops being equivalent exactly when that invariant breaks, which is when the guard earns its place — so this must be re-opened if the loop ever gains a path that neither returns nor excludes. [re-keyed from plan-legs:539:28:<= → < at the 2026-08-13 re-sweep — line moved, code verbatim, context re-verified]",
+   "at": "2026-08-08"
+  },
+  "plan-legs:583:16:&& → ||": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "`r && Number.isFinite(r.realisedPct)` flipped to OR in the refusal-message builder. Two invariants make the flip unobservable, both named because the verdict dies with them: (1) control reaches :583 only past the :579 early return, i.e. overPp > maxOverAllocationPp >= 0, and worstOverAllocation returns a non-null row for any overPp > 0 — so `r` is never null here (the OR-mutant would crash on r.realisedPct otherwise); (2) realisedPct is finite by construction — the hostileCent pre-branch short-circuits the whole fact on any non-finite cent, and rows are only built under `totalCents > 0`. If concentrationRefusal ever runs on a hand-built fact from persisted data, invariant (2) is the one to re-check.",
+   "at": "2026-08-14"
+  },
+  "portfolio-batcher:97:31:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "depthAwareExpectation's `impact <= 0` narrowed to `< 0`: an impact of exactly 0 multiplies by (10000-0)/10000 — the identity — so admitting it changes nothing. Full-cap sweep 2026-08-15."
+  },
+  "allocation:370:43:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The `amt &&` conjunct already maps 0 (falsy) to null before the comparison can see it, so widening > to >= admits nothing: 0 short-circuits either way. NaN likewise (falsy comparisons both false).",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:204:28:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:210:54:<= → <": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:210:42:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:210:34:&& → ||": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:210:46:&& → ||": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:215:121:<= → <": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:215:88:>= → >": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:224:150:<= → <": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:224:117:>= → >": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:227:43:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:227:28:&& → ||": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:315:47:<= → <": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "assemble-batch:315:63:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The M7 consistency band is a two-layer pair: the derivation guards (:204-:224) leave expectedRaw NULL on any degenerate input, and the gate (:227) skips null — so widening any single conjunct either yields expectedRaw 0n (skipped by the >0n gate) or leaves a value the band compares harmlessly at the same verdict. The band is advisory-refusal (M7), not the money law: conservation/floors bind downstream regardless. The pair is the discard step; collapsing the two layers into one would re-open every one of these.",
+   "at": "2026-08-14"
+  },
+  "funding-plan:344:32:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "The `shortCents > 0` filter that builds `shortfalls`. Widened to `>= 0`, zero-short rows enter the loop and then fail every branch inside it — 316, 325, 341 and 352 each re-test `shortCents > 0` — so the iteration does nothing and no draw, bridge or refusal is recorded. The guard is real; removing it is unobservable because four inner guards say the same thing. (Line moved 308→337 on 2026-08-08 when the bridge-refusal cascade was inserted above; the code and the reasoning are unchanged, and the re-sweep confirms it is still the only survivor at that site.) [re-keyed from funding-plan:337:32:> → >= at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-07"
+  },
+  "funding-plan:352:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`r.shortCents > 0` at the new-money branch. Every row reaching here came through the 308 filter, which already guarantees `> 0`, so `>=` can never differ. Equivalence by an UPSTREAM invariant rather than an inner guard — noted because the two want different evidence if 308 ever changes. Its siblings on the same line are NOT equivalent: 316:41 and 316:45 both produced a zero-cent new-money draw and are now killed by the empty-new-money-pool test. (Line moved 316→345 on 2026-08-08 when the bridge-refusal cascade was inserted above; the code and the reasoning are unchanged, and the re-sweep confirms it is still the only survivor at that site.) [re-keyed from funding-plan:345:21:> → >= at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-07"
+  },
+  "funding-plan:361:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`r.shortCents > 0` at the carrier fallback. A fully-funded carrier row admitted by `>= 0` computes `cash = min(local, 0) = 0` and `lp = min(proceeds, 0) = 0`, and the inner `cash > 0` / `lp > 0` refuse both — the same two guards whose removal IS observable and is now pinned by the carrier test. (Line moved 325→354 on 2026-08-08 when the bridge-refusal cascade was inserted above; the code and the reasoning are unchanged, and the re-sweep confirms it is still the only survivor at that site.) [re-keyed from funding-plan:354:21:> → >= at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-07"
+  },
+  "funding-plan:377:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`r.shortCents > 0` guarding the cross-chain proceeds loop. A zero-short row admitted by `>= 0` hits `if (r.shortCents <= 0) break` on the loop's first line and leaves immediately. Textbook inner-layer refusal. (Line moved 341→370 on 2026-08-08 when the bridge-refusal cascade was inserted above; the code and the reasoning are unchanged, and the re-sweep confirms it is still the only survivor at that site.) [re-keyed from funding-plan:370:21:> → >= at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-07"
+  },
+  "funding-plan:380:48:<= → <": {
+   "verdict": "equivalent",
+   "class": "unobservable-then-refused",
+   "why": "`available <= 0` skipping a drained proceeds source. Reaching this line with `available === 0` is only possible after every positive source is exhausted, because the loop walks sources by descending balance and `proceedsLeft` can never go negative. So the chain is still short when it gets here, which means it is refused four lines later and deleted from `resolvedById` — its draws never reach a step. The 0-cent bridge the mutant also pushes is dropped by the assembler's own `b.cents > 0` filter. NOT equivalent because the code is dead: it is unobservable because the only path to it guarantees the record is discarded. If a later source is ever added AFTER this loop, re-open this. (Line moved 344→373 on 2026-08-08 when the bridge-refusal cascade was inserted above; the code and the reasoning are unchanged, and the re-sweep confirms it is still the only survivor at that site.) [re-keyed from funding-plan:373:48:<= → < at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-07"
+  },
+  "funding-plan:401:77:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "`b.cents > 0` when deciding whether anything inbound carries the refuel. In the unmutated program no zero-cent bridge is ever pushed — both push sites (319, 347) take `min` of two strictly positive numbers — so the filter never excludes anything and `>=` selects the same set. This is a belt to the assembler's braces, and its equivalence DEPENDS on that no-zero-cent-bridge invariant: if a zero-cent bridge ever becomes constructible, this stops being equivalent and becomes the guard that catches it. (Line moved 365→394 on 2026-08-08 when the bridge-refusal cascade was inserted above; the code and the reasoning are unchanged, and the re-sweep confirms it is still the only survivor at that site.) [re-keyed from funding-plan:394:77:> → >= at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-07"
+  },
+  "execution-runner:361:39:<= → <": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "The digest fallback's own bound is UNREACHABLE for any JS-number chain id: numbers render without exponent up to 21 digits, so the longest prefix is bridge:21d->21d: = 52 chars, +16 digest = 68 <= 80 always. The branch is defensive against a future id representation; the invariant (JS number toString exponent threshold at 1e21) is what the equivalence rests on. [re-keyed from execution-runner:358:39:<= → < at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-14"
+  },
+  "execution-runner:907:22:< → <=": {
+   "verdict": "equivalent",
+   "class": "equivalent-permutation",
+   "why": "The fnv loop widened one index reads charCodeAt(length) = NaN — and in a BITWISE xor NaN coerces to 0, so h is unchanged by the xor and the extra Math.imul round is a fixed bijective permutation of the digest space. Digests remain input-distinct (pinned: two different plans get different digests) and the digest is opaque to every consumer (stamp/compare only), so a uniform permutation is unobservable. My own first analysis claimed collapse-to-zero and was WRONG for exactly this coercion — recorded so the next reader distrusts the same instinct. [re-keyed from execution-runner:904:22:< → <= at the 2026-08-14 audit-fix round — line shifted, code verbatim]",
+   "at": "2026-08-14"
+  },
+  "runner-effects:597:22:&& → ||": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "MeasuredSimulatedStep.gasCostUsd is computed here and consumed by NOBODY today (grepped: no reader in execution-runner, the hook, or any component). A mutant distorting an unread value is unobservable by construction. THE RE-OPENER IS NAMED: the first consumer of sim.gasCostUsd must land with the NaN/zero-nativeUsd pin this entry deliberately does not fake. [two copies exist post-bridge: the legacy (:597) and portfolio (:821) sim gas estimates, equally unconsumed]",
+   "at": "2026-08-14"
+  },
+  "funding-plan:463:32:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "a zero-short row entering the routing loop draws min(0, …) = 0 from every source and pushes no bridge (every push carries a positive take by construction) — identical output to being filtered out. (42bb0fb1 sweep.)"
+  },
+  "funding-plan:555:16:<= → <": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "a zero-cent bridge cannot exist: every bridges.push takes min(shortCents > 0, available > 0) > 0, so narrowing the guard selects the same set. The belt stays. (42bb0fb1 sweep.)"
+  },
+  "funding-plan:603:80:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "same invariant as :555 — bridge cents are positive by construction, so cents >= 0 filters identically. The && half of this line was a REAL gap (orphan transfer to a stranded destination) and is now pinned. (42bb0fb1 sweep.)"
+  },
+  "execution-runner:389:39:<= → <": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "carried from execution-runner:361 (lines moved by the sell build; context re-verified byte-identical): the digest fallback's own bound is unreachable for any real prefix — see the original row. (42bb0fb1 sweep.) (Re-keyed at d7f0d4ba — lines moved by the bridge-budget block, context re-verified.)"
+  },
+  "execution-runner:939:22:< → <=": {
+   "verdict": "equivalent",
+   "class": "equivalent-permutation",
+   "why": "carried from execution-runner:907 (lines moved; context re-verified): the widened fnv loop reads charCodeAt(len) = NaN which coerces to 0 in bitwise ops (the :904 lesson) — one extra imul, still deterministic and distinct. (42bb0fb1 sweep.) (Re-keyed at d7f0d4ba — lines moved by the bridge-budget block, context re-verified.)"
+  },
+  "portfolio-batcher:222:22:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "maxCommittedFor's `fundingTotalRaw <= 0n` narrowed: at exactly 0 the solve answers c=0 and both walk loops are no-ops — the same 0n either way."
+  },
+  "runner-effects:363:20:< → <=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "awaitReceiptOk's loop bound widened one iteration: one extra 2s receipt poll before answering false. A patience dial, not a money law — the caller refuses on false identically at 90 or 91 tries; the receipt's own status decides. Invariant: no consumer distinguishes HOW LONG false took. [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.]",
+   "at": "2026-08-14"
+  },
+  "runner-effects:758:53:> → >=": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "carried from runner-effects:821 (lines moved; context re-verified): gasCostUsd is computed here and consumed by no law — the re-opener is the gas-compare surface, named in the original row. (42bb0fb1 sweep; re-keyed at 0553dc36 — lines moved by the FASTEST ruling comment, context byte-identical.) [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.]"
+  },
+  "runner-effects:758:46:&& → ||": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "same carry as the sibling — see runner-effects:821's pair of rows. (42bb0fb1 sweep; re-keyed at 0553dc36 — lines moved by the FASTEST ruling comment, context byte-identical.) [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.]"
+  },
+  "runner-effects:983:53:> → >=": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "MeasuredSimulatedStep.gasCostUsd is computed here and consumed by NOBODY today (grepped: no reader in execution-runner, the hook, or any component). A mutant distorting an unread value is unobservable by construction. THE RE-OPENER IS NAMED: the first consumer of sim.gasCostUsd must land with the NaN/zero-nativeUsd pin this entry deliberately does not fake. [two copies exist post-bridge: the legacy (:597) and portfolio (:821) sim gas estimates, equally unconsumed] [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.]",
+   "at": "2026-08-14"
+  },
+  "runner-effects:983:46:&& → ||": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "MeasuredSimulatedStep.gasCostUsd is computed here and consumed by NOBODY today (grepped: no reader in execution-runner, the hook, or any component). A mutant distorting an unread value is unobservable by construction. THE RE-OPENER IS NAMED: the first consumer of sim.gasCostUsd must land with the NaN/zero-nativeUsd pin this entry deliberately does not fake. [two copies exist post-bridge: the legacy (:597) and portfolio (:821) sim gas estimates, equally unconsumed] [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.]",
+   "at": "2026-08-14"
+  },
+  "runner-effects:758:22:&& → ||": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "the gasCostUsd guard's first conjunct (usd != null) — gasCostUsd is a display extra on the exec log; a null-usd || would NaN it, and NaN prints as absent in every consumer. Sibling of the :46/:53 verdicts (the twin block, legacy path)."
+  },
+  "runner-effects:983:22:&& → ||": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "the same gasCostUsd guard in the PORTFOLIO twin block — same display-only consumer, same reasoning as :758:22."
+  },
+  "runner-effects:488:55:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "transfer amountCents <= 0 narrowed: a zero-cent transfer that slips this guard sizes toRaw 0 and the LiFi quote itself refuses a zero sell — the downstream guard holds the same line."
+  },
+  "runner-effects:523:18:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "refuel units > 0n narrowed to >=: assigning fromAmountForGas = 0n is byte-equivalent to leaving it unset for the LiFi quote (0 = no refuel), so the mutant changes no composed request."
+  },
+  "runner-effects:1216:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-empty",
+   "why": "calls.length > 1 → >= 1 on the batch-last check: with one call batchIndex 0 === length-1 so the inner refusal cannot fire either way."
+  },
+  "runner-effects:1224:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-empty",
+   "why": "same guard family: with one call, calls.slice(0, batchIndex=0) is empty and the pre-batch approval loop is a no-op — identical behavior."
+  },
+  "runner-effects:434:28:< → <=": {
+   "verdict": "killed-by-new-pin",
+   "class": "boundary",
+   "why": "S2 exactly-at-floor: toAmountMin == floorRaw proceeds — pinned 2026-08-15 (runner-effects.test.ts S2 boundary). Should die on the next sweep; row kept until then."
+  },
+  "floor-discipline:220:71:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "`hopReserve <= 0` -> `< 0`. A zero hop reserve nulls downstream through the `Number.isFinite` guard on the same line either way, so the branch is unobservable at the module boundary. Accepted and NAMED in the protocol at the first floor-discipline sweep (2026-08-07).",
+   "at": "2026-08-07"
+  },
+  "floor-discipline:409:64:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "`leg.notional > 0` -> `>= 0` inside a cumulative sum whose false branch adds 0. A zero notional adds zero either way. Accepted and NAMED in the protocol at the first floor-discipline sweep (2026-08-07). (Re-keyed at 722e5277 — line moved by the rule-4 ruling block, context re-verified.) [re-keyed 278→287, 2026-08-15: the revision-2 comment added 9 lines above; context re-verified identical.]",
+   "at": "2026-08-07"
+  },
+  "displayed-vs-signed:718:26:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`optionalLegs.length > 0` widened to `>= 0` in the PORTFOLIO gate's all-skippable law — the twin of the legacy line one screen up (see displayed-vs-signed:421), ported with the audit-F1 fix. Always true then, but the terms beside it still gate completely: `legs.length > 1` excludes empty/single-leg, and `optionalLegs.length === legs.length` is false whenever any leg is required. The `legs.length > 1` sibling is the REAL carve-out and is pinned by the F1 single-leg test. [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.] [re-keyed 684→718 2026-08-16: gen-2 recipient block added above]",
+   "at": "2026-08-14"
+  },
+  "displayed-vs-signed:721:18:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "`totalCommit > 0n` widened to `>= 0n` in the portfolio skippable-share loop — the twin of the legacy line (displayed-vs-signed:437). Zero total is unreachable with any leg present: the per-leg `!(leg.sellAmount > 0n)` refusal ('part of this batch commits nothing') sits directly above, so with `legs.length > 1` required by the same conjunction, at least two positive legs exist. Its sibling `legs.length > 1` IS real and pinned (F1 single-leg carve-out test). [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.] [re-keyed 687→721 2026-08-16: gen-2 recipient block added above]",
+   "at": "2026-08-14"
+  },
+  "portfolio-batcher:365:33:> → >=": {
+   "verdict": "equivalent",
+   "class": "repaired-walk",
+   "why": "the down-walk overshooting by one at equality is repaired by the up-walk on the next line, whose condition holds the true integer edge — the pair is the invariant, either loop alone is not. Full-cap sweep 2026-08-15. [re-keyed 231→365 2026-08-16: gen-2 ABI mirror added above]"
+  },
+  "portfolio-batcher:365:10:+ → -": {
+   "verdict": "equivalent",
+   "class": "repaired-walk",
+   "why": "with the fee term subtracted the down-walk condition can only be false (c starts ≤ funding), so it no-ops and the correct up-walk lands the exact edge — the same repaired-walk pair. [re-keyed 231→365 2026-08-16: gen-2 ABI mirror added above]"
+  },
+  "portfolio-batcher:650:28:<= → <": {
+   "verdict": "equivalent",
+   "class": "margin-headroom",
+   "why": "the exclusion fixpoint converges in ≤ targets.length rounds (each round excludes ≥1) plus one clean pass; the `+1` ceiling is deliberate headroom the loop can never need — one fewer iteration changes no reachable outcome. [re-keyed 494→650 2026-08-16: gen-2 ABI mirror added above]"
+  },
+  "portfolio-batcher:656:86:&& → ||": {
+   "verdict": "equivalent",
+   "class": "implied-conjunct",
+   "why": "the dedup key (symbol && reason) degrades to || only when two rows share ONE half — but every plan-legs refusal reason EMBEDS its own symbol ('$X: …'), so reason-equality implies symbol-equality on all reachable rows, and a same-symbol different-reason pair would need one leg to emit two reason texts across exclusion rounds, which no planToLegs cause does. PROVEN by hand-applying the mutant (no twins, single site): the suite incl. the two-symbols-one-reason-shape pin stays green — indistinguishable in practice. Full-cap sweep 2026-08-15. [re-keyed 500→656 2026-08-16: gen-2 ABI mirror added above]"
+  },
+  "funding-plan:754:19:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "sells.length >= 0 admits the empty-sells case into a block whose chain-set is empty and whose loop iterates zero times — no refusal, no write, byte-identical plan. (42bb0fb1 sweep.) [re-keyed 367→754 2026-08-16: comment scrub shifted lines]"
+  },
+  "funding-plan:689:33:> → >=": {
+   "verdict": "equivalent",
+   "class": "equivalent-permutation",
+   "why": "always-shift renumbers every order uniformly (2/3/4 instead of 1/2/3) on sale-less plans; steps sort by RELATIVE order and no consumer reads absolute values — kinds, waitsFor and sequence are byte-identical. (42bb0fb1 sweep.) [re-keyed 612→689 2026-08-16: comment scrub shifted lines]"
+  },
+  "runner-effects:1319:22:< → <=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the widened skippedBitmap loop reads bit legs.length; the legacy batcher's own loop sets bits only under legs.length, so that bit is 0 in every result the ABI can hand back — the phantom index is never added. (42bb0fb1 sweep; re-keyed at 0553dc36 — lines moved by the FASTEST ruling comment, context byte-identical.) [re-keyed 2026-08-15: the F6 loosening added lines above; context re-verified identical.] [re-keyed 732→1319 2026-08-16: S2b + gen-2 encode blocks added above]"
+  },
+  "runner-effects:1483:53:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the atomic-bundle position law: `calls.length > 1 && batchIndex !== calls.length - 1`. Widened to >= 1, the single-call case enters but its second conjunct is `0 !== 0` = false — a single-call bundle carries batchIndex 0 by construction ([...approvals, batch] with zero approvals). The invariant this depends on is that construction; if a builder ever emits a single call whose batchIndex is not 0, the guard earns its width back.",
+   "at": "2026-08-16"
+  },
+  "runner-effects:1491:22:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the approvals-before-batch loop gate: `if (calls.length > 1)`. Widened to >= 1, the single-call case enters and `calls.slice(0, batchIndex=0)` is empty — the loop body never runs, byte-identical behaviour. Same construction invariant as :1483.",
+   "at": "2026-08-16"
+  },
+  "plan-legs:707:94:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the worst-over-allocation picker’s strict `>` keeps the FIRST maximal row on exact ties; >= keeps the LAST. The reported overPp value is identical either way (both rows carry the same maximal diff), so the policy verdict and the sentence’s numbers cannot change — only WHICH equally-worst symbol is named, and naming either equally-true worst leg is honest. Not tie-pinned deliberately: a tie-break pin would freeze an ordering nothing depends on.",
+   "at": "2026-08-16"
+  },
+  "allocation:332:46:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "removeTarget’s seedFrom carry: `rows.length > 0 ? rows : undefined`. Widened, an empty rows array rides as [] instead of undefined — every consumer re-guards with `seedFrom && seedFrom.length > 0` (the realPublish derivation, buildPublishDraft, the sanitizer at :644), so [] and undefined select identically. Invariant: consumers never truthiness-check seedFrom alone.",
+   "at": "2026-08-16"
+  },
+  "allocation:339:29:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the same removeTarget block’s amountUsd recompute gate — same rows, same consumers, same invariant as :332.",
+   "at": "2026-08-16"
+  },
+  "allocation:644:50:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the load sanitizer’s seedFrom: same []-vs-undefined selection, same re-guarding consumers as :332. The three are one family.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:288:47:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "bridgeDrawFor's `needCents <= 0` narrowed: a zero need pads to zero and min(0, available) is 0 — the guard is an early exit for a value the arithmetic already maps to the same answer. NaN/negatives still refused by the unmutated isFinite half and the strict <.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:289:57:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "bridgeDrawFor's `availableCents <= 0`: with zero available, min(padded, floor(0)) = 0 — identical to the early exit. Same family as :288.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:298:47:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "bridgePadFor's `drawCents <= 0`: a zero draw computes ceil(0·bps/10000) = 0 and min(0, surplus) = 0. Same family.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:299:53:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "bridgePadFor's `surplusCents <= 0`: zero surplus gives min(ceil(pad), floor(0)) = 0. The quartet is one family: every operand of these two helpers already maps its zero to a zero result.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:436:19:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-empty",
+   "why": "`sells.length > 0` gating the sell-gas pass: with empty sells the block iterates `new Set([])` — zero iterations, no refusal, no set mutation. The guard is an optimisation, not a law.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:532:32:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the shortfalls filter admitting shortCents === 0 rows: each routing branch (540/557/573) re-guards on shortCents > 0 and the final refusal fires only past 0, so a zero-short row walks the loop touching nothing and stays resolved — the same outcome as never entering.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:540:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "implied-conjunct",
+   "why": "`r.shortCents > 0` at the FIRST branch inside the loop: rows arrive through the 532 filter (shortCents > 0) and nothing decrements before this line, so the conjunct is implied by the iteration set. (The other `>` on this line — newMoneyLeft — is a different mutant with its own record; the column matters, per the sweep's own :316 lesson.)",
+   "at": "2026-08-16"
+  },
+  "funding-plan:557:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "the carrier-fallback branch admitted at shortCents === 0: both inner draws re-guard (`cash > 0`, `lp > 0`) and min(x, 0) = 0 defeats each take, so nothing is drawn and nothing pushed.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:573:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "the cross-chain branch admitted at shortCents === 0: the loop's first line is `if (r.shortCents <= 0) break` — the inner layer refuses identically before any source is read.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:576:48:<= → <": {
+   "verdict": "equivalent",
+   "class": "unobservable-then-refused",
+   "why": "`available <= 0` in the proceeds walk: an exactly-drained source (reachable — takes drain to precisely 0) is admitted, take = min(short, 0) = 0, and a zero-cent drawn row + zero-cent bridge ARE created. Both records are then discarded before any reader: the still-short row hits the final refusal and is DELETED from resolvedById (its drawn rows die with it), and the zero-cent bridge is excluded by every consumer's cents > 0 filter (597 inbound, 632 gas walk, 680 liveBridges). Fragile by nature — any new consumer of raw `bridges` without the cents filter would surface it; the discard steps are named so that reader knows what it is inheriting.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:597:77:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "inbound's `b.cents > 0`: a zero-cent bridge cannot exist — both push sites take min of two positives (the :555/:603 family invariant, unchanged by this sweep). The widened filter selects the same set.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:632:16:<= → <": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the gas-walk skip `b.cents <= 0`: same foreclosed zero-cent-bridge invariant; the skip never has a zero to skip.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:680:80:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "liveBridges' `b.cents > 0`: same invariant, same family — the belt stays because the invariant it guards is proven elsewhere, not because it does work.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:754:23:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "line-shifted re-key of the 42bb0fb1-sweep verdict at 754:19 (the line's text moved the operator two columns): `liveSells.length >= 0` admits the empty case into a block whose chain set is empty and whose loop iterates zero times — byte-identical plan.",
+   "at": "2026-08-16"
+  },
+  "allocation:300:8:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "evenWeights' `n <= 0`: at n = 0 the mutant computes garbage intermediates (floor(100/0) = Infinity) but Array.from({length: 0}) clamps via ToLength and returns [] regardless — the garbage never materialises into an element. Negative n clamps to [] the same way.",
+   "at": "2026-08-16"
+  },
+  "allocation:401:42:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "normalizedTargets' sanitiser keeping a weight-0 target as-is instead of rewriting it to {weight: 0}: the value is already 0, so sum, pct and usd are bit-identical downstream. The -0 case (JSON can store it): -0 rides only as a NUMERATOR (-0/total = -0, ×100 = -0), String(-0) renders '0', and no consumer divides by the weight or uses Object.is — checked against the pool-safety:412 lesson before accepting.",
+   "at": "2026-08-16"
+  },
+  "plan-legs:92:60:> → >=": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "centBudgets' clean map keeping w = 0 instead of substituting 0 — the same value; and all-zero weights are refused one line later by the unmutated `!(sum > 0)` guard either way. -0 analysed as in allocation:401: numerator-only, renders '0'.",
+   "at": "2026-08-16"
+  },
+  "plan-legs:414:81:> → >=": {
+   "verdict": "equivalent",
+   "class": "layered-guard",
+   "why": "readableConsent admitting weightPct === 0 (col 81 is the weightPct comparison): the only consumer is `consentedPct = readable ? (weightPct / weightSum) * 100 : 0`, and 0/weightSum × 100 = 0 — the same number the refusing branch supplies. The row's ratio re-guards with its own `consentedPct > 0`, so null it stays.",
+   "at": "2026-08-16"
+  },
+  "plan-legs:462:105:> → >=": {
+   "verdict": "equivalent",
+   "class": "implied-conjunct",
+   "why": "col 105 is the WEIGHTSUM comparison in excludedCount's filter (not the weightPct one — the column decides, per the sweep's own :316 lesson). weightSum is the sum of exactly the positive finite weights, so weightSum > 0 ⟺ some weightPct > 0; whenever weightSum = 0 the `t.weightPct > 0` conjunct beside it already excludes every entry. The widened conjunct can never be the deciding one. (The weightPct axis is separately pinned by the 2026-08-16 excludedCount test.)",
+   "at": "2026-08-16"
+  },
+  "plan-legs:565:13:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "worstOverAllocation's strict max: >= re-picks on exact ties (last maximal instead of first) and additionally sets `row` for over = 0 rows. The overPp VALUE is identical in both; the consumer discards `row` unless overPp exceeds the positive policy threshold, so the over-0 difference is unreadable, and on a genuine tie past the threshold both candidate rows carry the same delta — the named symbol is arbitrary-but-true either way. Same family as the 707 tie-pick verdict.",
+   "at": "2026-08-16"
+  },
+  "plan-legs:707:65:> → >=": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "line-stable, column-shifted re-key of the existing 707:94 verdict (the line's text moved under it): the worst-row reducer keeps FIRST maximal on ties vs LAST — the reported overPp is identical, both tied rows carry the same delta.",
+   "at": "2026-08-16"
+  },
+  "portfolio-batcher:126:31:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "line-shifted re-key of the 97:31 verdict (the file grew above it): depthAwareExpectation admitting impact = 0 multiplies by (10000-0)/10000 — the identity. Full-cap sweep family.",
+   "at": "2026-08-16"
+  },
+  "portfolio-batcher:356:22:<= → <": {
+   "verdict": "equivalent",
+   "class": "degenerate-zero",
+   "why": "line-shifted re-key of the 222:22 verdict: maxCommittedFor at exactly 0n solves c = 0 and both walk loops are no-ops — the same 0n either way.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:376:14:<= → <": {
+   "verdict": "pinned",
+   "test": "funding-plan.test.ts › a zero-raw sale REFUSES BY CONTRACT",
+   "why": "REAL: sellRaw '0' walked past the refusal and planned a sale the module's own contract says it cannot size. The pin keeps the inventory credit consistent with the floor deliberately, so the raw-amount refusal is the only objection standing — proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:439:50:>= → >": {
+   "verdict": "pinned",
+   "test": "funding-plan.test.ts › native EXACTLY equal to the gas estimate still SELLS",
+   "why": "REAL boundary: a selling chain holding exactly its gas estimate was refused whole by the mutant — a false refusal on the exact-fit case the estimate exists to permit. Proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:597:66:&& → ||": {
+   "verdict": "pinned",
+   "test": "funding-plan.test.ts › a bridge to SOMEWHERE ELSE cannot satisfy a carrier's fold",
+   "why": "REAL, the money direction: with any positive bridge anywhere in the plan, the mutant reads it as EVERY carrier's refuel — a gas-short chain nothing travels to loses its pass-4 refusal and its batch plans gasless. Fixture uses a sell-proceeds bridge on the far pair because a carrier deliberately draws new money first. Proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "funding-plan:607:82:=== → !==": {
+   "verdict": "pinned",
+   "test": "funding-plan.test.ts › a carrier funded ENTIRELY by remote money",
+   "why": "REAL, honesty-bearing prose: `local` decides the 'has some of your money already' note, and the mutant inverts it to 'any remote draw' — which is true whenever the fold passes at all, so an all-remote carrier gets a note asserting local money that does not exist. Proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "allocation:404:12:<= → <": {
+   "verdict": "pinned",
+   "test": "allocation.test.ts › ALL-ZERO weights normalize to zeros, never NaN",
+   "why": "REAL: total = 0 with targets present reaches normalizeClean, where w/total is 0/0 = NaN for every row — NaN percent and NaN dollars on the review surface. All-zero is reachable (every weight individually sanitised to 0). Proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "allocation:631:42:> → >=": {
+   "verdict": "pinned",
+   "test": "allocation.test.ts › a seedFrom that filters to EMPTY does not hijack the stored amount",
+   "why": "REAL: a publish draft whose stored seedFrom rows all fail the heldUsd filter yields seedFromRows = [], and `[] && 0 >= 0` is TRUE — the amount pins to a $0 sum-of-nothing instead of the draft's own validated amountUsd. The first fixture missed that the seed path also requires intent 'publish' and no funding; armed, proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "plan-legs:186:105:<= → <": {
+   "verdict": "pinned",
+   "test": "plan-legs.test.ts › a LONE leg whose depth reads ZERO stays skippable",
+   "why": "REAL: liquidityUsd = 0 is the read-failed class by this module's own law, and the mutant reclassifies it readable-shallow — which hands a lone zero-depth leg to the 2026-08-08 lone-leg ruling and makes the whole batch REQUIRED to fill an unmeasurable market. The module's comment leaves exactly this interaction on the owner's desk; the pin holds the boundary. Proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "submission-store:885:33:> → >=": {
+   "verdict": "pinned",
+   "test": "submission-store.test.ts › a step key EXACTLY at the cap still records",
+   "why": "REAL boundary, the cap-side sibling of the existing MAX pins: recordStamp refused an exactly-80-char step key under the mutant, silently costing that step its completion stamp — the double-buy window loses a legal key. Proven red-under-mutant.",
+   "at": "2026-08-16"
+  },
+  "submission-store:886:37:< → <=": {
+   "verdict": "pinned",
+   "test": "submission-store.test.ts › a stamp EXACTLY at the plausibility floor records",
+   "why": "REAL boundary: a stamp at exactly MIN_PLAUSIBLE_MS (2020-01-01, the floor itself) was refused under the mutant. Sibling of the ceiling pin on the same line, other bound. Proven red-under-mutant.",
+   "at": "2026-08-16"
+  }
+ }
+}

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatEther, formatUnits, parseAbi, parseEther, parseEventLogs, parseUnits } from 'viem'
 import { useAccount, useSendTransaction, useSwitchChain, useWriteContract } from 'wagmi'
@@ -12,6 +13,9 @@ import { erc20ApproveAbi } from '../lib/spectrum/abis-v2'
 import { approvalPlan } from '../lib/spectrum/migrate-math'
 import { PRISM_CLAIM_CHAIN_ID, PRISM_V2_HOOK } from '../lib/prism/claim'
 import { PERMIT2, encodePrismPoolSwap, permit2Abi, quotePrismPool, universalRouterAddress } from '../lib/prism/pool'
+import { directSwapWrapperFor, swapWithFeeCall } from '../lib/spectrum/direct-swap-wrapper'
+import { INTERFACE_TAG_ADDRESS } from '../lib/config/operator'
+import { batchFeeBpsFor } from '../lib/spectrum/allocation'
 import { PixelRainbow } from './PoweredByPrism'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,7 +54,7 @@ type Dir = 'buy' | 'sell'
 /** `buyOnly` renders the plain "Buy PRISM" banner with no direction toggle —
  *  Home and /swap ship that (owner 2026-07-30: the sell side lives on /claim
  *  only, where holders arrive already holding PRISM). */
-export function TradePrism({ className = '', buyOnly = false }: { className?: string; buyOnly?: boolean }) {
+export function TradePrism({ className = '', buyOnly = false, initialAmount }: { className?: string; buyOnly?: boolean; initialAmount?: string }) {
   const { address, chainId: walletChainId } = useAccount()
   const { switchChainAsync } = useSwitchChain()
   const { sendTransactionAsync } = useSendTransaction()
@@ -59,7 +63,7 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
 
   const [open, setOpen] = useState(false)
   const [dir, setDir] = useState<Dir>('buy')
-  const [amount, setAmount] = useState('0.1')
+  const [amount, setAmount] = useState(() => initialAmount || '0.1')
   const [slipBps, setSlipBps] = useState(DEFAULT_SLIP_BPS)
   const [customSlip, setCustomSlip] = useState('')
   const [busy, setBusy] = useState<'approve' | 'trade' | null>(null)
@@ -100,7 +104,20 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
     queryFn: async (): Promise<
       { source: 'lifi'; toAmount: bigint; toAmountMin: bigint; lq: LifiQuote } | { source: 'pool'; toAmount: bigint; toAmountMin: bigint }
     > => {
-      try {
+      // FEE-FIRST ON BUYS (owner 2026-08-16: "ensure fees are kept for stuff
+      // outside the main batcher"): with the wrapper seated, the POOL path
+      // leads — it is PRISM's real market (the hooked v4 pool aggregators
+      // cannot reach) and the wrapper captures the house fee. The aggregator
+      // becomes the fallback. Displayed source must match the executed one,
+      // so this order mirrors trade() exactly.
+      const wrapperSeated = dir === 'buy' && !!directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) && !!INTERFACE_TAG_ADDRESS
+      const poolQuote = async () => {
+        if (!universalRouterAddress()) throw new Error('No Universal Router configured.')
+        const out = await quotePrismPool(clientFor(PRISM_CLAIM_CHAIN_ID), dir, amountRaw)
+        const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
+        return { source: 'pool' as const, toAmount: out, toAmountMin: minOut }
+      }
+      const lifiQuote = async () => {
         const lq = await fetchLifiQuote({
           chainId: PRISM_CLAIM_CHAIN_ID,
           fromToken,
@@ -109,12 +126,20 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
           fromAddress: address as `0x${string}`,
           slippageBps: slipBps,
         })
-        return { source: 'lifi', toAmount: lq.toAmount, toAmountMin: lq.toAmountMin, lq }
+        return { source: 'lifi' as const, toAmount: lq.toAmount, toAmountMin: lq.toAmountMin, lq }
+      }
+      if (wrapperSeated) {
+        try {
+          return await poolQuote()
+        } catch {
+          return await lifiQuote()
+        }
+      }
+      try {
+        return await lifiQuote()
       } catch (e) {
         if (!(e instanceof LifiQuoteError) || !universalRouterAddress()) throw e
-        const out = await quotePrismPool(clientFor(PRISM_CLAIM_CHAIN_ID), dir, amountRaw)
-        const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
-        return { source: 'pool', toAmount: out, toAmountMin: minOut }
+        return await poolQuote()
       }
     },
     enabled: open && !!address && amountRaw > 0n && !overBalance,
@@ -147,12 +172,43 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
       }
     }
     try {
-      // Re-quote at execution (fresh route + floor) through the SAME
-      // aggregator-else-pool fallback the display quote used.
+      // Re-quote at execution (fresh route + floor) in the SAME order the
+      // display quote used — the shown source must be the executed source.
       setBusy('trade')
       const client = clientFor(PRISM_CLAIM_CHAIN_ID)
       let exec: { to: `0x${string}`; data: `0x${string}`; value: bigint; gas?: bigint; spender: `0x${string}` | null }
-      try {
+      // THE FEE RAIL (owner 2026-08-16: "ensure fees are kept for stuff
+      // outside the main batcher"): with the wrapper seated, BUYS lead with
+      // the POOL path — PRISM's real market, and the wrapper charges the
+      // house fee on top (fee/8 operator, 7/8 burned). Aggregator falls back.
+      const poolExec = async (): Promise<typeof exec> => {
+        if (!universalRouterAddress()) throw new Error('No Universal Router configured.')
+        const out = await quotePrismPool(client, dir, amountRaw)
+        const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
+        const tx = encodePrismPoolSwap(dir, amountRaw, minOut)
+        if (dir === 'buy') {
+          const wrapped = swapWithFeeCall({
+            chainId: PRISM_CLAIM_CHAIN_ID,
+            sellToken: null,
+            sellAmount: amountRaw,
+            buyToken: PRISM_V2_HOOK,
+            minBuyAmount: minOut,
+            poolData: tx.data,
+            feeBps: batchFeeBpsFor(PRISM_CLAIM_CHAIN_ID),
+            feeRecipient: INTERFACE_TAG_ADDRESS,
+            nowSec: Math.floor(Date.now() / 1000),
+          })
+          if (wrapped) return { to: wrapped.to, data: wrapped.data, value: wrapped.value, spender: null }
+        }
+        // SELL = PRISM in → NATIVE out, which the wrapper refuses this
+        // generation (NativeOutputUnsupported). Sells keep the direct path
+        // until the WETH-out payload is fork-confirmed by the contracts lane
+        // (desk ask, 2026-08-16) — never a from-memory router command layout
+        // on a money lane. The Universal Router pulls ERC-20 input through
+        // Permit2, not a direct allowance — spender: null marks that path.
+        return { ...tx, spender: null }
+      }
+      const lifiExec = async (): Promise<typeof exec> => {
         const lq = await fetchLifiQuote({
           chainId: PRISM_CLAIM_CHAIN_ID,
           fromToken,
@@ -161,16 +217,22 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
           fromAddress: address,
           slippageBps: slipBps,
         })
-        exec = { to: lq.tx.to, data: lq.tx.data, value: lq.tx.value, gas: lq.tx.gasLimit ?? undefined, spender: lq.approvalAddress }
-      } catch (e) {
-        const ur = universalRouterAddress()
-        if (!(e instanceof LifiQuoteError) || !ur) throw e
-        const out = await quotePrismPool(client, dir, amountRaw)
-        const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
-        const tx = encodePrismPoolSwap(dir, amountRaw, minOut)
-        // The Universal Router pulls ERC-20 input through Permit2, not a
-        // direct allowance — spender: null marks that path for the approve leg.
-        exec = { ...tx, spender: null }
+        return { to: lq.tx.to, data: lq.tx.data, value: lq.tx.value, gas: lq.tx.gasLimit ?? undefined, spender: lq.approvalAddress }
+      }
+      const wrapperSeated = dir === 'buy' && !!directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) && !!INTERFACE_TAG_ADDRESS
+      if (wrapperSeated) {
+        try {
+          exec = await poolExec()
+        } catch {
+          exec = await lifiExec()
+        }
+      } else {
+        try {
+          exec = await lifiExec()
+        } catch (e) {
+          if (!(e instanceof LifiQuoteError) || !universalRouterAddress()) throw e
+          exec = await poolExec()
+        }
       }
 
       // Selling spends PRISM: grant exactly what this trade needs.
@@ -314,8 +376,12 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
               the token that powers Spectrum
             </span>
             {/* the burn line stands alone, glowing (owner 2026-07-30) */}
-            <span className="mt-0.5 block truncate font-mono text-[11px] font-semibold text-amber [text-shadow:0_0_14px_rgba(255,146,72,0.75),0_0_4px_rgba(255,146,72,0.5)]">
-              10% of every basket fee buys &amp; burns PRISM
+            {/* WRAPS, never truncates (mobile sweep 2026-08-06): at 390w the
+                single-line clip cut it to "…buys & bu", which reads as broken
+                rather than as the fact it states. A two-line fact is fine; a
+                half-sentence is not. */}
+            <span className="mt-0.5 block font-mono text-[11px] font-semibold leading-snug text-amber [text-shadow:0_0_14px_rgba(255,146,72,0.75),0_0_4px_rgba(255,146,72,0.5)] sm:truncate">
+              25% of every basket fee buys &amp; burns PRISM
             </span>
           </span>
         </span>
@@ -424,7 +490,7 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
                     inputMode="decimal"
                     autoComplete="off"
                     placeholder="0.0"
-                    aria-label={`${paySymbol} amount`}
+                    aria-label={`${showSymbol(paySymbol)} amount`}
                     className="w-full min-w-0 bg-transparent font-num text-3xl font-semibold tabular-nums text-ink placeholder:text-ink-faint focus:outline-none"
                   />
                   <span className="shrink-0 rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 font-mono text-[11px] font-semibold text-ink-dim">
@@ -459,7 +525,7 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
                       <>
                         <div className="mt-1 truncate font-num text-3xl font-bold tabular-nums text-ink">
                           {fmtOut(quote.data.toAmount)}{' '}
-                          <span className="text-base font-semibold text-ink-dim">{outSymbol}</span>
+                          <span className="text-base font-semibold text-ink-dim">{showSymbol(outSymbol)}</span>
                         </div>
                         <div className="mt-1 font-mono text-[11px] text-ink-faint">
                           minimum {fmtOut(quote.data.toAmountMin)} · enforced by the route
@@ -548,6 +614,13 @@ export function TradePrism({ className = '', buyOnly = false }: { className?: st
               <p className="mt-3 text-center font-mono text-[10px] text-ink-faint">
                 Ethereum mainnet · the route enforces your minimum · what arrives is measured from the
                 transaction, never the quote{dir === 'sell' ? ' · selling approves the route exact-amount first' : ''}
+                {/* the fee this buy actually pays, stated where the buy is
+                    signed (audit 2026-08-16: the wrapper's cut was charged and
+                    disclosed nowhere on this card) — only when the wrapper is
+                    seated, which is when it is charged */}
+                {dir === 'buy' && directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) != null
+                  ? ` · a ${(batchFeeBpsFor(PRISM_CLAIM_CHAIN_ID) / 100).toFixed(1)}% Spectrum fee is added on top and buys & burns PRISM`
+                  : ''}
               </p>
             </>
           )}

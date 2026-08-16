@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { SWAP_ENABLED } from '../lib/config/features'
 import { pageEnabled } from '../theme/brand'
 import brand from '../brand.config'
@@ -35,8 +36,10 @@ export function QuickBuy({
     <Link
       to={`/swap?basket=${address}&chain=${chainId}&amt=${amountUsd}`}
       onClick={(e) => e.stopPropagation()}
-      aria-label={symbol ? `Buy $${symbol}` : 'Buy this basket'}
-      className={`press inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cyan px-3.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-black transition-transform hover:scale-[1.03] ${className}`}
+      aria-label={symbol ? `Buy $${showSymbol(symbol)}` : 'Buy this basket'}
+      /* 36px below sm (mobile sweep 2026-08-06: measured 64x27 — the primary
+         conversion control was the smallest target on the creator page) */
+      className={`press inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg bg-cyan px-3.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-black transition-transform hover:scale-[1.03] sm:min-h-0 ${className}`}
     >
       Buy
       <span aria-hidden>→</span>

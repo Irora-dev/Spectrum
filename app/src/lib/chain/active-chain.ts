@@ -14,9 +14,19 @@ function readInitial(): number {
     const v = Number(localStorage.getItem(STORAGE_KEY))
     if (ids.includes(v)) return v
   }
-  // First visit: the operator's brand default (e.g. Robinhood Chain on a
-  // stocks-forward site — owner 2026-07-29) when it's a scaffolded chain;
-  // a returning visitor's own stored choice above always wins.
+  // First visit: the operator's chosen opening network, when it is a scaffolded
+  // chain; a returning visitor's own stored choice above always wins.
+  //
+  // TWO SOURCES, ENV FIRST (2026-08-06). `brand.config.ts` is merged into the
+  // kit release line, so a hardcoded default there travelled with every
+  // absorption — the test line's Robinhood 4663 kept landing in a kit that
+  // ships Base-first, and UIGuy had to catch and hand-revert it. Reading the
+  // env here keeps that file identical on both lines and puts the divergence
+  // where per-deploy divergence belongs. Absent or unparseable falls through to
+  // the brand file and then to Base, so the safe value is also the default.
+  const fromEnv = Number(String(import.meta.env.VITE_DEFAULT_CHAIN_ID ?? '').trim())
+  if (Number.isInteger(fromEnv) && ids.includes(fromEnv)) return fromEnv
+  // still honoured for an operator who genuinely sets it in their brand file
   const branded = Number(brand.defaultChainId)
   if (ids.includes(branded)) return branded
   return DEFAULT_CHAIN_ID

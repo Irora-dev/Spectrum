@@ -111,7 +111,7 @@ and you get it; only an explicit `false` turns it off. The **`/setup` studio**
 | `stocks` | on | Hides every tokenized-stock **surface**: the launcher's stock shelf, the stocks-and-tokens banner, stock badges. It cannot block a pasted stock address — routability stays the chain's own truth | `--no-stocks` |
 | `starterTokens` | on | Drops the small curated **starter suggestions** the launch shelves fall back to before your chain has baskets of its own. These are third-party token addresses suggested on your site; off leaves the shelf purely organic (most-used constituents of live baskets, ranked by live market data) | `--no-starter-tokens` |
 | `prismCredit` | on | Removes the **"Powered by Prism"** banner (home, basket, swap, fees) that links out to Prism Beat. The protocol's PRISM buy-and-burn leg is contract-side and unaffected either way | `--no-prism-credit` |
-| `setupStudio` | on | Locks a deployed site: drops the `/setup` route and the footer Customize link. Dev builds always serve it; drafts were never server-side, so this is product posture, not security | `--no-setup-studio` |
+| `setupStudio` | **off** | OPT-IN: serves the `/setup` studio and the footer Customize link on your DEPLOYED site. **Dev servers always serve it regardless**, so setting up and updating are unaffected. Flipped to off-by-default 2026-08-02 — a live site should not offer visitors a customiser. Drafts were never server-side and the write-back endpoint is dev-only, so this is product posture, not security | `--setup-studio` |
 | `defaultChainId` | book default | Sets the **first-visit** network (must be a scaffolded chain id). A returning visitor's own network choice always wins | — |
 
 `style` + `palette` are the visual identity (5 drastically different styles, 14
@@ -342,3 +342,33 @@ DB-less **snapshot** poller instead (`scripts/build-snapshot.mjs` + `VITE_SNAPSH
   chain — no seed lists, no curation. Pointed at your **own** fresh factory, an
   empty marketplace is correct behavior, not a bug.
 - Per-basket OG cards need prerendering — a SPA limitation; your call.
+
+## The onboarding, linked wallets, and backups
+
+Three visitor-facing systems your site carries with zero configuration:
+
+- **The first-open ceremony.** A visitor's first /portfolio plays a three-step
+  intro (the story → connect → their real holdings) and the homepage's
+  get-started act is the same system inline. Both are strictly
+  connection-honest: nothing renders under "What you already hold" without a
+  real wallet. `/portfolio?intro=replay` re-plays it for demos.
+- **Linked wallets.** Visitors can sign once per wallet to read several wallets
+  as one portfolio. The links live in THEIR browser (nothing on your site, no
+  database), travel as a signature-verified file, and never let one wallet act
+  for another — trades and claims always come from the connected wallet.
+- **Backup / restore.** "Full backup" in the wallet panel downloads everything
+  a browser accumulates (targets, drafts, records, links) as one JSON file;
+  restore lives on the portfolio's connect gate and never overwrites newer
+  local work. There is nothing operator-side to run — it is all client-local.
+
+## The browser extension
+
+Your site can hand visitors a read-only portfolio lens for their toolbar, carrying
+your wordmark. Package it (`cd extension && npm run package -- --into-site`),
+rebuild, redeploy: the install page appears at `/extension`, serving files your own
+site hosts. The `/setup` studio's Extension panel shows where you are and the next
+command at every step. Trust posture, verbatim on the page: that URL is the only
+official source, and the lens never connects, never signs, never asks for a seed
+phrase. A website cannot install an extension for the visitor; the honest ceiling
+is one click plus the browser's own confirmation, and the kit's copy never implies
+more.

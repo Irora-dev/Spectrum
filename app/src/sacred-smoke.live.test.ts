@@ -19,13 +19,14 @@
 //
 // Wired into releases: the maintainer release pipeline runs this on every
 // release that touches sacred-paths.json (how releases work: docs/RELEASES.md);
-// the public canary workflow runs it daily. Slots being closed between
-// Dutch-auction deploys is an HONEST state: the simulation then must revert
-// with something that is NOT CREATE2Failed/route-shaped.
+// the public canary workflow runs it daily. The factory's 10-block cooldown
+// after a launch is an HONEST state: the simulation then must revert with
+// something that is NOT CREATE2Failed/route-shaped.
 // ─────────────────────────────────────────────────────────────────────────────
 import { describe, it, expect, beforeAll } from 'vitest'
 import { parseEther, zeroAddress, type Address } from 'viem'
 import { SUPPORTED_CHAIN_IDS, chainCfg } from './lib/chain/chains'
+import { settlementDecimalsFor } from './lib/chain/deployments'
 import { clientFor } from './lib/chain/rpc'
 import { basketAbi, factoryAbi, factoryDeployAbi, type FeeConfigInput } from './lib/spectrum/abis-v2'
 import { mineSalt } from './lib/spectrum/salt-mining'
@@ -184,9 +185,10 @@ describe.skipIf(!LIVE)('sacred smoke (live, read-only)', () => {
             return
           }
           const { salt, predicted } = mined
-          const startSqrtPriceX96 = startSqrtPriceX96ForDollarNav(predicted, cfg.usdc as Address)
+          const startSqrtPriceX96 = startSqrtPriceX96ForDollarNav(predicted, cfg.usdc as Address, undefined, settlementDecimalsFor(chainId))
 
-          // Dutch auction: between slots currentDeployPrice reverts — an honest state.
+          // currentDeployPrice reverts SlotNotOpen() for 10 blocks after a
+          // launch — an honest state, not an outage.
           let priceWei: bigint | null = null
           try {
             priceWei = await client.readContract({ address: factory, abi: factoryDeployAbi, functionName: 'currentDeployPrice' })
@@ -214,8 +216,8 @@ describe.skipIf(!LIVE)('sacred smoke (live, read-only)', () => {
             // The one hard verdict: CREATE2Failed means the deploy pipeline is broken.
             expect(raw.startsWith(CREATE2_FAILED_SELECTOR) || text.includes(CREATE2_FAILED_SELECTOR.slice(2)), `deployBasket simulation reverted CREATE2Failed — the launch pipeline is broken: ${text.slice(0, 400)}`).toBe(false)
             if (priceWei === null) {
-              // Slot closed: any non-CREATE2 revert is the auction gate doing its job.
-              console.warn(`[sacred-smoke] ${cfg.name}: auction slot closed — deploy simulation reverted honestly (not CREATE2Failed).`)
+              // In the cooldown: any non-CREATE2 revert is that gate doing its job.
+              console.warn(`[sacred-smoke] ${cfg.name}: factory in its post-launch cooldown — deploy simulation reverted honestly (not CREATE2Failed).`)
             } else if (/state override|stateoverride|method not found|-32602|not supported/i.test(text)) {
               // Node without eth_call state overrides: retry unfunded; only a
               // funds-shaped failure is acceptable then.

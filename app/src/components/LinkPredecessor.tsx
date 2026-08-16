@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import { BasketAvatar } from './BasketAvatar'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
 import { isAddress, type Address } from 'viem'
 import { useAccount } from 'wagmi'
@@ -21,12 +23,16 @@ export function LinkPredecessorButton({
   chainId,
   hasPredecessor,
   meta,
+  initialPredecessor,
 }: {
   basket: string
   deployer: string | null
   chainId: number
   hasPredecessor: boolean
   meta: VerifiedCreatorMeta | null
+  /** Pre-selected predecessor (the iterate loop's recorded intent) — the modal
+   *  opens with it chosen; the deployer still signs, nothing is assumed. */
+  initialPredecessor?: string
 }) {
   const { address } = useAccount()
   const [open, setOpen] = useState(false)
@@ -47,6 +53,7 @@ export function LinkPredecessorButton({
           deployer={deployer}
           chainId={chainId}
           meta={meta}
+          initialPredecessor={initialPredecessor}
           onClose={() => setOpen(false)}
         />
       )}
@@ -59,19 +66,22 @@ function LinkModal({
   deployer,
   chainId,
   meta,
+  initialPredecessor,
   onClose,
 }: {
   basket: string
   deployer: string
   chainId: number
   meta: VerifiedCreatorMeta | null
+  initialPredecessor?: string
   onClose: () => void
 }) {
   const { data: all } = useAllBaskets()
   const publisher = usePublish(chainId)
   const queryClient = useQueryClient()
-  const [chosen, setChosen] = useState<string>('')
+  const [chosen, setChosen] = useState<string>(initialPredecessor?.toLowerCase() ?? '')
   const [custom, setCustom] = useState('')
+  const [filter, setFilter] = useState('')
 
   // Candidates: this deployer's OTHER baskets on this chain that aren't already
   // superseded. For a repair after a version deploy, that's exactly the old version.
@@ -86,6 +96,14 @@ function LinkModal({
       ),
     [all, basket, chainId, deployer],
   )
+
+  const shownCandidates = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return candidates
+    return candidates.filter(
+      (c) => c.symbol.toLowerCase().includes(q) || (c.name ?? '').toLowerCase().includes(q) || c.address.toLowerCase().includes(q),
+    )
+  }, [candidates, filter])
 
   const predecessor = chosen || custom.trim()
   const predecessorValid = isAddress(predecessor, { strict: false }) && predecessor.toLowerCase() !== basket.toLowerCase()
@@ -143,33 +161,59 @@ function LinkModal({
           </div>
 
           <p className="mt-3 text-sm leading-relaxed text-ink-dim">
-            Declare which basket this one supersedes. It&rsquo;s a claim you sign with your deploy wallet
-            (free, off-chain), discovery then shows one lineage instead of two unrelated baskets. Stored in
-            this browser and offered as a download; both baskets must share your deployer address or the
-            claim never renders.
+            Pick the basket this one replaces. You sign the claim with your deploy wallet, free and
+            off-chain, and discovery shows one lineage instead of two.
           </p>
 
           {st !== 'done' && (
             <>
-              {candidates.length > 0 && (
-                <div className="mt-4 space-y-1.5">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Your other baskets here</div>
-                  {candidates.map((c) => (
+              {/* the pre-filled choice made VISIBLE even when it isn't among
+                  the listed candidates (audit C3: signing an invisible
+                  selection) — the sign button must never arm on a choice the
+                  UI never showed. */}
+              {chosen && !candidates.some((c) => c.address.toLowerCase() === chosen) && (
+                <div className="mt-4 rounded-xl border border-cyan/40 bg-cyan/[0.06] px-3 py-2.5 font-mono text-[12px] text-ink">
+                  Linking to <span className="font-semibold">{shortAddr(chosen)}</span>
+                </div>
+              )}
+              {/* VISUAL PICKER (the owner live 2026-08-15: "choose the basket
+                  visually / search, much like baskets look on the creator
+                  page") — the same identity mark the creator page draws,
+                  searchable past six. */}
+              {candidates.length > 6 && (
+                <input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Search your baskets…"
+                  spellCheck={false}
+                  className="mt-4 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2.5 font-mono text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-cyan/50"
+                />
+              )}
+              {shownCandidates.length > 0 && (
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {shownCandidates.map((c) => (
                     <button
                       key={c.address}
                       type="button"
                       onClick={() => {
-                        setChosen(c.address)
+                        setChosen(c.address.toLowerCase())
                         setCustom('')
                       }}
-                      className={`press flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left font-mono text-[12px] ${
-                        chosen === c.address
-                          ? 'border-cyan/50 bg-cyan/10 text-ink'
-                          : 'border-white/10 text-ink-dim hover:border-white/25'
+                      className={`press flex items-center gap-3 rounded-2xl border p-3 text-left transition-colors ${
+                        chosen === c.address.toLowerCase()
+                          ? 'border-cyan/50 bg-cyan/10'
+                          : 'border-white/10 hover:border-white/25'
                       }`}
                     >
-                      <span className="font-semibold">${c.symbol}</span>
-                      <span className="text-ink-faint">{shortAddr(c.address)}</span>
+                      <BasketAvatar symbol={c.symbol} address={c.address} size={40} />
+                      <span className="min-w-0">
+                        <span className="block truncate font-display text-sm font-bold uppercase tracking-wide text-ink">
+                          {c.name || `$${showSymbol(c.symbol)}`}
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-ink-faint">
+                          ${showSymbol(c.symbol)} · {shortAddr(c.address)}
+                        </span>
+                      </span>
                     </button>
                   ))}
                 </div>

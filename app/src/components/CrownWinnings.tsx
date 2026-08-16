@@ -1,13 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { Address } from 'viem'
-import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
+import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { useActiveChain } from '../lib/chain/active-chain'
 import { clientFor } from '../lib/chain/rpc'
 import { CROWN_CLAIM_RULE, fetchOwed, leaguePoolAbi } from '../lib/spectrum/league'
 import { TRADING_ENABLED } from '../lib/config/features'
 import { PixelCrown } from './PixelCrown'
 import { InfoDot } from './InfoDot'
+import { useNetworkSwitch, WrongNetworkNotice } from './WrongNetwork'
 
 // Crown earnings, withdrawable (owner 2026-07-30: "have we surfaced when crown
 // rewards can be claimed on the earn / creator profile page?" — we had not).
@@ -27,9 +28,13 @@ const usd = (raw: bigint) =>
 
 export function CrownWinnings({ creator, className = '' }: { creator?: string; className?: string }) {
   const { chainId, cfg } = useActiveChain()
-  const { address, chainId: walletChainId } = useAccount()
-  const { switchChainAsync } = useSwitchChain()
-  const wrongChain = !!address && walletChainId !== chainId
+  const { address } = useAccount()
+  // The league pays out on the chain it lives on, so that is the network this
+  // withdrawal needs. One switch mutation: the Withdraw button performs it (it
+  // does double duty while the network is wrong), the shared notice speaks for it
+  // (the 2026-08-05 wrong-network consolidation — see WrongNetwork.tsx).
+  const netSwitch = useNetworkSwitch(chainId)
+  const wrongChain = netSwitch.mismatch
   const pool = cfg.leaguePool
   // Whose earnings: an explicit creator (their profile) else the viewer.
   const subject = (creator ?? address) as Address | undefined
@@ -39,8 +44,13 @@ export function CrownWinnings({ creator, className = '' }: { creator?: string; c
     queryKey: ['spectrum', 'league-owed', chainId, subject?.toLowerCase()],
     queryFn: () => fetchOwed(clientFor(chainId), pool as Address, subject as Address),
     enabled: !!pool && !!subject,
-    // it accrues continuously while they hold the crown, so keep it fresh
-    refetchInterval: 30_000,
+    // it accrues continuously while they hold the crown, so keep it LIVE for
+    // the one person who can act on it — the holder viewing their own page.
+    // A VISITOR's copy rides the staleTime floor instead (RPC audit
+    // 2026-08-06: this was the only measured standing idle drain — every
+    // parked visitor tab on every creator profile ticked a 30s poll to
+    // animate someone else's slowly-accruing balance).
+    refetchInterval: isViewer ? 30_000 : false,
     staleTime: 15_000,
   })
 
@@ -55,14 +65,13 @@ export function CrownWinnings({ creator, className = '' }: { creator?: string; c
   async function withdraw() {
     if (!publicClient || busy) return
     // Every other write surface in the app offers a switch instead of letting
-    // wagmi surface a raw ChainMismatchError the user can't act on (audit).
+    // wagmi surface a raw ChainMismatchError the user can't act on (audit). The
+    // switch is OFFERED, never taken: this only runs from the button's own click.
+    // A declined switch is acknowledged by the notice below in plain words, so it
+    // no longer needs a local error string of its own.
     if (wrongChain) {
       setError(null)
-      try {
-        await switchChainAsync({ chainId })
-      } catch {
-        setError(`Switch your wallet to ${cfg.name} to withdraw.`)
-      }
+      netSwitch.switchNow()
       return
     }
     setBusy(true)
@@ -104,14 +113,31 @@ export function CrownWinnings({ creator, className = '' }: { creator?: string; c
         {isViewer && TRADING_ENABLED && (
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || netSwitch.switching}
             onClick={() => void withdraw()}
             className="press rounded-xl border border-amber/50 bg-amber/15 px-5 py-2.5 font-display text-[12px] font-bold uppercase tracking-[0.12em] text-amber hover:enabled:border-amber disabled:opacity-60"
           >
-            {busy ? 'Withdrawing…' : wrongChain ? `Switch to ${cfg.name}` : 'Withdraw'}
+            {busy
+              ? 'Withdrawing…'
+              : netSwitch.switching
+                ? 'Confirm in wallet…'
+                : wrongChain
+                  ? `Switch to ${cfg.name}`
+                  : 'Withdraw'}
           </button>
         )}
       </div>
+      {/* wrong network, in words, naming BOTH networks. The card is a single row,
+          so it takes the compact form; the button above is the switch. */}
+      {isViewer && TRADING_ENABLED && (
+        <WrongNetworkNotice
+          sw={netSwitch}
+          requiredChainId={chainId}
+          action="These earnings pay out"
+          compact
+          className="mt-2.5"
+        />
+      )}
       {error && <p className="mt-2 font-mono text-[10px] text-magenta">{error}</p>}
     </section>
   )

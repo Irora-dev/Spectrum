@@ -33,7 +33,9 @@ export function NetworkToggle() {
           <button
             key={id}
             onClick={() => select(id)}
-            className={`press rounded-full px-3 py-1 font-mono text-[11px] uppercase tracking-[0.15em] ${
+            /* min-h on phones (mobile audit 2026-08-05: these measured 25px
+               tall, well under a thumb); the desktop chrome is unchanged. */
+            className={`press inline-flex min-h-[36px] items-center rounded-full px-3 py-1 font-mono text-[11px] uppercase tracking-[0.15em] sm:min-h-0 ${
               active ? 'bg-white/10 text-cyan' : 'text-ink-faint hover:text-ink-dim'
             }`}
           >

@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { formatUnits, parseUnits, type Address } from 'viem'
-import { useAccount, useSwitchChain } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { chainCfg } from '../lib/chain/chains'
+import { settlementDecimalsFor } from '../lib/chain/deployments'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { useBasketData } from '../lib/spectrum/hooks'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
 import { useMigrate, type MigrateTxState } from '../lib/spectrum/use-migrate'
+import { useSwapMigrate, type SwapMigrateStepKey } from '../lib/spectrum/use-swap-migrate'
 import { TRADING_ENABLED } from '../lib/config/features'
 import { INTERFACE_TAG_ADDRESS } from '../lib/config/operator'
 import { BasketDiff } from './BasketDiff'
 import { SweepPanel } from './SweepPanel'
 import { CompleteBanner } from './CompleteBanner'
+import { WrongNetwork } from './WrongNetwork'
 
 // Holder "upgrade to the new version" modal — the LIVE in-kind path on the two
 // on-chain primitives: redeemInKind out of the old version, then mintInKind into
@@ -27,9 +32,9 @@ export function MigrateModal({
   open,
   onClose,
   fromAddr,
-  fromSymbol,
+  fromSymbol: rawFromSymbol,
   toAddr,
-  toSymbol,
+  toSymbol: rawToSymbol,
   chainId,
 }: {
   open: boolean
@@ -40,6 +45,12 @@ export function MigrateModal({
   toSymbol: string
   chainId: number
 }) {
+  // BOTH TICKERS ARE DEPLOYER-CONTROLLED, and this modal interpolates them into
+  // ~40 copy sites plus a child stepper (go-live hardening 2026-08-07).
+  // Sanitising once here and shadowing the prop names makes every one of those
+  // uses — and the pass-down — inert and bounded without editing each site.
+  const fromSymbol = showSymbol(rawFromSymbol)
+  const toSymbol = showSymbol(rawToSymbol)
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -52,7 +63,6 @@ export function MigrateModal({
   const cfg = chainCfg(chainId)
   const navigate = useNavigate()
   const { address, isConnected, chainId: walletChainId } = useAccount()
-  const { switchChain } = useSwitchChain()
   const { data: fees } = useBasketFees(open ? toAddr : undefined, chainId)
   const m = useMigrate(fromAddr, toAddr, chainId, open && TRADING_ENABLED)
 
@@ -85,7 +95,7 @@ export function MigrateModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Upgrade to $${toSymbol}`}
+        aria-label={`Upgrade to $${showSymbol(toSymbol)}`}
         onClick={(e) => e.stopPropagation()}
         className={`search-pop relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-3xl card-surface backdrop-blur-md ${
           m.phase === 'done' ? 'max-w-3xl' : 'max-w-lg'
@@ -97,7 +107,7 @@ export function MigrateModal({
             <div>
               <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Opt-in upgrade</div>
               <h2 className="mt-1 font-display text-3xl font-bold tracking-tight text-ink sm:text-4xl">
-                Upgrade to ${toSymbol}
+                Upgrade to ${showSymbol(toSymbol)}
               </h2>
             </div>
             <button
@@ -112,12 +122,12 @@ export function MigrateModal({
 
           {/* REVIEW intro — a few easy lines; the full story + mechanics live behind
               popups so the screen fits the viewport. Hidden once migration starts. */}
-          {m.phase !== 'running' && m.phase !== 'done' && m.phase !== 'error' && (
+          {m.phase !== 'running' && m.phase !== 'done' && m.phase !== 'error' && m.phase !== 'blocked' && (
             <>
               {/* one line only — the DEX/what-trades detail lives in Read more
                   (owner 2026-07-06: hide it here, it duplicated the popup) */}
               <p className="mt-3 text-sm leading-relaxed text-ink-dim">
-                Your holdings move into ${toSymbol} <span className="text-ink">in kind</span>.{' '}
+                Your holdings move into ${showSymbol(toSymbol)} <span className="text-ink">in kind</span>.{' '}
                 <button type="button" onClick={() => setInfo('more')} className="press font-medium text-cyan hover:underline">
                   Read more
                 </button>
@@ -153,14 +163,20 @@ export function MigrateModal({
             </p>
           )}
 
+          {/* the app-wide pre-flight notice (2026-08-05 consolidation): this used
+              to be a bare switch button naming only the destination, so a wallet
+              on the wrong network was told where to go but not where it was.
+              Same button, same flow; both networks named, decline acknowledged. */}
           {TRADING_ENABLED && isConnected && wrongChain && (
-            <button
-              type="button"
-              onClick={() => switchChain({ chainId })}
-              className="press mt-4 w-full rounded-xl border border-cyan/40 bg-cyan/10 py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-cyan hover:bg-cyan/20"
-            >
-              Switch to {cfg.name}
-            </button>
+            <WrongNetwork
+              requiredChainId={chainId}
+              action="This upgrade runs"
+              className="mt-4"
+              button={{
+                className:
+                  'mt-2 w-full rounded-xl border border-cyan/40 bg-cyan/10 py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-cyan hover:enabled:bg-cyan/20',
+              }}
+            />
           )}
 
           {TRADING_ENABLED && isConnected && !wrongChain && (
@@ -173,39 +189,65 @@ export function MigrateModal({
 
               {m.phase === 'blocked' && m.blocker && (
                 <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-400/[0.06] p-4 font-mono text-[11px] leading-relaxed text-ink-dim">
-                  {m.blocker.kind === 'no-balance' && <>You hold no ${fromSymbol} in this wallet, nothing to migrate.</>}
+                  {m.blocker.kind === 'no-balance' && <>You hold no ${showSymbol(fromSymbol)} in this wallet, nothing to migrate.</>}
                   {m.blocker.kind === 'zero-supply' && (
                     <>
-                      ${toSymbol} has no supply yet, in-kind entry opens after its first regular buy
-                      (swap-mint). Buy a small amount of ${toSymbol} first, then come back.
+                      ${showSymbol(toSymbol)} has no supply yet, in-kind entry opens after its first regular buy
+                      (swap-mint). Buy a small amount of ${showSymbol(toSymbol)} first, then come back.
                     </>
                   )}
                   {m.blocker.kind === 'missing-legs' && (
                     <>
-                      ${toSymbol} added constituents your redemption won&rsquo;t cover:{' '}
-                      <span className="text-ink">{m.blocker.legs.map((l) => l.symbol).join(', ')}</span>, and
-                      it dropped nothing that could be sold to fund them. Acquire those first, or buy $
-                      {toSymbol} directly instead.
+                      ${showSymbol(toSymbol)} added{' '}
+                      <span className="text-ink">{m.blocker.legs.map((l) => l.symbol).join(', ')}</span>, which
+                      your redemption can&rsquo;t supply, and it dropped nothing that could be sold to fund it.
+                      The in-kind route can&rsquo;t run here.
                     </>
                   )}
                   {m.blocker.kind === 'no-delta-config' && (
                     <>
-                      ${toSymbol} added{' '}
+                      ${showSymbol(toSymbol)} added{' '}
                       <span className="text-ink">{m.blocker.legs.map((l) => l.symbol).join(', ')}</span>, which
                       needs the auto delta trade, but no Uniswap V3 router/quoter is configured on this build
-                      (deployments.json). Acquire the assets manually, or buy ${toSymbol} directly.
+                      (deployments.json). The in-kind route can&rsquo;t run here.
                     </>
                   )}
                   {m.blocker.kind === 'no-route' && (
                     <>
                       No V3/WETH pool found to auto-trade{' '}
-                      <span className="text-ink">{m.blocker.legs.map((l) => l.symbol).join(', ')}</span>. Trade
-                      those manually, then reopen, or buy ${toSymbol} directly instead.
+                      <span className="text-ink">{m.blocker.legs.map((l) => l.symbol).join(', ')}</span>, so the
+                      in-kind route can&rsquo;t run here.
                     </>
                   )}
-                  {m.blocker.kind === 'dust' && <>The migratable amount rounds to zero ${toSymbol} shares.</>}
+                  {m.blocker.kind === 'dust' && <>The migratable amount rounds to zero ${showSymbol(toSymbol)} shares.</>}
+
                 </div>
               )}
+
+              {/* THE SWAP ROUTE (owner 2026-08-16: "can we fix this properly
+                  tho? we have an engine to actually buy this") — when the
+                  in-kind engine refuses on the three delta-blocked classes,
+                  the migration still RUNS: sell $OLD through its own pool,
+                  buy $NEW through its own pool, the buy spending the sale's
+                  MEASURED proceeds. Both lanes are the token console's own,
+                  floors and all (use-swap-migrate.ts). Offered ONLY here —
+                  it pays both pools' swap costs and both basket fees, which
+                  the in-kind path exists to avoid, so it never outranks it. */}
+              {m.phase === 'blocked' &&
+                m.blocker &&
+                (m.blocker.kind === 'missing-legs' ||
+                  m.blocker.kind === 'no-delta-config' ||
+                  m.blocker.kind === 'no-route' ||
+                  m.blocker.kind === 'zero-supply') && (
+                  <SwapMigratePanel
+                    fromAddr={fromAddr}
+                    toAddr={toAddr}
+                    chainId={chainId}
+                    fromSymbol={fromSymbol}
+                    toSymbol={toSymbol}
+                    onClose={onClose}
+                  />
+                )}
 
               {m.phase === 'ready' && m.plan && (
                 <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
@@ -221,7 +263,7 @@ export function MigrateModal({
                         inputMode="decimal" enterKeyHint="done" autoComplete="off"
                         className="w-36 rounded-lg border border-white/10 bg-transparent px-2 py-1 text-right font-mono text-[12px] text-ink outline-none focus:border-cyan/50 disabled:opacity-50"
                       />
-                      <span className="font-mono text-[11px] text-ink-dim">${fromSymbol}</span>
+                      <span className="font-mono text-[11px] text-ink-dim">${showSymbol(fromSymbol)}</span>
                       <button
                         type="button"
                         disabled={busy || m.redeemDone}
@@ -240,7 +282,7 @@ export function MigrateModal({
                   <div className="mt-3 flex items-center justify-between gap-3 font-mono text-[11px]">
                     <span className="text-ink-faint">You receive ≈</span>
                     <span className="tabular-nums text-ink">
-                      {fmtAmt(m.plan.mint.targetShares, m.plan.to.decimals)} ${toSymbol}
+                      {fmtAmt(m.plan.mint.targetShares, m.plan.to.decimals)} ${showSymbol(toSymbol)}
                     </span>
                   </div>
                   {/* the trust line (owner decision): how much moves in kind vs. trades.
@@ -308,7 +350,7 @@ export function MigrateModal({
                       )}
                       {!m.plan.delta && m.plan.dropped.length > 0 && (
                         <div className="mt-1 border-t border-white/10 pt-2 text-ink-faint">
-                          leftover after: {m.plan.dropped.map(({ leg, out }) => `${fmtAmt(out, leg.decimals)} ${leg.symbol}`).join(' · ')}, sweepable at the end
+                          leftover after: {m.plan.dropped.map(({ leg, out }) => `${fmtAmt(out, leg.decimals)} ${showSymbol(leg.symbol)}`).join(' · ')}, sweepable at the end
                         </div>
                       )}
                     </div>
@@ -331,8 +373,8 @@ export function MigrateModal({
               {m.phase === 'done' && m.result ? (
                 <div className="mt-4">
                   <CompleteBanner
-                    title={`Welcome to $${toSymbol}`}
-                    amount={`+${fmtAmt(m.result.shares, m.plan?.to.decimals ?? 18)} $${toSymbol}`}
+                    title={`Welcome to $${showSymbol(toSymbol)}`}
+                    amount={`+${fmtAmt(m.result.shares, m.plan?.to.decimals ?? 18)} $${showSymbol(toSymbol)}`}
                     // No leftover-teaser here: the sweep panel below speaks ONLY
                     // when something is genuinely worth sweeping (owner 13:57 —
                     // dust must not announce itself).
@@ -357,7 +399,7 @@ export function MigrateModal({
                       behind for convenience, say so + hand over the revoke lever. */}
                   {address && (
                     <p className="mt-3 text-center font-mono text-[10px] leading-relaxed text-ink-faint">
-                      Token allowances to the swap router &amp; ${toSymbol} remain, so future sweeps need no
+                      Token allowances to the swap router &amp; ${showSymbol(toSymbol)} remain, so future sweeps need no
                       re-approval.{' '}
                       <a
                         href={`https://revoke.cash/address/${address}?chainId=${chainId}`}
@@ -381,13 +423,14 @@ export function MigrateModal({
                     className="press mt-3 w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black transition-transform hover:scale-[1.01]"
                     style={{ background: 'linear-gradient(90deg,var(--color-teal),var(--color-cyan))' }}
                   >
-                    Done · view ${toSymbol} →
+                    Done · view ${showSymbol(toSymbol)} →
                   </button>
                 </div>
               ) : (
+                m.phase === 'blocked' ? null : (
                 <button
                   type="button"
-                  disabled={busy || m.phase === 'planning' || m.phase === 'blocked' || !m.plan || m.preview}
+                  disabled={busy || m.phase === 'planning' || !m.plan || m.preview}
                   onClick={() => void m.execute()}
                   className="press mt-4 w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }}
@@ -398,8 +441,9 @@ export function MigrateModal({
                       ? m.redeemDone
                         ? 'Resume migration'
                         : 'Retry migration'
-                      : `Upgrade to $${toSymbol}`}
+                      : `Upgrade to $${showSymbol(toSymbol)}`}
                 </button>
+                )
               )}
 
               {/* demo baskets plan a display-only preview — say so instead of erroring */}
@@ -411,7 +455,7 @@ export function MigrateModal({
 
               {m.redeemDone && m.phase === 'error' && (
                 <p className="mt-2 text-center font-mono text-[10px] leading-relaxed text-ink-faint">
-                  Your ${fromSymbol} redemption already settled, its constituents are in your wallet. Resume
+                  Your ${showSymbol(fromSymbol)} redemption already settled, its constituents are in your wallet. Resume
                   finishes the approvals + in-kind mint from there.
                 </p>
               )}
@@ -427,7 +471,7 @@ export function MigrateModal({
                 className="mt-5 w-full cursor-not-allowed rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black opacity-60"
                 style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }}
               >
-                Upgrade to ${toSymbol}
+                Upgrade to ${showSymbol(toSymbol)}
               </button>
               <p className="mt-2 text-center font-mono text-[10px] leading-relaxed text-ink-faint">
                 Preview only, this build does not broadcast transactions (trading is disabled).
@@ -479,10 +523,10 @@ function InfoPopup({
         </div>
         {kind === 'more' ? (
           <div className="mt-3 space-y-2.5 text-sm leading-relaxed text-ink-dim">
-            <p>${fromSymbol} is immutable and keeps working, exactly as it does now. Upgrading is opt-in; doing nothing keeps your current basket.</p>
-            <p>The move is <span className="text-ink">in kind</span>: you redeem ${fromSymbol} for its underlying assets, then deposit the ones ${toSymbol} also holds straight back in. Assets both versions share never hit a DEX, so you avoid swap costs on the overlap.</p>
-            <p>If ${toSymbol} swapped an asset out for a new one, only that changed slice trades: the dropped asset is sold and the added one bought with the proceeds, batched into a single transaction.</p>
-            <p>Anything left over afterward (a dropped asset, or dust) is yours, you can sweep it into ${toSymbol} or cash it out to USDC at the end.</p>
+            <p>${showSymbol(fromSymbol)} is immutable and keeps working, exactly as it does now. Upgrading is opt-in; doing nothing keeps your current basket.</p>
+            <p>The move is <span className="text-ink">in kind</span>: you redeem ${showSymbol(fromSymbol)} for its underlying assets, then deposit the ones ${showSymbol(toSymbol)} also holds straight back in. Assets both versions share never hit a DEX, so you avoid swap costs on the overlap.</p>
+            <p>If ${showSymbol(toSymbol)} swapped an asset out for a new one, only that changed slice trades: the dropped asset is sold and the added one bought with the proceeds, batched into a single transaction.</p>
+            <p>Anything left over afterward (a dropped asset, or dust) is yours, you can sweep it into ${showSymbol(toSymbol)} or cash it out to USDC at the end.</p>
           </div>
         ) : (
           <div className="mt-3 space-y-2.5 text-sm leading-relaxed text-ink-dim">
@@ -498,7 +542,7 @@ function InfoPopup({
             <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 font-mono text-[12px]">
               <span className="text-ink-faint">Price tolerances</span><span className="text-ink">≤1% swaps · 0.5% mint floor</span>
             </div>
-            <p>The exit fee leaving ${fromSymbol} stays with its remaining holders; the entry fee into ${toSymbol} is taken in kind and distributed normally. The in-kind route only saves the DEX cost on shared assets, not the protocol fee.</p>
+            <p>The exit fee leaving ${showSymbol(fromSymbol)} stays with its remaining holders; the entry fee into ${showSymbol(toSymbol)} is taken in kind and distributed normally. The in-kind route only saves the DEX cost on shared assets, not the protocol fee.</p>
             <p>Tolerances protect, not cost: each swap is floored 1% under its live quote, the mint floor sits 0.5% under a measured dry-run, and a 0.3% buffer absorbs reserve drift between planning and execution. Worst-case friction is bounded by their sum; typical runs land well inside it.</p>
             {INTERFACE_TAG_ADDRESS && (
               <p className="text-ink-faint">This interface receives the protocol’s fixed interface share (about 5% of the fee) on upgrades made through it.</p>
@@ -579,7 +623,7 @@ function MigrateStepper({ m, delta, fromSymbol, toSymbol, explorer }: { m: Stepp
   return (
     <div className="mt-4 space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Migrating</div>
-      <StepLine state={redeemState} title={`Redeem $${fromSymbol}`} hint="burn the old version, receive its assets" hash={m.txOf('redeem').hash} explorer={explorer} />
+      <StepLine state={redeemState} title={`Redeem $${showSymbol(fromSymbol)}`} hint="burn the old version, receive its assets" hash={m.txOf('redeem').hash} explorer={explorer} />
       <div>
         <StepLine
           state={approveState}
@@ -602,7 +646,220 @@ function MigrateStepper({ m, delta, fromSymbol, toSymbol, explorer }: { m: Stepp
           explorer={explorer}
         />
       )}
-      <StepLine state={st('mint', m.txOf('mint'))} title={`Mint $${toSymbol}`} hint="deposit the assets, receive the new version" hash={m.txOf('mint').hash} explorer={explorer} />
+      <StepLine state={st('mint', m.txOf('mint'))} title={`Mint $${showSymbol(toSymbol)}`} hint="deposit the assets, receive the new version" hash={m.txOf('mint').hash} explorer={explorer} />
+    </div>
+  )
+}
+
+// ── THE SWAP-ROUTE PANEL — the migration that runs when in-kind cannot ───────
+// (use-swap-migrate.ts carries the laws; this is its face.) States:
+// planning → ready (receive ≈ + the honest route line) → running (stepper) →
+// sold-but-buy-failed (the PARTIAL truth: proceeds are in the wallet, retry
+// resumes from the buy) → done (banner + door to the new version's page).
+const SWAP_STEP_WORDS: Record<SwapMigrateStepKey, string> = {
+  'approve-sell': 'Approve the old shares',
+  sell: 'Sell through its own pool',
+  'approve-buy': 'Approve the proceeds',
+  buy: 'Buy through its own pool',
+}
+function SwapMigratePanel({
+  fromAddr,
+  toAddr,
+  chainId,
+  fromSymbol,
+  toSymbol,
+  onClose,
+}: {
+  fromAddr: string
+  toAddr: string
+  chainId: number
+  fromSymbol: string
+  toSymbol: string
+  onClose: () => void
+}) {
+  const navigate = useNavigate()
+  const { address } = useAccount()
+  const { data: fromIx } = useBasketData(fromAddr, chainId)
+  const { data: toIx } = useBasketData(toAddr, chainId)
+  const { data: fromFees } = useBasketFees(fromAddr, chainId)
+  const { data: toFees } = useBasketFees(toAddr, chainId)
+  const sm = useSwapMigrate({
+    from: fromIx ?? null,
+    to: toIx ?? null,
+    chainId,
+    holder: address as Address | undefined,
+    fromFeeFrac: fromFees ? fromFees.basketFeeBps / 10_000 : null,
+    toFeeFrac: toFees ? toFees.basketFeeBps / 10_000 : null,
+  })
+  // plan once everything needed has loaded (re-invokes are cheap no-ops while
+  // planning; the hook guards itself)
+  const canPlan = !!fromIx && !!toIx && !!fromFees && !!toFees && !!address && sm.configured
+  useEffect(() => {
+    if (canPlan && sm.phase === 'idle') void sm.buildPlan()
+  }, [canPlan, sm])
+  const cfg = chainCfg(chainId)
+  const settlementDec = settlementDecimalsFor(chainId)
+  const busy = sm.phase === 'running'
+
+  // swap disabled / unconfigured = no route to offer at all — never a titled
+  // empty box (audit S10: SWAP_ENABLED off left phase at 'idle' forever, so
+  // the old not-idle guard NEVER fired and the chrome rendered empty)
+  if (!sm.configured) return null
+
+  return (
+    <div className="mt-3 rounded-xl border border-cyan/25 bg-cyan/[0.04] p-4">
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan">The swap route</div>
+
+      {sm.phase === 'planning' && (
+        <p className="mt-2 animate-pulse font-mono text-[11px] text-ink-dim">Pricing both trades on {cfg.name}…</p>
+      )}
+
+      {(sm.phase === 'ready' || sm.phase === 'running' || sm.phase === 'sold' || sm.phase === 'error') && sm.plan && (
+        <>
+          <p className="mt-2 text-sm leading-relaxed text-ink-dim">
+            Sell your ${showSymbol(fromSymbol)} through its own pool, then buy ${showSymbol(toSymbol)} with the
+            measured proceeds. Two transactions, each floored and simulated before your wallet is asked.
+          </p>
+          <div className="mt-3 space-y-1 font-mono text-[11px]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-faint">You sell</span>
+              <span className="tabular-nums text-ink">
+                {fmtAmt(sm.plan.sellAmountRaw, Math.min(fromIx?.decimals ?? 18, 18))} ${showSymbol(fromSymbol)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-faint">Proceeds ≈</span>
+              <span className="tabular-nums text-ink-dim">
+                {fmtAmt(sm.plan.sellQuote.expectedOutRaw, settlementDec)} settlement
+                {sm.plan.sellQuote.basis === 'simulated' ? '' : ' (est.)'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-faint">You receive ≈</span>
+              <span className="tabular-nums text-ink">
+                {sm.plan.estBuySharesRaw != null
+                  ? `${fmtAmt(sm.plan.estBuySharesRaw, Math.min(toIx?.decimals ?? 18, 18))} $${showSymbol(toSymbol)}${sm.plan.buySimulated ? '' : ' (est.)'}`
+                  : 'priced at buy time'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-1.5">
+              <span className="text-ink-faint">Cost honesty</span>
+              <span className="text-right text-ink-dim">both pools&rsquo; swap costs + both basket fees</span>
+            </div>
+          </div>
+
+          {(sm.phase === 'running' || sm.phase === 'sold' || sm.steps.some((s) => s.status !== 'pending')) && (
+            <div className="mt-3 space-y-1.5">
+              {sm.steps.map((s) => (
+                <div key={s.key} className="flex items-center justify-between gap-3 font-mono text-[11px]">
+                  <span
+                    className={
+                      s.status === 'done'
+                        ? 'text-teal'
+                        : s.status === 'active'
+                          ? 'text-cyan'
+                          : s.status === 'error'
+                            ? 'text-magenta'
+                            : 'text-ink-faint'
+                    }
+                  >
+                    {s.status === 'done' ? '✓ ' : s.status === 'error' ? '✕ ' : ''}
+                    {SWAP_STEP_WORDS[s.key]}
+                  </span>
+                  {s.hash && (
+                    <a href={`${cfg.explorer}/tx/${s.hash}`} target="_blank" rel="noreferrer" className="shrink-0 text-cyan hover:underline">
+                      tx ↗
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sm.phase === 'sold' && (
+            <p className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] p-3 font-mono text-[10px] leading-relaxed text-ink-dim">
+              The sale landed — your proceeds sit in your wallet as the settlement token. Retry finishes the
+              buy from there (it never re-sells), or buy ${showSymbol(toSymbol)} from its page any time.
+            </p>
+          )}
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void sm.execute()}
+            className="spectral-btn press mt-3 inline-flex h-11 w-full items-center justify-center rounded-full font-display text-[12px] font-bold uppercase tracking-[0.12em] text-void disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy
+              ? 'Swapping…'
+              : sm.phase === 'sold'
+                ? `Finish the buy of $${showSymbol(toSymbol)} →`
+                : sm.phase === 'error'
+                  ? 'Try again →'
+                  : `Swap into $${showSymbol(toSymbol)} →`}
+          </button>
+        </>
+      )}
+
+      {sm.phase === 'done' && sm.result && (
+        <div className="mt-2">
+          <CompleteBanner
+            title={`Welcome to $${showSymbol(toSymbol)}`}
+            amount={`+${fmtAmt(sm.result.boughtSharesRaw, Math.min(toIx?.decimals ?? 18, 18))} $${showSymbol(toSymbol)}`}
+            subtitle="Swap route complete: sold, measured, bought."
+            tone="spectral"
+            txHref={`${cfg.explorer}/tx/${sm.result.buyHash}`}
+          />
+          {address && (
+            <p className="mt-2 text-center font-mono text-[10px] leading-relaxed text-ink-faint">
+              Exact-amount router approvals were used and are spent.{' '}
+              <a href={`https://revoke.cash/address/${address}?chainId=${chainId}`} target="_blank" rel="noreferrer" className="text-cyan hover:underline">
+                Review allowances ↗
+              </a>
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              navigate(`/token?addr=${toAddr}&chain=${chainId}`)
+              onClose()
+            }}
+            className="press mt-3 w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black"
+            style={{ background: 'linear-gradient(90deg,var(--color-teal),var(--color-cyan))' }}
+          >
+            Done · view ${showSymbol(toSymbol)} →
+          </button>
+        </div>
+      )}
+
+      {sm.error && sm.phase !== 'done' && (
+        <p className="mt-2 rounded-lg border border-magenta/30 bg-magenta/[0.06] p-2.5 font-mono text-[10px] leading-relaxed text-ink-dim">
+          {sm.error}
+        </p>
+      )}
+
+      {/* the quiet escapes stay — the swap route must never be the only door */}
+      <div className="mt-3 flex flex-wrap items-center gap-2.5 border-t border-white/10 pt-3">
+        <button
+          type="button"
+          onClick={() => {
+            navigate(`/token?addr=${toAddr}&chain=${chainId}`)
+            onClose()
+          }}
+          className="press font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint hover:text-ink"
+        >
+          buy ${showSymbol(toSymbol)} on its page →
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            navigate(`/token?addr=${fromAddr}&chain=${chainId}`)
+            onClose()
+          }}
+          className="press font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint hover:text-ink"
+        >
+          sell ${showSymbol(fromSymbol)} on its page →
+        </button>
+      </div>
     </div>
   )
 }

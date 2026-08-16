@@ -173,7 +173,16 @@ async function main() {
     basketDecimals: 18,
   })
   must(!!q, 'buildSwapQuote produced a first-buy quote (legs priced through the on-chain rung)')
-  const enc = encodeMintHookData({ quotedLegAmounts: q!.quotedLegAmounts, slippageBps: 300, minOut: q!.minOutRaw, interfaceTag: me })
+  const enc = encodeMintHookData({
+    quotedLegAmounts: q!.quotedLegAmounts,
+    slippageBps: 300,
+    minOut: q!.minOutRaw,
+    interfaceTag: me,
+    // A FIRST mint carries no funding split: the factory's lens refuses at
+    // effectiveSupply() == 0 (MissingHookData) because only the caller's own price
+    // source may protect the mint that sets every future holder's share basis.
+    funding: { source: 'basket-weights', because: 'first-mint' },
+  })
   const buySim = await pub.simulateContract({
     account: me,
     address: ROUTER,

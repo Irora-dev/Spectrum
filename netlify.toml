@@ -7,3 +7,10 @@
   base = "app"
   command = "npm run build"
   publish = "dist"
+
+[build.environment]
+  # Matches the repo root's .node-version. Pinned HERE because `base = "app"`
+  # makes Netlify look for version files in app/, not the root — without this
+  # a fresh template build ran on Netlify's default Node (the docs' old "if
+  # your build complains" caveat, now closed by config).
+  NODE_VERSION = "22"

@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import type { Address } from 'viem'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { chainCfg } from '../lib/chain/chains'
 import { useCreatorBundles, publishedBundleHref, type PublishedBundle } from '../lib/spectrum/notes-social'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 import { BasketAvatar } from './BasketAvatar'
 import { ChainBadge } from './ChainBadge'
 import { formatUsdCompact } from '../lib/spectrum/format'
@@ -177,12 +179,16 @@ export function BundleShelf({
           <p className="mt-1.5 font-mono text-[10px] leading-relaxed text-ink-faint">
             Volume through that link lands in baskets you already earn on.
           </p>
-          <Link
-            to="/launch"
-            className="press mt-4 inline-block rounded-lg bg-cyan px-5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-black hover:opacity-90"
-          >
-            Launch another basket
-          </Link>
+          {/* never a dead door (QOL 2026-08-07): /launch is page-gated and
+              redirects to the homepage on a build with launching turned off */}
+          {pageEnabled(brand.pages, 'launch') && (
+            <Link
+              to="/create"
+              className="press mt-4 inline-block rounded-lg bg-cyan px-5 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-black hover:opacity-90"
+            >
+              Launch another basket
+            </Link>
+          )}
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-white/10 px-5 py-6 text-center">

@@ -33,8 +33,14 @@ export function useSwapSim(args: {
   legCount: number
   holder: Address | undefined
   allowanceCovers: boolean
+  /** BUY only — the payload's funding split, so the probe measures the trade that will
+   *  actually be signed (swap-sim.ts: without it a D-R1 basket funds nothing).
+   *  ⚠ This argument was once dropped by an auto-merge (the allocator line edited
+   *  this file while the zero-split fix was adding it), which broke the typecheck
+   *  while the tests stayed green. If it goes missing again, that is the shape. */
+  fundingSplitBps?: readonly number[] | null
 }): SwapSimState {
-  const { enabled, side, basket, chainId, amountRaw, legCount, holder, allowanceCovers } = args
+  const { enabled, side, basket, chainId, amountRaw, legCount, holder, allowanceCovers, fundingSplitBps } = args
   const publicClient = usePublicClient({ chainId })
   const dep = deploymentFor(chainId)
   const router = dep.swapRouter
@@ -68,6 +74,7 @@ export function useSwapSim(args: {
         legCount,
         holder,
         allowanceCovers,
+        fundingSplitBps,
       })
         .then((out) => {
           if (seq.current === mySeq) {
@@ -92,6 +99,8 @@ export function useSwapSim(args: {
     legCount,
     holder,
     allowanceCovers,
+    // The split is part of what is being measured: a new split is a new probe.
+    fundingSplitBps?.join(',') ?? '',
   ])
 
   return state

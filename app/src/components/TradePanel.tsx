@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link as RouterLink } from 'react-router'
+import { useAccount, useReadContract } from 'wagmi'
 import { erc20Abi, formatUnits } from 'viem'
+import { WrongNetwork } from './WrongNetwork'
+import { RevertCauses } from './RevertCauses'
 import type { BasketData } from '../lib/spectrum/basket-data'
-import { deploymentFor } from '../lib/chain/deployments'
+import { deploymentFor, settlementDecimalsFor } from '../lib/chain/deployments'
+import { WALLET_ENABLED } from '../lib/config/features'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
 import { clientFor } from '../lib/chain/rpc'
 import { findMaxSafe } from '../lib/spectrum/swap-sim'
 import {
@@ -12,7 +19,10 @@ import {
   WARN_SLIPPAGE_BPS,
 } from '../lib/spectrum/hook-data'
 import { buildSwapQuote, toRaw, type SwapQuote } from '../lib/spectrum/swap-quote'
+import type { MintFunding } from '../lib/spectrum/hook-data'
+import { fundingSplitBpsOf, lensFactoryFor, resolveMintFunding } from '../lib/spectrum/mint-funding'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
+import { useMintFunding } from '../lib/spectrum/use-mint-funding'
 import { useSwapSim } from '../lib/spectrum/use-swap-sim'
 import { useBasketSwap, type Side, type TxState } from '../lib/spectrum/use-basket-swap'
 import { SWAP_ENABLED } from '../lib/config/features'
@@ -45,8 +55,8 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
   const feeAmt = valid ? amt * (feeFrac as number) : 0
   const minOut = valid ? out * (1 - slippageBps / 10_000) : 0
 
-  const inUnit = side === 'buy' ? 'USDC' : `$${ix.symbol}`
-  const outUnit = side === 'buy' ? `$${ix.symbol}` : 'USDC'
+  const inUnit = side === 'buy' ? 'USDC' : `$${showSymbol(ix.symbol)}`
+  const outUnit = side === 'buy' ? `$${showSymbol(ix.symbol)}` : 'USDC'
 
   const swap = useBasketSwap(ix)
 
@@ -59,8 +69,34 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
   const tradeAmountRaw = valid
     ? toRaw(amt, side === 'buy' ? 6 : Math.min(ix.decimals, 18))
     : 0n
+
+  // ── BUY: where each leg's share of the money comes from ──────────────────────
+  // A D-R1 basket funds each leg from the split packed into its legMins word, and the
+  // split may only come from the factory's own lens (mint-funding.ts explains why
+  // target weights are exploitable). Read it for THIS amount before anything else:
+  // both the floors and the on-chain probe below have to bind to the same split, and a
+  // buy is not signable until it resolves.
+  const firstMint = ix.effectiveSupply === 0
+  const [fundingRetry, setFundingRetry] = useState(0)
+  const funding = useMintFunding({
+    enabled: valid && swap.configured && side === 'buy',
+    basket: ix.address as `0x${string}`,
+    chainId: ix.chainId,
+    amountRaw: tradeAmountRaw,
+    legCount: ix.holdings.length,
+    firstMint,
+    retryNonce: fundingRetry,
+  })
+  const fundingReady =
+    side === 'sell' || (funding.outcome != null && funding.forAmountRaw === tradeAmountRaw && tradeAmountRaw > 0n)
+  const fundingPlan = fundingReady && funding.outcome?.ok ? funding.outcome : null
+  const fundingSplitBps = fundingPlan ? fundingSplitBpsOf(fundingPlan.funding) : null
+  const fundingRefusal = fundingReady && funding.outcome && !funding.outcome.ok ? funding.outcome.reason : null
+
   const sim = useSwapSim({
-    enabled: valid && swap.configured,
+    // The probe carries the same split the payload will: without it a D-R1 basket
+    // acquires nothing and the measurement degrades to the frictionless estimate.
+    enabled: valid && swap.configured && (side === 'sell' || fundingPlan != null),
     side,
     basket: ix.address as `0x${string}`,
     chainId: ix.chainId,
@@ -68,6 +104,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
     legCount: ix.holdings.length,
     holder: address,
     allowanceCovers: tradeAmountRaw > 0n && !swap.needsApproval(side, tradeAmountRaw),
+    fundingSplitBps,
   })
 
   // Only a simulation measured for exactly this side+amount may seed the floor.
@@ -78,10 +115,11 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
   // preview and the signed tx (legMin = quotedLeg × (1 − slippage), exactly as
   // hook-data.ts encodes). null when the quote is incomplete (any leg unpriced or
   // an amount that rounds to zero) ⇒ no swap is encodable and the button stays
-  // disabled. The signed values are the latest *rendered* quote (the basket data is
-  // background-polled, not re-read on click); the click-time on-chain simulate
-  // reverts if any committed minimum can no longer be met, so what is shown is what
-  // is signed and a stale leg fails closed rather than fills badly.
+  // disabled. The signed values are the latest *rendered* quote (useBasketData is
+  // staleTime-only with NO refetchInterval, so it is not polled and can be minutes
+  // old — audit 2026-08-06); the click-time on-chain simulate reverts if any
+  // committed minimum can no longer be met, so what is shown is what is signed and a
+  // stale leg fails closed rather than fills badly.
   const trade = useMemo<SwapQuote | null>(() => {
     if (!valid) return null
     // ONE source for the preview AND the signed tx — the Tier-1 floor derivation
@@ -98,12 +136,16 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
       slippageBps,
       holdings: ix.holdings,
       basketDecimals: ix.decimals,
+      settlementDecimals: settlementDecimalsFor(ix.chainId),
       // Haircut the SIMULATED realised output, not the frictionless spot/NAV. Only
       // honoured when the figure was measured for THIS side+size — a realised number
       // from a different trade is not a valid floor basis (see use-swap-sim).
       realisedOutRaw: simMatches ? (sim.out as bigint) : undefined,
+      // Each leg's floor prices the share the PAYLOAD funds it with, so the two cannot
+      // disagree. Null on a pre-packing basket (it funds from its target weights).
+      fundingSplitBps,
     })
-  }, [valid, side, amt, ix, slippageBps, feeFrac, simMatches, sim.out])
+  }, [valid, side, amt, ix, slippageBps, feeFrac, simMatches, sim.out, fundingSplitBps])
 
   // ── PREVIEW = THE SIGNED QUOTE ───────────────────────────────────────────────
   // Show what the floor was actually derived from. On a simulated sell that number
@@ -156,7 +198,33 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
     setMaxSafeBusy(true)
     setMaxSafeNote(null)
     try {
-      const safe = await findMaxSafe(clientFor(ix.chainId), {
+      const client = clientFor(ix.chainId)
+      // The search probes real mints, so it needs the same funding split a buy would
+      // carry — read for the CAP (the biggest size it will try) rather than for whatever
+      // is typed, since the point of this button is that nothing is typed yet.
+      let splitForSearch = fundingSplitBps
+      if (side === 'buy') {
+        // The basket's OWN lineage factory owns the lens for it (mint-funding.ts).
+        const lensFactory = await lensFactoryFor(ix.chainId, ix.address as `0x${string}`)
+        if (!lensFactory) {
+          setMaxSafeNote('Could not tell which contracts this basket belongs to. Refresh and try again.')
+          return
+        }
+        const plan = await resolveMintFunding(client, {
+          chainId: ix.chainId,
+          factory: lensFactory,
+          basket: ix.address as `0x${string}`,
+          amountIn: balRaw,
+          legCount: ix.holdings.length,
+          firstMint,
+        })
+        if (!plan.ok) {
+          setMaxSafeNote(plan.reason)
+          return
+        }
+        splitForSearch = fundingSplitBpsOf(plan.funding)
+      }
+      const safe = await findMaxSafe(client, {
         side,
         basket: ix.address as `0x${string}`,
         settlement: dep.usdc as `0x${string}`,
@@ -168,6 +236,8 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
         feeFrac,
         basketDecimals: ix.decimals,
         slippageBps,
+        // Same split the buy will carry, or the search measures a mint that funds nothing.
+        fundingSplitBps: splitForSearch,
       })
       if (safe <= 0n) {
         setMaxSafeNote('No size fills within your slippage right now — the pools are too thin.')
@@ -186,8 +256,11 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
   // and reverts InsufficientFirstDeposit below this, so refuse the doomed tx up
   // front with words instead of a wrapped hex selector.
   const SEED_MIN_USDC = 10
-  const belowSeedMin = side === 'buy' && valid && ix.effectiveSupply === 0 && amt < SEED_MIN_USDC
-  const armedTrade = belowSeedMin ? null : trade
+  const belowSeedMin = side === 'buy' && valid && firstMint && amt < SEED_MIN_USDC
+  // A buy is armed only once its funding split has resolved FOR THIS AMOUNT. The two
+  // payload shapes are not interchangeable (mint-funding.ts), so "not yet known" can
+  // never be signed as "no split".
+  const armedTrade = belowSeedMin || (side === 'buy' && !fundingPlan) ? null : trade
 
   // A broadcast in flight: the inputs (side toggle + amount) are locked while this
   // is true, so the trade parameters can't change mid-tx — closing the
@@ -365,7 +438,7 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
       <dl className="mt-3 space-y-1.5 font-mono text-[11px] text-ink-faint">
         <div className="flex justify-between">
           <dt>Price</dt>
-          <dd className="tabular-nums text-ink-dim">1 ${ix.symbol} = ${formatNav(ix.navPerToken)}</dd>
+          <dd className="tabular-nums text-ink-dim">1 ${showSymbol(ix.symbol)} = ${formatNav(ix.navPerToken)}</dd>
         </div>
         <div className="flex justify-between">
           <dt>Fee{fees ? ` (${(fees.basketFeeBps / 100).toFixed(2)}%)` : ''}</dt>
@@ -394,14 +467,16 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
             <dl className="mt-1.5 space-y-1 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2 font-mono text-[10px] text-ink-faint">
               {legPreview.map((l) => (
                 <div key={l.symbol} className="flex justify-between">
-                  <dt>{l.symbol}</dt>
+                  <dt>{showSymbol(l.symbol)}</dt>
                   <dd className="tabular-nums text-ink-dim">
-                    ≥ {formatNav(Number(l.min) / 10 ** l.decimals, 4)}
+                    {/* A holding the basket currently has none of gets none of this buy, so
+                        it carries no minimum. Say that rather than showing a zero. */}
+                    {l.min > 0n ? `≥ ${formatNav(Number(l.min) / 10 ** l.decimals, 4)}` : 'not funded by this buy'}
                   </dd>
                 </div>
               ))}
               <p className="pt-1 text-[9px] leading-relaxed">
-                Every transaction encodes a minimum for every leg, there is no unprotected path.
+                Every leg this buy funds carries a minimum, there is no unprotected path.
               </p>
             </dl>
           )}
@@ -413,8 +488,26 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
           hook hard-blocks the broadcast regardless of this UI. */}
       {belowSeedMin && (
         <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-200/90">
-          This is ${ix.symbol}&rsquo;s FIRST buy, it seeds the basket&rsquo;s reserves, and the contract
+          This is ${showSymbol(ix.symbol)}&rsquo;s FIRST buy, it seeds the basket&rsquo;s reserves, and the contract
           requires at least {SEED_MIN_USDC} USDC for it. Smaller buys work fine after that.
+        </div>
+      )}
+      {/* The basket, or the connection, said this buy cannot be funded safely. Say so in
+          words instead of letting the user sign something that reverts. */}
+      {fundingRefusal && !belowSeedMin && (
+        <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-200/90">
+          {fundingRefusal}
+          {/* the refusals say "try again" and carry retryable:true — this is
+              the button those words were missing (audit 2026-08-16) */}
+          {funding.outcome && !funding.outcome.ok && funding.outcome.retryable && (
+            <button
+              type="button"
+              onClick={() => setFundingRetry((n) => n + 1)}
+              className="press ml-2 rounded-md border border-amber-400/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-200 hover:bg-amber-400/10"
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
       <SwapAction
@@ -423,11 +516,14 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
         sig={sig}
         buyInk={buyInk}
         trade={armedTrade}
+        funding={fundingPlan?.funding}
+        preparing={side === 'buy' && valid && !belowSeedMin && !fundingPlan && !fundingRefusal}
         slippageBps={slippageBps}
         swap={swap}
         explorer={chainCfg(ix.chainId).explorer}
         chainName={chainCfg(ix.chainId).name}
         chainId={ix.chainId}
+        hasAmount={valid}
       />
     </div>
   )
@@ -440,21 +536,28 @@ export function TradePanel({ ix, sig, buyInk }: { ix: BasketData; sig: string; b
 // minimums are committed in every broadcast (hook-data.ts); there is no
 // unprotected path.
 function SwapAction({
-  side, symbol, sig, buyInk, trade, slippageBps, swap, explorer, chainName, chainId,
+  side, symbol, sig, buyInk, trade, funding, preparing, slippageBps, swap, explorer, chainName, chainId, hasAmount,
 }: {
+  /** A parseable positive amount is typed — splits the disabled reason
+   *  ("Enter an amount" vs "can't price") on the no-trade face. */
+  hasAmount: boolean
   side: Side
   symbol: string
   sig: string
   buyInk: string
   trade: SwapQuote | null
+  /** BUY only — resolved funding for this exact amount; absent ⇒ nothing is signable. */
+  funding: MintFunding | undefined
+  /** The funding read is still in flight, so the button says so rather than looking dead. */
+  preparing: boolean
   slippageBps: number
   swap: ReturnType<typeof useBasketSwap>
   explorer: string
   chainName: string
   chainId: number
 }) {
-  const label = side === 'buy' ? `Buy $${symbol}` : `Sell $${symbol}`
-  const inUnit = side === 'buy' ? 'USDC' : `$${symbol}`
+  const label = side === 'buy' ? `Buy $${showSymbol(symbol)}` : `Sell $${showSymbol(symbol)}`
+  const inUnit = side === 'buy' ? 'USDC' : `$${showSymbol(symbol)}`
   const baseBtn =
     'mt-4 w-full rounded-lg px-6 py-3 font-mono text-xs font-bold uppercase tracking-[0.15em]'
 
@@ -479,11 +582,12 @@ function SwapAction({
     )
   }
 
-  // (2) Trading build, wallet not ready. A CONNECTED wallet on the wrong network
-  // gets an actionable switch button — a disabled buy with a footnote read as
-  // "broken" in testing. Only a truly disconnected wallet shows the connect hint.
+  // (2) Trading build, wallet not ready. A CONNECTED wallet on another network
+  // gets the pre-flight notice + an actionable switch button (a disabled buy with
+  // a footnote read as "broken" in testing). Only a truly disconnected wallet
+  // shows the connect hint.
   if (!swap.walletReady) {
-    return <WalletNotReady label={label} chainName={chainName} chainId={chainId} sig={sig} buyInk={buyInk} baseBtn={baseBtn} />
+    return <WalletNotReady chainName={chainName} chainId={chainId} sig={sig} buyInk={buyInk} baseBtn={baseBtn} />
   }
 
   // (3) Live.
@@ -505,20 +609,25 @@ function SwapAction({
       legCount: trade.legCount,
       minOutRaw: trade.minOutRaw,
       slippageBps,
+      funding,
     })
   }
 
-  const btnLabel = !trade
-    ? label
-    : approving
-      ? 'Approving…'
-      : swapping
-        ? side === 'buy'
-          ? 'Buying…'
-          : 'Selling…'
-        : needApprove
-          ? `Approve ${inUnit}`
-          : label
+  const btnLabel = preparing
+    ? 'Preparing…'
+    : !trade
+      ? !hasAmount
+        ? 'Enter an amount'
+        : 'Can’t price this trade right now'
+      : approving
+        ? 'Approving…'
+        : swapping
+          ? side === 'buy'
+            ? 'Buying…'
+            : 'Selling…'
+          : needApprove
+            ? `Approve ${inUnit}`
+            : label
 
   return (
     <>
@@ -539,12 +648,25 @@ function SwapAction({
         </div>
       )}
       <SwapStatus state={swap.approveState} explorer={explorer} verb="Approval" />
-      <SwapStatus state={swap.swapState} explorer={explorer} verb={side === 'buy' ? 'Buy' : 'Sell'} />
+      <SwapStatus
+        state={swap.swapState}
+        explorer={explorer}
+        verb={side === 'buy' ? 'Buy' : 'Sell'}
+        // the post-trade seam (owner ~17:0x): success says where the result
+        // LIVES — a buy lands in the book, and the book is one click away
+        after={
+          side === 'buy' && WALLET_ENABLED && pageEnabled(brand.pages, 'portfolio') ? (
+            <RouterLink to="/portfolio" className="text-cyan hover:underline">
+              in your book → view portfolio
+            </RouterLink>
+          ) : null
+        }
+      />
     </>
   )
 }
 
-function SwapStatus({ state, explorer, verb }: { state: TxState; explorer: string; verb: string }) {
+function SwapStatus({ state, explorer, verb, after }: { state: TxState; explorer: string; verb: string; after?: React.ReactNode }) {
   if (state.status === 'idle') return null
   const link = state.hash ? (
     <a href={`${explorer}/tx/${state.hash}`} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-ink">
@@ -555,19 +677,29 @@ function SwapStatus({ state, explorer, verb }: { state: TxState; explorer: strin
     <div className="enter mt-2 text-center font-mono text-[10px]">
       {state.status === 'signing' && <span className="text-ink-dim">Confirm in your wallet…</span>}
       {state.status === 'confirming' && <span className="text-cyan">{verb} confirming… {link}</span>}
-      {state.status === 'success' && <span className="text-teal">{verb} done. {link}</span>}
-      {state.status === 'error' && <span className="text-magenta">{state.error ?? 'Transaction failed.'}</span>}
+      {state.status === 'success' && (
+        <span className="text-teal">
+          {verb} done. {link} {after && <span className="text-ink-faint">·</span>} {after}
+        </span>
+      )}
+      {state.status === 'error' && (
+        <span className="text-magenta">
+          {state.error ?? 'Transaction failed.'}
+          <RevertCauses error={state.error} />
+        </span>
+      )}
     </div>
   )
 }
 
 // Wallet-not-ready action states. Wrong network is the actionable one: the
 // primary button IS the network switch (same treatment as the deploy portal's
-// gate — a disabled button with a footnote reads as "broken").
+// gate — a disabled button with a footnote reads as "broken"). The notice itself
+// is the app-wide one (WrongNetwork.tsx) — this panel was where it was designed,
+// and since the 2026-08-05 consolidation it lives there for all six surfaces.
 function WalletNotReady({
-  label, chainName, chainId, sig, buyInk, baseBtn,
+  chainName, chainId, sig, buyInk, baseBtn,
 }: {
-  label: string
   chainName: string
   chainId: number
   sig: string
@@ -575,32 +707,30 @@ function WalletNotReady({
   baseBtn: string
 }) {
   const { isConnected, chainId: walletChainId } = useAccount()
-  const { switchChain, isPending } = useSwitchChain()
 
   if (isConnected && walletChainId !== chainId) {
     return (
-      <>
-        <button
-          type="button"
-          onClick={() => switchChain({ chainId })}
-          disabled={isPending}
-          className={`${baseBtn} press disabled:cursor-not-allowed disabled:opacity-60`}
-          style={{ background: sig, color: buyInk }}
-        >
-          {isPending ? 'Confirm in wallet…' : `Switch wallet to ${chainName}`}
-        </button>
-        <div className="mt-2 text-center font-mono text-[10px] text-amber-300/90">
-          Your wallet is on the wrong network, this trade signs on {chainName}.
-        </div>
-      </>
+      <WrongNetwork
+        requiredChainId={chainId}
+        action="This basket buys and sells"
+        className="mt-4"
+        button={{ className: baseBtn, style: { background: sig, color: buyInk } }}
+      />
     )
   }
   return (
     <>
-      <button type="button" disabled className={`${baseBtn} cursor-not-allowed opacity-60`} style={{ background: sig, color: buyInk }}>
-        {label}
+      {/* audit 2026-08-16: this told the user to connect and offered no door —
+          the same live control the console uses (spectrum:connect) */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new Event('spectrum:connect'))}
+        className={`${baseBtn}`}
+        style={{ background: sig, color: buyInk }}
+      >
+        Connect wallet
       </button>
-      <div className="mt-2 text-center font-mono text-[10px] text-ink-faint">Connect a wallet on {chainName} to trade.</div>
+      <div className="mt-2 text-center font-mono text-[10px] text-ink-faint">Trading runs on {chainName}; connecting signs nothing.</div>
     </>
   )
 }

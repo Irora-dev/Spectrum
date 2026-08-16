@@ -15,6 +15,15 @@ import siteConfig from '../../site.config.json'
 // creator share + holders. There is no routing table and no default recipient.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Vite injects `import.meta.env` in both dev and the built bundle; the Deno
+// edge runtime (the metadata write-relay adapter imports this module's graph
+// for verifyCreatorMetadata) has no such field and a bare read THROWS at
+// import time. The guard keeps one config module serving both worlds — edge
+// invocations simply see every VITE_* unset, which is the right posture
+// (server config arrives via Deno.env in the adapter, never VITE_*).
+const env: Record<string, string | undefined> =
+  (import.meta as { env?: Record<string, string | undefined> }).env ?? {}
+
 function parseFeeAddress(raw: string | undefined, varName: string): Address | null {
   if (!raw) return null
   const v = raw.trim()
@@ -37,7 +46,7 @@ function parseFeeAddress(raw: string | undefined, varName: string): Address | nu
  * Receiving the slice makes the operator a protocol-fee recipient.
  */
 export const INTERFACE_TAG_ADDRESS: Address | null = parseFeeAddress(
-  import.meta.env.VITE_INTERFACE_TAG_ADDRESS || siteConfig.feeWallet,
+  env.VITE_INTERFACE_TAG_ADDRESS || siteConfig.feeWallet,
   'VITE_INTERFACE_TAG_ADDRESS',
 )
 
@@ -53,7 +62,7 @@ export const INTERFACE_TAG_ADDRESS: Address | null = parseFeeAddress(
  * address may ever ship here; the operator supplies their own.
  */
 export const LAUNCHER_ADDRESS: Address | null = parseFeeAddress(
-  import.meta.env.VITE_LAUNCHER_ADDRESS || siteConfig.feeWallet,
+  env.VITE_LAUNCHER_ADDRESS || siteConfig.feeWallet,
   'VITE_LAUNCHER_ADDRESS',
 )
 
@@ -64,7 +73,7 @@ export const LAUNCHER_ADDRESS: Address | null = parseFeeAddress(
  * marketplace operator may point this at a venue of their own choosing.
  */
 export const PARTNER_APP_URL: string | null =
-  (import.meta.env.VITE_PARTNER_APP_URL || '').trim().replace(/\/$/, '') || null
+  (env.VITE_PARTNER_APP_URL || '').trim().replace(/\/$/, '') || null
 
 /** Partner-app URL for one basket, or null when no partner app is configured. */
 export function partnerAppUrl(address: string): string | null {
@@ -85,7 +94,7 @@ export function partnerAppUrl(address: string): string | null {
  * operator's own; no default or company endpoint may ever ship here.
  */
 export const METADATA_BASE_URL: string | null =
-  (import.meta.env.VITE_METADATA_BASE_URL || '').trim().replace(/\/$/, '') || null
+  (env.VITE_METADATA_BASE_URL || '').trim().replace(/\/$/, '') || null
 
 /**
  * Optional IPFS HTTP gateway used to resolve `ipfs://…` references inside
@@ -94,7 +103,7 @@ export const METADATA_BASE_URL: string | null =
  * Operator's own gateway; no default.
  */
 export const IPFS_GATEWAY_URL: string | null =
-  (import.meta.env.VITE_IPFS_GATEWAY_URL || '').trim().replace(/\/$/, '') || null
+  (env.VITE_IPFS_GATEWAY_URL || '').trim().replace(/\/$/, '') || null
 
 /**
  * Optional base URL of an operator WRITE-RELAY that accepts a creator's signed
@@ -107,7 +116,7 @@ export const IPFS_GATEWAY_URL: string | null =
  * default or company endpoint may ship here. See OPERATORS.md.
  */
 export const METADATA_WRITE_URL: string | null =
-  (import.meta.env.VITE_METADATA_WRITE_URL || '').trim().replace(/\/$/, '') || null
+  (env.VITE_METADATA_WRITE_URL || '').trim().replace(/\/$/, '') || null
 
 /** Convention URL of the signed metadata blob for one basket, or null when unset. */
 export function metadataUrlFor(chainId: number, basket: string): string | null {

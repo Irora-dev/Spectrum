@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { perfMeasurable, perfToDate } from '../lib/spectrum/leaderboard'
 import { basketSignatureColor } from '../lib/spectrum/signature'
@@ -41,7 +42,7 @@ export function VersionHoverCard({ chain, index }: { chain: BasketSummary[]; ind
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-display text-sm font-bold text-ink">
-          ${v.symbol} <span className="font-mono text-[10px] font-normal text-ink-faint">v{index + 1}</span>
+          ${showSymbol(v.symbol)} <span className="font-mono text-[10px] font-normal text-ink-faint">v{index + 1}</span>
         </span>
         <span className="font-num text-xs tabular-nums" style={{ color: pctColor(perf) }}>
           {formatPct(perf)}

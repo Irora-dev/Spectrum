@@ -10,6 +10,8 @@
 // NAV/perf figure would mislead. og:image points at the branded generic card for
 // now; per-basket card IMAGES are a follow-up (see netlify/edge-functions/README).
 
+import { showSymbol } from '../spectrum/safe-copy'
+
 export interface OgMeta {
   title: string
   description: string
@@ -46,13 +48,23 @@ export function rewriteOgHtml(html: string, m: OgMeta): string {
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
-// og:image = the branded generic card (absolute). Swap for `${origin}/og/${chain}/
-// ${addr}.png` once per-basket card rendering is wired (the image follow-up).
-export function basketMeta(t: { symbol: string; name: string }, chain: number, addr: string, origin: string): OgMeta {
+// og:image is now the basket's OWN card when one was rendered at build
+// (scripts/build-og-cards.mjs writes public/og/<chain>/<addr>.png), falling back
+// to the branded generic card. `hasCard` is supplied by the caller, which is the
+// only place that can cheaply know whether the file exists — a basket launched
+// AFTER the last build has no card, and a stale-but-branded picture beats a
+// broken image in someone's feed.
+export function basketMeta(
+  t: { symbol: string; name: string },
+  chain: number,
+  addr: string,
+  origin: string,
+  hasCard = false,
+): OgMeta {
   return {
-    title: `$${t.symbol} · ${t.name} · Spectrum`,
+    title: `$${showSymbol(t.symbol)} · ${t.name} · Spectrum`,
     description: `${t.name}, an onchain basket token on Spectrum. One token, a whole basket of assets.`,
-    image: `${origin}/og.png`,
+    image: hasCard ? `${origin}/og/${chain}/${addr.toLowerCase()}.png` : `${origin}/og.png`,
     url: `${origin}/token?addr=${addr}&chain=${chain}`,
     imageAlt: `${t.name} on Spectrum`,
   }

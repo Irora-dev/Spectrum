@@ -1,12 +1,14 @@
 import type { Address } from 'viem'
-import { chainCfg, DEFAULT_CHAIN_ID } from '../chain/chains'
+import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
+import { ROBINHOOD_CHAIN_ID } from '../chain/constants'
+import { stocksForChain } from '../chain/stocks'
 import { PROTOCOL_FEE_MODEL } from './fee-model'
 import type { BasketData, BasketSummary, Holding, NavPoint } from './basket-data'
 import type { VerifiedCreatorMeta } from './creator-metadata'
 import type { FeeState, FrontendAccrual, FrontendRole } from './use-fee-state'
 import type { BasketSnapshot, DeltaPreview, MigratePlanView, SnapLeg } from './use-migrate'
 import { planRedeem } from './migrate-math'
-import { demoBasket, demoMeta, demoSummaries } from './demo-baskets'
+import { demoBasket, demoFees, demoMeta, demoSummaries } from './demo-baskets'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEV-ONLY mock basket fixture. The shipped default config is
@@ -25,6 +27,16 @@ import { demoBasket, demoMeta, demoSummaries } from './demo-baskets'
 const MOCK_1 = '0x0000000000000000000000000000000000ba5e01'
 const MOCK_2 = '0x0000000000000000000000000000000000ba5e02'
 const MOCK_3 = '0x0000000000000000000000000000000000ba5e03' // v2 of MOCK_1 (same deployer)
+// the OPAQUE basket (UIGuy's class-signal review, 2026-08-06): held, but its
+// legs cannot be read — the one shape that renders as a BASKET tile in the
+// bento (registered baskets always explode into legs) and exercises the
+// exposure rule that a half-knowable position stays whole, never dropped.
+// ⚠ ITS OWN ADDRESS, not BASEALL's. This was `…ba5e0d` when the basket was
+// added, which is the address 'Full Stack Base' (line ~172) already carried —
+// so the demo book held TWO baskets under ONE identity: React logged a
+// duplicate key on /explore for every list keyed by chain:address, and any
+// address-keyed lookup answered with whichever of the two it reached first.
+const MOCK_OPQ = '0x00000000000000000000000000000000000fac1e'
 const MOCK_DEPLOYER = '0x000000000000000000000000000000000000d0e0'
 const MOCK_LAUNCHER = '0x000000000000000000000000000000000000d105'
 // Design-review creators (each gets its own identity in MOCK_META below; C5
@@ -149,12 +161,13 @@ const MOCKS: MockBasket[] = [
   { address: MOCK_1, name: 'Dev Sample Basket', symbol: 'DEVBKT', legs: LEGS_1, aumUsd: 184_000, navPerToken: 1.042, change24hPct: 0.7, seed: 3, feeBps: 100, creatorShareBps: 1500, supersededBy: MOCK_3, holdersCount: 214 },
   { address: MOCK_2, name: 'Dev Sample Basket Two', symbol: 'DEVTWO', legs: LEGS_2, aumUsd: 42_000, navPerToken: 0.981, change24hPct: 1.6, seed: 11, feeBps: 250, creatorShareBps: 0, holdersCount: 63 },
   { address: MOCK_3, name: 'Dev Sample Basket v2', symbol: 'DEVBK2', legs: LEGS_3, aumUsd: 96_000, navPerToken: 1.083, change24hPct: 1.2, seed: 7, feeBps: 100, creatorShareBps: 3000, holdersCount: 128 },
+  { address: MOCK_OPQ, name: 'Dev Opaque Basket', symbol: 'DEVOPQ', legs: [], aumUsd: 58_000, navPerToken: 1.21, change24hPct: 0.9, seed: 17, feeBps: 150, creatorShareBps: 1000, holdersCount: 77 },
 
   // ── design-review catalogue (VITE_DEV_FIXTURE=1): enough spread across
   //    creators / perf / value / age that Explore, the spotlight and the
   //    leaderboard all render populated. navPerToken vs the ~$1.00 launch is
   //    what drives the perf-to-date ranking. ──
-  { address: '0x0000000000000000000000000000000000ba5e04', name: 'Agent Economy', symbol: 'AGENTS', deployer: MOCK_C2, legs: [leg(T.WETH, 30, 2.1, 34), leg(T.AERO, 30, 6.4, 27), leg(T.DEGEN, 25, 8.2, 26), leg(T.BRETT, 15, -1.3, 13)], aumUsd: 640_000, navPerToken: 2.41, change24hPct: 5.8, seed: 21, feeBps: 200, creatorShareBps: 2500, holdersCount: 927, ageDays: 61 },
+  { address: '0x0000000000000000000000000000000000ba5e04', name: 'Agent Economy', symbol: 'AGENTECON', deployer: MOCK_C2, legs: [leg(T.WETH, 30, 2.1, 34), leg(T.AERO, 30, 6.4, 27), leg(T.DEGEN, 25, 8.2, 26), leg(T.BRETT, 15, -1.3, 13)], aumUsd: 640_000, navPerToken: 2.41, change24hPct: 5.8, seed: 21, feeBps: 200, creatorShareBps: 2500, holdersCount: 927, ageDays: 61 },
   { address: '0x0000000000000000000000000000000000ba5e05', name: 'Base Core Majors', symbol: 'BASECORE', deployer: MOCK_C1, legs: [leg(T.WETH, 40, 1.8, 43), leg(T.cbBTC, 35, 0.9), leg(T.cbETH, 25, 1.6, 22)], aumUsd: 1_240_000, navPerToken: 1.86, change24hPct: 2.1, seed: 29, feeBps: 100, creatorShareBps: 1000, holdersCount: 1841, ageDays: 92 },
   { address: '0x0000000000000000000000000000000000ba5e06', name: 'Meme Melange', symbol: 'MEMEX', deployer: MOCK_C4, legs: [leg(T.DEGEN, 40, -4.1, 44), leg(T.BRETT, 35, -2.8, 33), leg(T.AERO, 25, 1.2, 23)], aumUsd: 205_000, navPerToken: 1.42, change24hPct: -3.2, seed: 37, feeBps: 300, creatorShareBps: 3000, holdersCount: 1204, ageDays: 35 },
   { address: '0x0000000000000000000000000000000000ba5e07', name: 'Yield Rotation', symbol: 'YIELDMAX', deployer: MOCK_C3, legs: [leg(T.USDC, 40, 0, 38), leg(T.AERO, 35, 1.9, 37), leg(T.WETH, 25, 1.8)], aumUsd: 310_000, navPerToken: 1.31, change24hPct: 0.6, seed: 43, feeBps: 150, creatorShareBps: 2000, holdersCount: 512, ageDays: 148 },
@@ -186,6 +199,24 @@ function active(chainId: number): boolean {
   }
 }
 
+/** Every synthetic basket address this module can put in a directory list —
+ *  the Base mock set plus the cross-chain demo catalogue. A REAL wallet's
+ *  balance read against one of these can only ever revert (no contract exists
+ *  on any chain), so the portfolio read (basket-data.getUserHoldings) drops
+ *  them for non-preview accounts instead of reporting each one as an
+ *  "unreadable holding" (owner report 2026-08-12: a real connected wallet's
+ *  hero wore an amber "couldn't be read" note for 37 ghosts over a $0 book). */
+let syntheticAddrs: Set<string> | null = null
+export function isFixtureBasketAddress(address: string): boolean {
+  if (!syntheticAddrs) {
+    syntheticAddrs = new Set(MOCKS.map((m) => m.address.toLowerCase()))
+    for (const chainId of SUPPORTED_CHAIN_IDS) {
+      for (const b of demoSummaries(chainId)) syntheticAddrs.add(b.address.toLowerCase())
+    }
+  }
+  return syntheticAddrs.has(address.toLowerCase())
+}
+
 // DEV-only sample wallet balances so the Portfolio (and its look-through) render
 // populated — the shipped wallet holds nothing on these synthetic baskets. Same
 // activation rule as the other fixtures. Balances span all three mock baskets so
@@ -195,10 +226,28 @@ const MOCK_BALANCES: Record<string, number> = {
   [MOCK_1.toLowerCase()]: 9000,
   [MOCK_2.toLowerCase()]: 5000,
   [MOCK_3.toLowerCase()]: 7000,
+  // fat enough to crack the picture's top rows — the basket tile must be
+  // REVIEWABLE, not merely reachable (UIGuy's ask)
+  [MOCK_OPQ.toLowerCase()]: 6500,
 }
+/** Which demo book to serve. Read from the URL so switching is a link, not a
+ *  rebuild — and defaulting to the fat catalogue keeps every existing review
+ *  surface exactly as it was. */
+function leanBookRequested(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('book') === 'lean'
+  } catch {
+    return false
+  }
+}
+
 export function devUserHoldings(
   baskets: { address: string; chainId: number }[],
 ): Map<string, number> | null {
+  // THE LEAN BOOK HOLDS NO BASKETS. the owner asked for eight positions across
+  // three chains; the mock baskets would add four more tiles and explode their
+  // legs through the look-through, which is the fat book's job, not this one's.
+  if (leanBookRequested()) return null
   const out = new Map<string, number>()
   for (const b of baskets) {
     if (!active(b.chainId)) continue
@@ -366,7 +415,10 @@ export function devBasketData(address: Address, chainId: number): BasketData | n
     navPerToken: m.navPerToken,
     navSource: 'onchain',
     fullyPriced: true,
-    navDivergencePct: 0.3,
+    // MOCK_2 carries a reviewable mark-uncertainty (the navgap card's floor
+    // is 2): one basket on the demo identity shows the fact, the rest read
+    // healthy. Same law as every stand-in: fixture only, display only.
+    navDivergencePct: m.address === MOCK_2 ? 2.8 : 0.3,
     change24hPct: m.change24hPct,
     holdings: h,
     navSeries: series(m.seed, m.change24hPct),
@@ -387,6 +439,24 @@ export function devBasketData(address: Address, chainId: number): BasketData | n
  *  across [100,300]) so nothing reads as a universal hardcoded rate; a real basket
  *  reads these on-chain. */
 export function devBasketFees(address: string, chainId: number) {
+  // Demo baskets resolve FIRST and bypass the Base-only active() gate, the
+  // same doctrine as devBasketData: they self-gate on their own chain, and a
+  // demo subject with no readable fee config refuses the reshape popup's
+  // verbatim fee carry — the one read the walkthrough genuinely needs.
+  const demo = demoFees(address, chainId)
+  if (demo) {
+    return {
+      basketFeeBps: demo.basketFeeBps,
+      burnShareBps: PROTOCOL_FEE_MODEL.BURN_SHARE_BPS,
+      interfaceShareBps: PROTOCOL_FEE_MODEL.INTERFACE_SHARE_BPS,
+      launcherShareBps: PROTOCOL_FEE_MODEL.LAUNCHER_SHARE_BPS,
+      creatorShareBps: demo.creatorShareBps,
+      maxCreatorShareBps: PROTOCOL_FEE_MODEL.MAX_CREATOR_SHARE_BPS,
+      creatorPayout: demo.creatorPayout,
+      launcher: demo.launcher,
+      deployer: demo.deployer,
+    }
+  }
   if (!active(chainId)) return null
   const m = MOCKS.find((x) => x.address.toLowerCase() === address.toLowerCase())
   if (!m) return null
@@ -669,4 +739,191 @@ const DEV_IDENTITY: Record<string, VerifiedCreatorIdentity> = {
 export function devCreatorIdentity(creator: string, chainId: number): VerifiedCreatorIdentity | null {
   if (!active(chainId)) return null
   return DEV_IDENTITY[creator.toLowerCase()] ?? null
+}
+
+// ── DEV-only TOKEN holdings, so the portfolio shows tokens AND baskets ───────
+// Owner 2026-08-02 18:51: "on 5313, make it so that I have demo assets — I hold
+// NVIDIA, SYRUP and AAVE — along with the baskets, so I can see what it looks
+// like to have both baskets and just normal assets in one portfolio."
+//
+// This is ALSO the answer to the question that was on his desk about the
+// rebalance "only showing baskets": the mode always rendered both kinds, but
+// the demo wallet only ever held baskets (MOCK_BALANCES above), so there were
+// no token rows to see. The surface was right; the data was thin.
+//
+// Addresses are REAL (the stock registry for NVDA, mainnet for AAVE/SYRUP), so
+// logos, market caps, tiers and chart links all resolve exactly as they will
+// for a live holding — only the BALANCE is invented. Spread deliberately across
+// the market-cap spectrum (cash · major · stock · mid · small) so the risk bar
+// and the insights have a real distribution to describe rather than one tier.
+//
+// Gated on `fixtureMode` (VITE_DEV_FIXTURE=1), not merely on DEV: an ordinary
+// dev server against a live deployment must never fold invented balances into a
+// real wallet's totals.
+const DEV_TOKENS: { chainId: number; symbol: string; address: string; decimals: number; usd: number; priceUsd: number }[] = [
+  // native ETH on mainnet BESIDE the Base WETH below: the pair exercises the
+  // same-asset unification (owner ~15:0x) — one ETH tile, breakdown on the
+  // portfolio — and the 0xeee sentinel keeps the chain-qualified-id law honest.
+  { chainId: 1, symbol: 'ETH', address: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, usd: 2130.4, priceUsd: 3550 },
+  { chainId: 1, symbol: 'AAVE', address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', decimals: 18, usd: 4820.5, priceUsd: 262 },
+  { chainId: 1, symbol: 'SYRUP', address: '0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66', decimals: 18, usd: 2140.75, priceUsd: 0.42 },
+  { chainId: 8453, symbol: 'WETH', address: T.WETH.asset, decimals: 18, usd: 6310.4, priceUsd: T.WETH.priceUsd },
+  { chainId: 8453, symbol: 'USDC', address: T.USDC.asset, decimals: 6, usd: 3100, priceUsd: 1 },
+  { chainId: 8453, symbol: 'DEGEN', address: T.DEGEN.asset, decimals: 18, usd: 1880.2, priceUsd: T.DEGEN.priceUsd },
+  // A SECOND AND THIRD STABLE so the CASH PILE is reviewable (the owner 12:49 #7):
+  // one stable folds to a tile that says "all $USDC" and proves nothing about
+  // the breakdown rows or the overlapping logo cluster. USDT is the canonical
+  // mainnet contract; USDG comes from the deployment book below rather than
+  // being restated here, because that address already has a home.
+  { chainId: 1, symbol: 'USDT', address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6, usd: 1810.5, priceUsd: 1 },
+  // three SCRAPS under the dust ceiling ($10) — the 16:4x dust card needs
+  // ≥3 to fire, so the sweep is reviewable on the demo identity. Real
+  // mainnet addresses like everything else here; only the balances invent.
+  { chainId: 1, symbol: 'CRV', address: '0xD533a949740bb3306d119CC777fa900bA034cd52', decimals: 18, usd: 6.3, priceUsd: 0.42 },
+  { chainId: 1, symbol: 'LDO', address: '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32', decimals: 18, usd: 4.4, priceUsd: 1.1 },
+  { chainId: 1, symbol: 'SNX', address: '0x22e6966B799c4D5B13BE962E1D117b56327FDa66', decimals: 18, usd: 3.1, priceUsd: 1.9 },
+]
+
+/**
+ * A SECOND, LEAN DEMO BOOK — the owner's ask, 2026-08-06: "8 assets, 3 stocks on RH,
+ * 2 base assets, 2 eth assets and cashcat meme on rh". Reachable at
+ * `/portfolio?demo=1&book=lean`; without the param the fat catalogue above is
+ * unchanged, so nobody's existing review surface moves.
+ *
+ * It exists because the fat book (25+ tiles, four baskets, three dust scraps)
+ * is the right fixture for stress-testing layout and the wrong one for looking
+ * at the product. Eight positions across three chains is what a real user's
+ * portfolio looks like.
+ *
+ * $CASHCAT carries an OBVIOUSLY SYNTHETIC address. Every other row here is a
+ * real contract, because a fixture on real addresses is what makes logos,
+ * market caps and DexScreener reads behave like production — but I will not
+ * invent a plausible-looking real address for a token I cannot verify exists.
+ * A fake that looks real is the one kind of fixture that can mislead.
+ */
+const LEAN_BOOK: { chainId: number; symbol: string; address: string; decimals: number; usd: number; priceUsd: number }[] = [
+  // 2 on ETHEREUM
+  { chainId: 1, symbol: 'ETH', address: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, usd: 8420.5, priceUsd: 3550 },
+  { chainId: 1, symbol: 'AAVE', address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', decimals: 18, usd: 3180.25, priceUsd: 262 },
+  // 2 on BASE
+  // cbBTC rather than WETH on purpose: unifyAssets folds WETH into mainnet ETH
+  // (the wrap family), so a WETH row here would render as SEVEN tiles for eight
+  // holdings — correct behaviour, wrong demo. Eight distinct assets means eight.
+  { chainId: 8453, symbol: 'cbBTC', address: T.cbBTC.asset, decimals: 8, usd: 5640.8, priceUsd: T.cbBTC.priceUsd },
+  { chainId: 8453, symbol: 'DEGEN', address: T.DEGEN.asset, decimals: 18, usd: 1240.6, priceUsd: T.DEGEN.priceUsd },
+  // the meme, on Robinhood Chain — synthetic address, see above
+  // the REAL CASHCAT (already curated in token-meta with the RH electric-green
+  // brand) — the synthetic address here meant the demo could never show its
+  // logo or colour, and explaining that time is worse than just using the
+  // real contract
+  { chainId: ROBINHOOD_CHAIN_ID, symbol: 'CASHCAT', address: '0x020bfc650a365f8bb26819deaabf3e21291018b4', decimals: 18, usd: 780.4, priceUsd: 0.0000412 },
+]
+
+/** The three RH stocks of the lean book, resolved from the stock registry so
+ *  they always match whatever chain this build points at. */
+const LEAN_STOCKS: { symbol: string; usd: number; priceUsd: number }[] = [
+  { symbol: 'NVDA', usd: 4310.9, priceUsd: 118 },
+  { symbol: 'AAPL', usd: 2260.4, priceUsd: 229 },
+  { symbol: 'TSLA', usd: 1490.2, priceUsd: 342 },
+]
+
+/** DEV-only token holdings for a chain — [] unless the fixture flag is on. */
+export function devRawHoldings(chainId: number): {
+  chainId: number
+  address: string
+  symbol: string
+  decimals: number
+  amount: number
+  usd: number
+  fixture: true
+}[] {
+  if (!fixtureMode) return []
+  // THE LEAN BOOK short-circuits the whole catalogue below: 8 positions, three
+  // chains, no baskets and no dust — the shape of a real portfolio rather than
+  // a layout stress test.
+  if (leanBookRequested()) {
+    const rows = LEAN_BOOK.filter((t) => t.chainId === chainId)
+    if (chainId === ROBINHOOD_CHAIN_ID) {
+      for (const s of LEAN_STOCKS) {
+        const hit = stocksForChain(chainId).find((x) => x.symbol === s.symbol)
+        if (hit) rows.push({ chainId, symbol: s.symbol, address: hit.address, decimals: 18, usd: s.usd, priceUsd: s.priceUsd })
+      }
+    }
+    return rows.map((t) => ({
+      chainId: t.chainId,
+      address: t.address,
+      symbol: t.symbol,
+      decimals: t.decimals,
+      amount: t.usd / t.priceUsd,
+      usd: t.usd,
+      fixture: true as const,
+    }))
+  }
+  const rows = DEV_TOKENS.filter((t) => t.chainId === chainId)
+  // NVDA rides the stock registry rather than a pinned address, so it always
+  // matches whatever chain this build points at instead of drifting from it.
+  const nvda = stocksForChain(chainId).find((s) => s.symbol === 'NVDA')
+  if (nvda) rows.push({ chainId, symbol: 'NVDA', address: nvda.address, decimals: 18, usd: 5240.9, priceUsd: 118 })
+  // A THIRD STABLE: the chain's own settlement asset (USDG on Robinhood),
+  // read from the deployment book rather than restated, so the fixture can
+  // never hold a stale address. Three stables on three chains is what makes
+  // BOTH new surfaces reviewable at once — the overlapping logo cluster on the
+  // cash tile, and a Robinhood figure in the hero's per-chain line that isn't
+  // just NVDA. (Measured, not assumed: the curve's coverage line reads the
+  // same 66–67% with or without these fixture stables — it moves run to run
+  // with which history fetches answer, and PORTFOLIO_HISTORY_CAP's 12 slots
+  // are what bound it on a book this size.)
+  if (chainId === ROBINHOOD_CHAIN_ID) {
+    try {
+      const cfg = chainCfg(chainId)
+      if (cfg.usdc) {
+        rows.push({ chainId, symbol: cfg.usdcSymbol, address: cfg.usdc, decimals: 6, usd: 2460, priceUsd: 1 })
+      }
+    } catch {
+      /* chain not configured in this build — the pile just has two stables */
+    }
+  }
+  return rows.map((t) => ({
+    chainId: t.chainId,
+    address: t.address,
+    symbol: t.symbol,
+    decimals: t.decimals,
+    amount: t.usd / t.priceUsd,
+    usd: t.usd,
+    fixture: true as const,
+  }))
+}
+
+// ── DEV-only measured exit costs (desk 34) ───────────────────────────────────
+// The mock baskets do not exist on-chain, so the real sell simulation can
+// never answer for them — and without a stand-in the exit-cost card would be
+// invisible on the very identity the owner reviews with. Ratios are shaped on
+// the live 2026-07-14 measurements (~1.9% routine at small size; one thin
+// basket notably worse so the card actually surfaces). Same law as every
+// stand-in here: fixture flag only, mock addresses only, display only.
+const DEV_EXIT_PCT: Record<string, number> = {
+  [MOCK_1]: 1.9, // DEVBKT — routine route friction
+  [MOCK_2]: 4.6, // DEVTWO — thin enough to be worth a card
+  [MOCK_3]: 2.2, // DEVBK2
+}
+
+/** Fixture exit-cost row for a MOCK basket, scaled to the shown position
+ *  value; null for real addresses or when the fixture flag is off. */
+export function devExitCost(
+  address: string,
+  chainId: number,
+  valueUsd: number,
+): { key: string; symbol: string; costUsd: number; costPct: number; sizeUsd: number; route: string } | null {
+  if (!fixtureMode) return null
+  const pct = DEV_EXIT_PCT[address.toLowerCase()]
+  if (pct == null || !(valueUsd > 0)) return null
+  const m = MOCKS.find((x) => x.address === address.toLowerCase())
+  return {
+    key: `${chainId}:${address.toLowerCase()}`,
+    symbol: m?.symbol ?? 'DEVBKT',
+    costUsd: Math.round(valueUsd * pct) / 100,
+    costPct: pct,
+    sizeUsd: Math.round(valueUsd * 100) / 100,
+    route: `its own router on ${chainId === 1 ? 'Ethereum' : chainId === 4663 ? 'Robinhood' : 'Base'}`,
+  }
 }

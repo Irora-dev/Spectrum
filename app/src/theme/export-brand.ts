@@ -35,6 +35,10 @@ export function brandConfigToTs(brand: BrandConfig): string {
   // got /setup + the footer Customize link back on their next production build.
   if (brand.setupStudio === false) L.push('  setupStudio: false,')
   if (brand.defaultChainId != null) L.push(`  defaultChainId: ${brand.defaultChainId},`)
+  // extensionStoreUrl must round-trip for the same reason as setupStudio: the
+  // docs tell an operator to hand-add it after publishing, and an Apply that
+  // drops it silently reverts /extension from the store button to the zip walk.
+  if (brand.extensionStoreUrl) L.push(`  extensionStoreUrl: ${q(brand.extensionStoreUrl)},`)
   L.push('}', '', 'export default brand', '')
   return L.join('\n')
 }

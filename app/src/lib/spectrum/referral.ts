@@ -2,6 +2,8 @@ import { isAddress, zeroAddress, type Address } from 'viem'
 import { normalize } from 'viem/ens'
 import { clientFor } from '../chain/rpc'
 import { MAINNET_CHAIN_ID } from '../chain/constants'
+import { checkHandle } from './creator-handles'
+import { addressFor, ownerAddress } from './handle-registry'
 
 // Phase-1 permissionless referral (owner 2026-07-07). A referral is an ADDRESS
 // carried in a `?ref=` link; we persist it and the money paths tag it as the
@@ -67,14 +69,31 @@ export function markCreatorRefUsed(): void {
   if (r) write({ ...r, creatorUsed: true })
 }
 
-/** Resolve a `?ref` value to a canonical address: a 0x address directly, or an
- *  `<name>.eth` via mainnet ENS. Null if invalid / unresolvable. */
+/** Resolve a `?ref` value to a canonical address: a 0x address directly, an
+ *  `<name>.eth` via mainnet ENS, or a CLAIMED SPECTRUM NAME via the handle
+ *  registry (desk 202, owner's short-links note: a named creator's invite link
+ *  carries their name, not forty hex characters — same first-touch, same money
+ *  paths, the registry's own anti-squat resolution). Null if invalid /
+ *  unresolvable — an unclaimed or unresolvable name captures NOTHING, never a
+ *  guess, because this address feeds fee attribution. */
 export async function resolveRefInput(v: string): Promise<Address | null> {
   if (isValidRef(v)) return v
-  if (!v.toLowerCase().endsWith('.eth')) return null
+  if (v.toLowerCase().endsWith('.eth')) {
+    try {
+      const addr = await clientFor(MAINNET_CHAIN_ID).getEnsAddress({ name: normalize(v) })
+      return addr && isValidRef(addr) ? addr : null
+    } catch {
+      return null
+    }
+  }
+  // The syntax gate runs FIRST so junk in `?ref=` never costs a registry read.
+  const gate = checkHandle(v)
+  if (!gate.ok) return null
   try {
-    const addr = await clientFor(MAINNET_CHAIN_ID).getEnsAddress({ name: normalize(v) })
-    return addr && isValidRef(addr) ? addr : null
+    const lookup = await addressFor(gate.handle.normalized)
+    if (lookup.status !== 'found') return null
+    const addr = ownerAddress(lookup.owner)
+    return isValidRef(addr) ? addr : null
   } catch {
     return null
   }

@@ -10,10 +10,11 @@ describe('feeSinksFor', () => {
     const { split, sinks } = feeSinksFor(0)
     expect(sinks.map((s) => s.key)).toEqual(['creator', 'holders', 'burn', 'interface', 'launcher'])
     expect(split.league).toBe(0)
-    // byte-identical to the pre-league display
-    expect(pct(split.creator)).toBe('24')
-    expect(pct(split.holders)).toBe('56')
-    expect(pct(split.burn)).toBe('10')
+    // the DEPLOYED constants (D-R3 burn 25% — SpectrumBasket.sol:151; the FE
+    // carried v1's 10% until the owner caught it live, 2026-08-14)
+    expect(pct(split.creator)).toBe('20')
+    expect(pct(split.holders)).toBe('46.7')
+    expect(pct(split.burn)).toBe('25')
   })
 
   it('a league chain gains the league sink and the bar still sums to a whole', () => {
@@ -22,8 +23,9 @@ describe('feeSinksFor', () => {
     // every segment renders `width: frac*100%` — a missing sink leaves a gap
     const total = sinks.reduce((acc, s) => acc + s.frac, 0)
     expect(total).toBeCloseTo(1, 12)
-    // the audit's measured numbers, no longer overstated
-    expect(pct(split.creator)).toBe('22.8')
+    // the deployed numbers at D-R3's 25% burn: league 5% off the top, then
+    // the waterfall — creator 30% of the remainder pays 19.0%
+    expect(pct(split.creator)).toBe('19')
     expect(pct(split.league)).toBe('5')
   })
 })

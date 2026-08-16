@@ -1,11 +1,14 @@
 import { getAddress, type Address } from 'viem'
 import type { BasketRoute } from '../pools'
+// Imported from the law module DIRECTLY rather than through `../pools` — the
+// barrel pulls the whole detector (RPC clients, DexScreener fetches) into a
+// module whose entire job is pure array assembly.
+import { assertNoRejectedV2Legs } from '../pools/v2-legs'
 import { CAP } from './weights'
 
 // The V2 basket token is a standard 18-decimal ERC-20.
 export const BASKET_TOKEN_DECIMALS = 18
 // Canonical USDC (the V2 settlement asset) is 6 decimals on Base.
-export const USDC_DECIMALS = 6
 
 // One basket entry exactly as deployBasket/predictTokenAddress expect it
 // (abis-v2.ts — DRAFT; bind to the contracts deliverable). NB (carried from v1,
@@ -26,6 +29,8 @@ export interface DeployAssetInput {
   address: Address | string
   decimals: number
   route: BasketRoute
+  /** Only ever used to NAME the asset in a refusal. */
+  symbol?: string
 }
 
 /**
@@ -34,13 +39,34 @@ export interface DeployAssetInput {
  * summing to exactly CAP (100), so the bps sum is exactly 10000 with no drift.
  * The SAME array must be fed to both mineSalt and deployBasket (the address
  * depends on it).
+ *
+ * ⛔ AND IT IS THE LAST LINE BEFORE MONEY. Every launch path — the builder, the
+ * composer's handoff, a restored draft, a bundle's per-network deploy — reaches
+ * the factory through this one function, and it runs BEFORE a salt is mined and
+ * long before a wallet is asked. So the venue law is asserted here: on a chain
+ * whose contracts reject venue 2, no basket array containing one can even be
+ * BUILT, whatever surface produced the leg and however stale its stored route.
+ * A leg that slipped past every UI still cannot reach a signature.
+ *
+ * `chainId` is optional because the one production call site lives in another
+ * lane's file and takes only assets + weights; omitted, the guard falls back to
+ * the build-wide rule (see `everyChainRejectsV2` — exact for the canonical book
+ * and for the rehearsal seating alike, and permissive only where it cannot
+ * prove the refusal).
  */
-export function toBasketEntries(assets: DeployAssetInput[], weightsPct: number[]): DeployBasketEntry[] {
+export function toBasketEntries(
+  assets: DeployAssetInput[],
+  weightsPct: number[],
+  chainId?: number,
+): DeployBasketEntry[] {
   if (assets.length !== weightsPct.length) {
     throw new Error(`basket/weights length mismatch (${assets.length} vs ${weightsPct.length})`)
   }
   const totalPct = weightsPct.reduce((s, w) => s + w, 0)
   if (totalPct !== CAP) throw new Error(`weights must sum to ${CAP}% (got ${totalPct}%)`)
+  // Before the shape checks matter at all: a venue this deployment refuses is
+  // not a basket we may assemble.
+  assertNoRejectedV2Legs(assets, chainId)
   return assets.map((a, i) => ({
     asset: getAddress(a.address as string),
     venue: a.route.venue,
@@ -82,7 +108,10 @@ export function startSqrtPriceX96ForDollarNav(
   basketAddr: Address,
   usdcAddr: Address,
   basketDecimals = BASKET_TOKEN_DECIMALS,
-  usdcDecimals = USDC_DECIMALS,
+  /** REQUIRED (cold-review INFO-1): the chain's settlement decimals from the
+   *  deployment book — a defaulted 6 here would mis-price the pool init for
+   *  any non-6dp settlement token. */
+  usdcDecimals: number,
 ): bigint {
   const usdcIsCurrency0 = BigInt(usdcAddr) < BigInt(basketAddr)
   const dec0 = usdcIsCurrency0 ? usdcDecimals : basketDecimals

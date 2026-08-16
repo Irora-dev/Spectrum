@@ -15,7 +15,17 @@ import { encodeFollowJson } from '../lib/spectrum/notes-social'
 // and countable on the creator's page. The tx is best-effort seasoning: local
 // state flips immediately either way, and a rejected signature only means the
 // follow stays browser-local.
-export function FollowButton({ deployer, className = '' }: { deployer: string | null; className?: string }) {
+export function FollowButton({
+  deployer,
+  className = '',
+  variant = 'pill',
+}: {
+  deployer: string | null
+  className?: string
+  /** heart = the compact icon form (owner 2026-08-03: "just a small heart
+   *  next to the creator address"); pill = the labelled button, unchanged. */
+  variant?: 'pill' | 'heart'
+}) {
   const { isFollowing, toggle } = useFollows()
   const chainId = useActiveChainId()
   const { address: viewer } = useAccount()
@@ -57,6 +67,25 @@ export function FollowButton({ deployer, className = '' }: { deployer: string | 
         setSigning(false)
       }
     })()
+  }
+
+  if (variant === 'heart') {
+    return (
+      <button
+        type="button"
+        aria-pressed={following}
+        aria-label={following ? 'Unfollow this creator' : 'Follow this creator'}
+        title={onchain ? 'Follow. Also publishes on-chain (one signature)' : 'Follow. Saved in this browser only'}
+        onClick={click}
+        className={`press inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${
+          following ? 'text-cyan' : 'text-ink-faint hover:text-ink'
+        } ${signing ? 'animate-pulse' : ''} ${className}`}
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill={following ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z" />
+        </svg>
+      </button>
+    )
   }
 
   return (

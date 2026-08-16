@@ -10,6 +10,7 @@ export const MAX_SITE_NAME = 32
 // it, so the CLI silently ignored `--pages-off bundle`.
 export const PAGE_KEYS = [
   'discover', 'launch', 'trade', 'fees', 'portfolio', 'creators', 'refer', 'league', 'bundle', 'claim', 'integrate', 'docs',
+  'create',
 ]
 export const SPECTRUM_DNA = { from: '#ff9248', via: '#ff4db8', to: '#35e0ff' }
 
@@ -76,7 +77,8 @@ export function renderBrandConfig(plan) {
   if (plan.stocks === false) L.push('  stocks: false,')
   if (plan.starterTokens === false) L.push('  starterTokens: false,')
   if (plan.prismCredit === false) L.push('  prismCredit: false,')
-  if (plan.setupStudio === false) L.push('  setupStudio: false,')
+  // OPT-IN since 2026-08-02: emit the key only when the operator asked for it.
+  if (plan.setupStudio === true) L.push('  setupStudio: true,')
   if (Number.isFinite(plan.defaultChainId)) L.push(`  defaultChainId: ${plan.defaultChainId},`)
   L.push('}', '', 'export default brand', '')
   return L.join('\n')

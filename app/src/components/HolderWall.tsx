@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAccount, useEnsName, usePublicClient, useWriteContract } from 'wagmi'
 import { erc20Abi, formatUnits, type Address } from 'viem'
@@ -180,7 +181,7 @@ export function HolderWall({
           Holder <span className="spectral-text">wall</span>
         </h2>
         <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
-          signed on-chain by wallets that hold ${symbol}
+          signed on-chain by wallets that hold ${showSymbol(symbol)}
         </span>
       </div>
 
@@ -220,7 +221,7 @@ export function HolderWall({
                 <EntryIdentity holder={e.holder} />
                 <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wide text-ink-faint">
                   {e.ageSec != null && e.ageSec > 60 ? `holding ${formatAge(e.ageSec)} · ` : ''}
-                  <span className="tabular-nums text-ink-dim">{compact.format(e.balance)}</span> ${symbol}
+                  <span className="tabular-nums text-ink-dim">{compact.format(e.balance)}</span> ${showSymbol(symbol)}
                   {e.pctOfSupply != null && e.pctOfSupply >= 0.1 && (
                     <span className="tabular-nums"> · {e.pctOfSupply.toFixed(1)}%</span>
                   )}
@@ -231,7 +232,7 @@ export function HolderWall({
         </div>
       ) : (
         <p className="mt-4 rounded-xl border border-dashed border-white/10 px-4 py-5 text-center font-mono text-xs text-ink-faint">
-          No signatures yet. {viewerHolds ? 'Yours starts the wall.' : `Hold $${symbol} to sign the wall.`}
+          No signatures yet. {viewerHolds ? 'Yours starts the wall.' : `Hold $${showSymbol(symbol)} to sign the wall.`}
         </p>
       )}
       {entries.length > shown.length && (

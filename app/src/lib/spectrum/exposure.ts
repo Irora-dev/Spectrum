@@ -51,6 +51,14 @@ export interface AssetExposure {
   pct: number
   /** How many of the wallet's baskets contribute to this asset. */
   basketCount: number
+  /** True when this row is a LIQUIDITY POSITION (lp-positions.ts) — a display
+   *  exposure like any other tile, but never a tradeable token: trade/chart
+   *  doors must gate on it. */
+  lp?: boolean
+  /** True when this row IS a held basket standing whole (basketFold: 'whole').
+   *  Its designed legs ride along so display surfaces can draw the mix. */
+  basket?: boolean
+  basketLegs?: ExposureLeg[]
   /** Per-basket breakdown, largest first. */
   contributions: ExposureContribution[]
 }
@@ -72,6 +80,13 @@ export interface ExposureOptions {
   basis?: WeightBasis
   /** 'live' legs per held basket, keyed `${chainId}:${lowercased basket address}`. */
   liveData?: Map<string, ExposureLeg[]>
+  /** How a held basket lands in the rows (owner 2026-08-16: "the main
+   *  portfolio doesnt show it as baskets like it should").
+   *  · 'exploded' (default, the original look-through) — the basket dissolves
+   *    into its constituents; three baskets touching WETH read as one WETH line.
+   *  · 'whole' — the basket stands as ONE row under its own key, its designed
+   *    legs carried on `basketLegs` so a tile can draw the composition. */
+  basketFold?: 'exploded' | 'whole'
 }
 
 /**
@@ -92,6 +107,33 @@ export function computeExposure(
     const { chainId, top, symbol: basketSymbol, address: basketAddress } = h.basket
     if (h.valueUsd <= 0) continue
 
+    // WHOLE-BASKET FOLD: the position stands as one row under the basket's own
+    // key — same shape as the unknowable-contents branch below, plus the legs
+    // for the tile's mix. Same basket held from two linked wallets merges into
+    // one row via the shared key, exactly like any other asset.
+    if (opts.basketFold === 'whole') {
+      const key = `${chainId}:${basketAddress.toLowerCase()}`
+      let e = map.get(key)
+      if (!e) {
+        e = {
+          key,
+          address: basketAddress.toLowerCase(),
+          symbol: basketSymbol,
+          chainId,
+          valueUsd: 0,
+          pct: 0,
+          basketCount: 0,
+          basket: true,
+          basketLegs: top ?? [],
+          contributions: [],
+        }
+        map.set(key, e)
+      }
+      e.valueUsd += h.valueUsd
+      e.contributions.push({ basketSymbol, basketAddress, chainId, valueUsd: h.valueUsd })
+      continue
+    }
+
     // Pick the legs for this basket in the requested basis. Live with no resolved
     // data falls back to target so the basket is never silently dropped.
     let legs: ExposureLeg[] | undefined
@@ -104,7 +146,25 @@ export function computeExposure(
     } else {
       legs = top
     }
-    if (!legs?.length) continue
+    if (!legs?.length) {
+      // A HELD BASKET WITH UNKNOWABLE CONTENTS STAYS WHOLE (UIGuy's class-
+      // signal review, 2026-08-06): this used to `continue`, which DROPPED
+      // the position — the book's total silently lost real money whenever a
+      // basket's legs could not be read. Half-knowable = say the half you
+      // know: the position's value is a fact even when its contents aren't,
+      // so it stands as its own row under the basket's own key. This is also
+      // the only row the bento can honestly draw as a BASKET tile — a
+      // registered basket always explodes into its legs.
+      const key = `${chainId}:${basketAddress.toLowerCase()}`
+      let e = map.get(key)
+      if (!e) {
+        e = { key, address: basketAddress.toLowerCase(), symbol: basketSymbol, chainId, valueUsd: 0, pct: 0, basketCount: 0, contributions: [] }
+        map.set(key, e)
+      }
+      e.valueUsd += h.valueUsd
+      e.contributions.push({ basketSymbol, basketAddress, chainId, valueUsd: h.valueUsd })
+      continue
+    }
 
     for (const c of legs) {
       const slice = h.valueUsd * (c.weightPct / 100)

@@ -93,7 +93,10 @@ export function CreatorFeed({
   })
 
   if (!registry) return null
-  if (!canPost && (posts.data?.length ?? 0) === 0) return null // nothing to show, nothing to say
+  // Nothing to show, nothing to say — but a FAILED read is not an empty feed,
+  // and silently deleting the whole section tells a visitor this creator never
+  // posts. On an error the section stays and says it could not read.
+  if (!canPost && !posts.isError && (posts.data?.length ?? 0) === 0) return null
 
   async function write(note: string, busyKey: 'post' | string) {
     if (!publicClient || busy) return
@@ -185,6 +188,23 @@ export function CreatorFeed({
               </div>
             </article>
           ))}
+        </div>
+      ) : posts.isError ? (
+        // "Could not read" must never render as "there is nothing": before this
+        // branch a failed read fell through and told a creator their own feed was
+        // empty. Checked after the list so a background failure over cached posts
+        // still shows the posts we have.
+        <div className="rounded-xl border border-dashed border-white/10 px-4 py-4 text-center">
+          <p className="font-mono text-xs leading-relaxed text-ink-faint">
+            We could not read the updates just now. This is a read failure, not an empty feed.
+          </p>
+          <button
+            type="button"
+            onClick={() => void posts.refetch()}
+            className="press mt-2.5 font-mono text-[10px] uppercase tracking-[0.16em] text-cyan"
+          >
+            Try again
+          </button>
         </div>
       ) : (
         canPost && (

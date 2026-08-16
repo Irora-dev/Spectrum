@@ -7,6 +7,273 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.16
+
+Sacred: launch, swap, executor — this release changes the fee model, both money contracts'
+call shapes, and the portfolio executor's money path. Read the first two sections before
+updating, and run the live micro-test.
+
+### The fee model: 0.25% batching, 0.4% direct, and 100% of it buys & burns PRISM
+
+The portfolio batching fee is now 0.25%, down from 0.40%. Where a buy routes through the
+0x aggregator, 0x takes a further ~0.15% of its own inside the quote — not ours, and not
+something we can waive — so those legs cost about 0.4% all-in. Swaps outside the batcher
+carry a 0.4% fee. There is no integrator split anymore: 100% of every Spectrum fee buys
+and burns PRISM, and the screens say so where the fee is charged.
+
+Both money contracts are a NEW deployed generation with new call shapes (the fee-recipient
+field is gone from each, so their selectors moved). Which generation a chain speaks is a
+fact of the deployment book (`feeGeneration` in deployments.json, seated beside the
+addresses), and every safety gate is generation-aware: the shown-vs-signed laws enforce
+the right fee and refuse a recipient field on a generation that has none, the selector is
+pinned against the mirrored ABI and re-derived from the deployed artifact at seating, and
+a batch encoded for the wrong generation fails its own re-check rather than reaching a
+wallet.
+
+### Settlement decimals are verified against the token itself
+
+Every conversion between dollars and settlement raw units used to assume six decimals in
+the arithmetic. The decimals now live in the deployment book next to the settlement
+address, every conversion in the app reads them from there, and before any sale, bridge,
+or console swap signs, the token's own `decimals()` is read once and compared against the
+config — a disagreement refuses in plain words instead of silently mis-scaling a floor.
+
+### Version upgrades that in-kind cannot serve now run as a protected swap route
+
+When a new version adds an asset your redemption cannot supply (and nothing dropped can
+fund it), the upgrade no longer dead-ends: it sells the old version through its own pool,
+measures the settlement that actually lands, and buys the new version with exactly that —
+both trades floored and simulated before your wallet is asked. The buy spends only the
+measured proceeds (bounded, so unrelated money arriving mid-migration is never swept in),
+and if the second trade fails, your proceeds sit in your own wallet with a retry that
+never re-sells.
+
+### The first open guides your hand
+
+The portfolio's first open now walks three spotlit beats over the real page — your whole
+book, the positions grid, the rebalance door — once, ever. The onboarding arrival ends in
+two numbered acts: link the rest of your wallets, then one free signature signs you in.
+Discovery surfaces stop listing unseeded bundles under $100 of value.
+
+### Every refusal carries its door
+
+A sweep of every buy, sell, and migration surface removed the dead ends: refusals that
+named a remedy now carry the button that does it (retry, re-quote, bridge, connect, buy
+on the asset's own page), partial runs state what landed and where the money sits, the
+fee shown and the fee charged can no longer disagree on the same screen, and a run's
+completed steps keep their checkmarks through a retry.
+
+## 2026.08.09
+
+Sacred: launch, swap, executor — this release changes the SHAPE of the mint payload,
+the address book, and the portfolio executor's money path. Read the first two sections
+before updating, and run the live micro-test.
+
+### The batching fee is 0.40%, and the screen can no longer disagree with the signature
+
+The portfolio batching fee is now 0.40%, down from 0.50%. Where a buy routes through the
+0x aggregator, 0x takes a further 0.15% of its own inside the quote — not ours, and not
+something we can waive — so those legs cost 0.55% all in. Every percentage you see is now
+computed from the one constant that is actually charged, so a fee shown and a fee taken
+cannot drift apart again.
+
+The same rule now covers the protection floor on the swap card. It showed you a minimum
+and then signed a floor rebuilt at the moment you clicked, which on a moving market could
+land below the number you read. It refuses now rather than signing, and it checks the
+figure that actually reaches the contract rather than the one that was quoted. If your
+quote moves between reading it and confirming, you get a plain sentence and a fresh look
+instead of a signature you did not agree to.
+
+If you sell for ETH or any token other than the settlement asset, that path works again —
+a units mistake in the first version of this check refused every such sale.
+
+### Your money cannot be sent twice, on a stricter definition of cannot
+
+The record that stops a payment being sent twice after a reload used to report success it
+had never verified: on a browser with almost no storage left, every check passed, nothing
+was written, and a reload could re-send. It now proves the record survived its own read
+before letting anything reach your wallet, and refuses honestly when it cannot.
+
+Two browser tabs are handled properly too. Releasing a step no longer deletes a record
+belonging to another tab's live transaction, and a claim on one trade can no longer be
+mistaken for a claim on a different basket.
+
+Under the hood the router and wallet libraries moved to their next major versions, which
+clears every outstanding high-severity advisory.
+
+### Buying a basket works again (it did not, on any basket with more than one leg)
+
+A buy's payload carries a per-leg minimum AND the funding split that says how the
+buyer's money divides across the legs. The kit wrote the minimums and left the split
+empty, and the contract only derives the split itself when the payload is completely
+empty. So nothing was funded and every multi-leg buy reverted. It is fixed: the split
+now comes from the factory's own lens and is passed through untouched, and the
+minimums follow it rather than the basket's target weights (those two were measured
+28 percent apart, which would have turned one revert into another).
+
+**Why the split is never computed from weights:** on a basket whose first depositor
+starved a leg, a weight-derived split lets an attacker take a large share of a later
+buyer's money. Measured by the contract authors: an attacker with 5,000 dollars turns
+a 10,000 dollar buy into 4,255. The module that produces the split takes no weights,
+no prices and no marks, so there is nothing in it a split could be derived from.
+
+**Launching on a future contract generation** needs its address-book entry to say so
+(`packsFundingSplit: true`). The generations are indistinguishable on chain at zero
+supply, so this cannot be detected and must be declared. Every current entry is
+correctly `false`.
+
+### Everything else
+
+The homepage leads with what you already hold and its doors open the real flows, the
+mobile bottom menu carries the core places with a big-button drawer, long card lists
+become swipeable rails on a phone, and the section rhythm is tighter throughout.
+Baskets can be sorted by value, holders and age, cards mark the ones you hold, and
+Command-K opens search from anywhere. Wallets can be linked into one portfolio,
+everything a browser knows can be exported and restored as one file, and a wrong
+network is now named before you sign rather than after it fails.
+
+
+### Your book knows what you hold — including baskets
+
+A wallet holding only basket tokens used to be told "nothing readable in this
+wallet yet" the first time it opened the portfolio — the worst possible first
+run for exactly the person who had already converted. Held baskets now join the
+book the onboarding and the homepage draw, priced at their own value per token,
+shown as one tile rather than doubled by their look-through legs. Seeding a
+weighting draft still leaves them alone (a basket is not a plain leg the picker
+can resolve) and says so instead of dropping them silently.
+
+### One link for the life of a basket family, and one motion to extend it
+
+Cutting a new version is now one flow: the creator's own basket seeds the new
+recipe, and when the new basket lands, one signature links the lineage — after
+which every link ever shared keeps answering with the current version. Older
+versions stay fully inspectable forever, and holders of one get their upgrade
+door where they arrive rather than somewhere they have to find.
+
+### Honest by default, in the small places
+
+Selling: the trade's tolerance is the seller's only protection on that side, so
+a wide one is now marked as the exposure it is — and the guidance that used to
+suggest widening it says plainly that smaller size is the answer on a sell.
+Buying: a refusal after a burst of one-way buying reads as the transient it is
+("the price moved while you were buying — this usually heals within ~30
+minutes"), never as a dead end or a raw error code, and the fee is quoted in
+dollars on the live quote rather than as a percentage to apply yourself. The
+away briefing no longer calls a holding "new since your last visit" when all
+that changed was our ability to price it.
+
+### One link, every version
+
+A basket link now keeps answering with the creator's **current** version: any
+version's URL canonicalizes forward through the deployer-signed lineage (the
+same-deployer `supersedes` claims — no registry, no curation). An honest strip
+names the version the link carried, holders of the old version get their
+upgrade door right there (migration runs FROM the version they arrived by),
+and `?v=exact` keeps every superseded version fully inspectable forever — the
+version strip's older pills use it. Creators share one URL for the life of a
+basket family.
+
+### The basket page reads in plain money
+
+The hero is half its height with a real hierarchy: price · 24h · since-launch
+on one row, the creator top-right beneath the price, the thesis directly under
+the ticker pills, and "what is a basket" collapsed to a three-word chip whose
+ⓘ carries the mechanics. THE MONEY STORY answers the first real question in
+dollars — $100 in this basket since launch → what it reads as today, beside
+the same $100 just holding the launch mix (absent unless every constituent's
+history answered; window stated plainly; thin baskets say so). Holdings have
+ONE home: the portfolio's own bento with money footers and hover 7d previews
+over the numbers table. The console says what a buy does in one line and
+prices the fee in dollars on the live quote. Display-side plain words:
+"Total in basket", "Share of basket", "Value held".
+
+### The basket page draws its book
+
+The composition now renders as the portfolio system's own picture — the same
+weight-true bento tiles with money footers from the basket's priced legs and
+hover previews — above the assets table. Native ETH also seeds as its WETH
+form in "start from what you hold" (a mostly-ETH wallet no longer seeds a
+draft missing its biggest holding), and the empty-wallet found step gained a
+"Build a portfolio" door into the flow.
+
+
+### The homepage is the onboarding
+
+The homepage was rebuilt around the manage-first funnel: a rolling two-proposition
+hero over one wide live panel (the bento leads — real assets picked by measured
+7-day performance, money on the tiles, the portfolio page's own chart beside the
+total), a visual portfolio intro (the book as a bento, a live reweight dial, a
+real composition arc), the loop stated as the one thing it produces (a real
+published basket with its ticker and address), and a **get-started act that IS
+the onboarding**: connect-first, the visitor's real cross-chain book drawn by
+the product's own tiles, and two doors — *Build your portfolio* (opens the
+portfolio's first-open ceremony) and *Create a basket token* (opens the flow
+with the visitor's holdings riding along as a draft). Basket pages gain
+**Start from this basket** (the recipe seeds a draft); a successful buy now
+points at the portfolio; /learn's acts end in doors (the publish door
+previously pointed at the retired /launch page).
+
+### The portfolio's first-open ceremony
+
+Opening /portfolio for the first time plays a three-step ceremony — the story,
+connect, and *What you already hold* (the wallet's real major assets, drawn as
+the product's bento) — ending in a reveal where the page builds itself. One
+localStorage showing; `/portfolio?intro=replay` replays it, and "replay the
+intro" in the wallet panel makes that findable. Strictly connection-honest: no
+placeholder data ever stands under "What you already hold."
+
+### Link wallets into one portfolio
+
+Sign once per wallet to read them as ONE book: the ceremony summons the
+wallet's own account picker, each joining wallet signs a plain-language
+ownership message (EOA recovery, or on-chain ERC-1271/6492 verification for
+smart wallets), and the portfolio merges balances, holdings and cost-basis PnL
+across the group — while **acting always stays with the connected wallet**.
+Groups live in the browser, travel as a signature-verified export/import file,
+and resolve transitively across devices. Merged rows keep per-wallet
+attribution (identity dots); the panel states when a stored link could not be
+verified that session (kept, said, never silently dropped).
+
+### Back up the browser, restore anywhere
+
+One file now carries everything a browser accumulates — targets, drafts,
+executed/published records, PnL cost-basis indexes, wallet links (re-verified
+on import). Restore is additive and never overwrites newer local work. The
+restore door sits on the portfolio's connect gate (where a wiped browser
+lands); a one-time nudge offers the download once there is genuinely something
+to lose.
+
+### Pricing defence, seeding guard, and fixes
+
+The D-R1 caller-split handshake is built end to end (absurdity detection,
+packed `bareLegMins` reader — including classifying pre-rev factories that
+answer with unpacked floors — and refuse-to-quote on disagreement), with a
+calibration harness (`scripts/split-calibration.ts`). A **seed guard** warns or
+blocks when a new basket's leg buy would swamp its own pool (the measured
+first-mint self-wreck). Keyless Base/Ethereum sites get the ETH price anchor
+back (the storage probe now runs where wide log scans are refused — every
+ETH-paired price on those chains depended on it). WETH no longer shows an
+unpriced dash when a rate-limited feed walk leaves a single live round.
+
+
+### Your site can ship a browser extension
+
+The kit now carries `extension/` — a read-only portfolio lens for the visitor's
+toolbar, built with the operator's own wordmark and HOSTED BY THE SITE: one
+packaging command (`cd extension && npm run package -- --into-site`) drops the
+Chrome and Firefox artifacts into `app/public/extension/`, and the new
+`/extension` page serves them with a browser-detected install walkthrough. The
+`/setup` studio gains an Extension panel that shows packaging state and the next
+command at each step; `update:site` now surfaces the changelog sections you
+crossed and announces the extension when your checkout gains it. The lens never
+connects a wallet, never signs, and never asks for a seed phrase — and the
+install page states that it is the site's only official source. New optional
+brand key: `extensionStoreUrl` (your own Chrome Web Store listing; Unlisted
+visibility recommended for white-label). `.xpi` files are served with the
+`application/x-xpinstall` MIME type on Netlify (`public/_headers`) and Vercel
+(`vercel.json`).
+
 ## 2026.08.01
 
 Sacred: launch, swap — the canonical address book moves Ethereum and Base to the

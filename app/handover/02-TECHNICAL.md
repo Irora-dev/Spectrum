@@ -150,7 +150,8 @@ app/
 | `use-deploy.ts` | `useDeployBasket` — the two-phase (`prepare`→`broadcast`) launch state machine + the `DEPLOY_ENABLED` runtime guard. |
 | `deploy.ts` | Tx assembly: `toBasketEntries` (weights→bps), `startSqrtPriceX96ForDollarNav` ($1 NAV open price), bigint `isqrt`. |
 | `salt-mining.ts` | `mineSalt` — Multicall3-batched CREATE2 salt brute-force against `predictTokenAddress`; `hasHookFlags`. |
-| `hook-data.ts` | The `hookData` wire encoders. `encodeMintHookData` (BUY): derives non-zero per-leg minimums from live quotes so slippage is bounded on every leg; throws rather than encode a zero/empty payload. `encodeRedeemHookData` (SELL): zero-fills `legMins` to the on-chain leg count and requires a positive aggregate `minOut` (the binding sell protection). Security-critical. |
+| `hook-data.ts` | The `hookData` wire encoders. `encodeMintHookData` (BUY): packs the funding split (bits [255:240], from `factory.bareLegMins` via `mint-funding.ts`) beside non-zero per-leg minimums derived from live quotes; throws rather than encode a zero-split or zero-floor payload. `encodeRedeemHookData` (SELL): zero-fills `legMins` to the on-chain leg count and requires a positive aggregate `minOut` (the binding sell protection). Security-critical. |
+| `mint-funding.ts` | The ONLY producer of a buy's funding split: reads the basket's own lineage factory's lens, passes the split through untouched, and refuses to quote rather than invent one. Never sees a weight. Security-critical. |
 | `swap-quote.ts` | **Tier-1 floor-derivation SDK** (pure, unit-tested). `buildSwapQuote` produces the broadcast-grade inputs: BUY legs priced off **net** post-fee USDC (matches `_acquireBasket`), decimals-correct, basket-ordered, non-zero floors, no-silent-zero; SELL is aggregate-`minOut` protected (no per-leg floors). The one source for both the preview and the signed tx. |
 | `use-basket-swap.ts` | `useBasketSwap` — the **buy/sell broadcast** state machine: exact-amount ERC-20 approve → `swapExactIn` via the operator's swap router, same simulate→sign→confirm pattern as `use-fee-actions.ts`. Encodes via `encodeMintHookData` (buy) / `encodeRedeemHookData` (sell). Hard `SWAP_ENABLED` gate; inert until `swapRouter` is configured. The ABI is reconciled against the shipped reference router (§3.3 / `SWAP-ROUTER-REFERENCE.md`). |
 | `use-basket-fees.ts` + `fee-model.ts` | `useBasketFees` (per-basket fee rate + creator share, read on-chain) + `useFeeBounds` (fixed protocol constants from `fee-model.ts`). |
@@ -192,7 +193,7 @@ File: `src/lib/spectrum/abis-v2.ts`. This is the *only* place contract ABIs live
 - Settlement asset is canonical Base USDC; no dStable anywhere.
 - Fee config is **per-basket and immutable**: the creator picks `basketFeeBps` (bounded by `[MIN,MAX]_BASKET_FEE_BPS`) + `creatorShareBps` (0–30%, bounded by `MAX_CREATOR_SHARE_BPS`) + `creatorPayout` — that is their only fee choice; the `launcher` slot is operator-injected at deploy, never a creator dial. The PRISM burn share + interface/launcher kickbacks are **fixed protocol constants** (`fee-model.ts`), identical on every basket. **No per-basket burn share, no ratchet.**
 - NAV is **statically readable**: `exchangeRate()`/`totalReserve()` are non-reverting `(value, fullyPriced)` display-grade marks.
-- Mint/redeem require **non-empty `hookData` with per-leg minimums** (see `hook-data.ts`). The FE has **no** zero/empty legMins path.
+- Mint/redeem require **non-empty `hookData` with per-leg minimums**, and a buy additionally carries the **funding split** in the top 16 bits of each `legMins` word (see `hook-data.ts` + `mint-funding.ts`). The FE has **no** zero-split and no zero-floor path except a leg the chain's own lens funds with nothing.
 - `redeemInKind(amount, legMask, to)` is the **unconditional exit** — constituents-out only, never touches USDC/pools.
 - The factory **enumerates** baskets (`allBaskets`/`allBasketsLength`), so a keyless public-RPC build lists everything without log scans.
 - Deploys are priced by a **Dutch auction**; there is **no `deployEnabled()` view** in V2 — **do not re-add one.** Whether the deploy broadcast is available is purely the FE build flag.
@@ -297,21 +298,31 @@ Implemented in `use-basket-fees.ts` + `fee-model.ts`. The **per-basket fee field
 
 File: `src/lib/spectrum/hook-data.ts`. Same wire layout (`abi.encode(minOut, legMins[], frontend)`) for both paths, but **two distinct encoders**: `encodeMintHookData` (BUY) refuses any zero/empty per-leg floor, so every leg carries a live-derived minimum; `encodeRedeemHookData` (SELL) zero-fills `legMins` to the on-chain leg count and instead requires a positive aggregate `minOut` (the binding sell protection — the contract's per-leg sell floors are ETH/USDC-denominated + optional). The per-leg derivation that feeds the BUY encoder lives in `swap-quote.ts` (the Tier-1 surface).
 
-**Draft layout (bind to the deliverable):** `abi.encode(uint256 minOut, uint256[] legMins, address frontend)`.
+**Layout:** `abi.encode(uint256 minOut, uint256[] legMins, address frontend)`, where each `legMins` word carries **two fields**: `(fundingSplitBps << 240) | perLegFloor`.
+
+**THE FUNDING SPLIT (bits [255:240]) — added 2026-08-06 after contracts measured the kit's payload reverting.** A D-R1 basket funds each leg from that field (`SpectrumBasket._acquireBasket`, `SPLIT_SHIFT = 240`) and consults `factory.bareLegMins` **only** on EMPTY hookData. The kit sent plain floors, so every split read zero, `nonBufferWeight` summed to zero and a healthy multi-leg buy reverted `NoOutput` (`0x5a7cfa65`) — their `test/KitZeroSplitProbe.t.sol`: packed 4886 shares, empty hookData 4901, the kit's shape reverts.
+
+- The split's **only** accepted source is `factory.bareLegMins(basket, amountIn)`, passed through untouched — `mint-funding.ts` is the sole producer, and it is the basket's OWN lineage factory that is asked. **Never derive it from target weights:** on a basket with a starved leg that cost a $10,000 buyer $5,745 (their `FirstMintStarveEconomics` measurement).
+- A **pre-packing deployment** (the lens answers unpacked, or lacks the function) reads the whole word as the floor, so its payload carries **no** split — that is that generation's correct shape, not a fallback. A read that did not land is **not** treated as a pre-packing deployment: the buy refuses and says to retry.
+- The **first mint** carries no split either (the lens reverts `MissingHookData` at supply 0). ⚠ On a packing deployment that means a first mint fails closed (`FirstMintUnderValued`) until the owner decides where a first mint's split may come from — the only number available then is the deployer's seed weights, i.e. the shape the rule above forbids.
 
 **SECURITY INVARIANT — stated affirmatively: per-leg minimums are ALWAYS derived from live quotes, and there is NEVER a zero/empty path.**
 
-- `legMins[i] = quotedLeg[i] × (BPS − slippageBps) / BPS`, floor-rounded (`deriveLegMins`). They are always derived from the live per-leg quote captured at sign time.
+- `legMins[i]` floor = `quotedLeg[i] × (BPS − slippageBps) / BPS`, floor-rounded (`deriveLegMins`). Always derived from the live per-leg quote captured at sign time, and priced against the **share the payload funds that leg with** (the split when there is one, else the basket's target weight) so a floor is never unreachable by construction.
 - `encodeMintHookData` **throws** rather than degrade:
-  - empty `quotedLegAmounts` → throws (`"refusing to encode without live per-leg quotes (no zero/empty legMins path exists)"`).
-  - any leg quote `≤ 0` → throws (`"every leg must have a positive live quote at sign time"`).
+  - empty `quotedLegAmounts` → throws (`"refusing to encode without live per-leg quotes"`).
+  - no `funding` stated → throws (`"a buy must state where its per-leg funding split comes from"`).
+  - an all-zero split on a `lens-split` payload → throws (`"the funding split is zero on every leg"`).
+  - a split whose length or range cannot describe this basket → throws.
+  - any funded leg quote `≤ 0` → throws (`"every funded leg must have a positive live quote at sign time"`).
   - any derived leg min that rounds to `0` → throws (`"a derived leg minimum rounded to zero — quote too small to protect; aborting"`).
-- There is **no** zero/empty/placeholder legMins path — not for the first mint, not behind any "disable slippage" toggle (none exists), not as a fallback. Callers without live quotes cannot encode.
+- The one leg that ships a zero floor is one **the lens itself funds with zero** (a holding the basket has none of): the acquire loop skips it, so a floor there is a guaranteed `LegMinNotMet`, and an unfunded leg is never swapped so nothing is left unprotected. Only the chain's own split may declare that; the kit can never decide it.
+- There is otherwise **no** zero/empty/placeholder legMins path — not for the first mint, not behind any "disable slippage" toggle (none exists), not as a fallback. Callers without live quotes cannot encode.
 - **Never add a bypass.** The contract reverting on empty `hookData` is the backstop; the FE must never invite that revert nor work around it. Additionally, the contract mandates a non-zero floor on every swapped leg of the *first* mint — the FE encoder upholds the same intentionality. (The *adequacy* of a floor — independent price source, decimal handling, stale-quote bounds — is an off-chain concern the operator owns; the gate guarantees intentionality, not adequacy.)
 
 **Slippage constants:** `DEFAULT_SLIPPAGE_BPS = 100` (1%), `MAX_SLIPPAGE_BPS = 500` (hard UI cap, 5%), `WARN_SLIPPAGE_BPS = 200` (warn above 2%); `clampSlippageBps` bounds to `[1, 500]`.
 
-**Interface-kickback tag rides here:** `frontend = input.interfaceTag ?? INTERFACE_TAG_ADDRESS ?? zeroAddress`. `address(0)` = no tag → the interface slice is not carved and stays in the post-burn remainder (flowing to creator + holders). The empty default is load-bearing; there is **no** default recipient anywhere. `encodeMintHookData` returns `{ hookData, legMins, minOut, frontend }` — `legMins` is surfaced in the trade review step.
+**Interface-kickback tag rides here:** `frontend = input.interfaceTag ?? INTERFACE_TAG_ADDRESS ?? zeroAddress`. `address(0)` = no tag → the interface slice is not carved and stays in the post-burn remainder (flowing to creator + holders). The empty default is load-bearing; there is **no** default recipient anywhere. `encodeMintHookData` returns `{ hookData, legMins, words, splitBps, minOut, frontend }` — `legMins` (the floors) is surfaced in the trade review step; `words` is what goes on the wire.
 
 ### 3.7 Salt mining (CREATE2 hook-address mask)
 
@@ -387,7 +398,8 @@ File: `src/lib/pools/find-best-pool.ts`. When an asset is added in the builder, 
 | `/launch` | Launch | basket builder (never hidden; only the broadcast is gated) |
 | `/swap` | Swap | **SWAP-gated** (`VITE_ENABLE_SWAP`; redirects home when off — hidden by default); a basket picker (search over all baskets) + the same buy/sell `TradePanel` the Token page mounts. Inert until a `swapRouter` is configured |
 | `/flush` | Flush | **TRADING-gated** (redirects home when off); per-basket fee console — holder claim + the four permissionless cranks, with a basket picker |
-| `/faq`, `/learn` | Faq, Learn | static content |
+| `/learn` | Learn | static content — the explainer **and** the Q&A (`/faq` redirects here) |
+| `/faq` | — | redirect to `/learn` (kept: linked from outside the app) |
 | `/docs`, `/docs/valuation` | Docs | same component, two paths |
 | `/terms`, `/privacy`, `/risk` | Terms, Privacy, Risk | placeholder pages |
 | `/post-deploy-test` | PostDeployTest | **DEV-ONLY** — route + import both null in prod |
@@ -440,9 +452,9 @@ Browser-tab titles come from a `ROUTE_TITLES` map; `/creator/*` falls back to "C
 
 The two flush cranks pay the caller a `CRANK_BOUNTY_BPS` bounty; `claimFees`/`redeemClaims` pay none. (`flushRoutes()` is **removed** — there is no routing table.) Hard-gated: `if (!TRADING_ENABLED) return <Navigate to="/" replace/>` in the page **and** a `TRADING_ENABLED` guard in `useFeeActions` (broadcast refuses regardless of UI state). Inert by default — actions are disabled until a wallet is connected on the right chain on a trading build.
 
-**`/faq`, `/learn` (`pages/Faq.tsx`, `pages/Learn.tsx`).** Static informational copy (both carry quarantined-language banners reminding editors to keep the copy neutral). Learn = 6 sections (basket tokens, the token-is-the-pool mechanism, per-basket immutable fee = creator-set rate + fixed protocol burn + creator remainder, "built without the seam," launch, the PRISM burn mechanism — burn copy uses the routing/in-flight form, never present-tense "burns"). Faq = accordion groups. No data, no gating.
+**`/learn` (`pages/Learn.tsx`).** The one visitor-facing doc surface: 6 explainer sections (basket tokens, the token-is-the-pool mechanism, per-basket immutable fee = creator-set rate + fixed protocol burn + creator remainder, "built without the seam," launch, the PRISM burn mechanism — burn copy uses the routing/in-flight form, never present-tense "burns") followed by the FAQ accordion groups, with an anchor jump-nav at the top. **`/faq` merged in here 2026-08-01** (owner: "so many pages, so many systems — it's very hard for the average person") and now redirects; `pages/Faq.tsx` is deleted. Carries in-source editor notes (not a UI banner) pinning the neutral-language rules for the fee and burn copy. Two facts on this page are READ FROM CONFIG, never hardcoded: the chains this build is wired to and their settlement symbols (`SUPPORTED_CHAIN_IDS` / `chainCfg`) — the old copy said "Base" long after Ethereum and Robinhood were live. No data, no gating beyond the `docs` page key.
 
-**`/docs`, `/docs/valuation` (`pages/Docs.tsx`).** Integrator/developer guide for reading a basket (static NAV views, aggregate-spot cross-check/fallback, per-basket fee ABI, hookData/legMins encoding, in-kind redemption, factory enumeration, direct contract access, gotchas). Copyable code blocks bound to the draft V2 ABI. §10 explicitly states the package ships no contract addresses and points to `OPERATORS.md`. Both routes render the same component. No data, no gating.
+**`/docs`, `/docs/valuation` (`pages/Docs.tsx`).** Integrator/developer guide for reading a basket (static NAV views, aggregate-spot cross-check/fallback, per-basket fee ABI, hookData/legMins encoding, in-kind redemption, factory enumeration, direct contract access, gotchas). Copyable code blocks bound to the draft V2 ABI. §10 explicitly states the package ships no contract addresses and points to `OPERATORS.md`. Both routes render the same component. **Deliberately NOT merged into `/learn`**: this is a different reader (indexers, price feeds, bots), and folding an ABI manual into the beginner page would have made that surface worse rather than simpler. It is reachable from Learn, `/integrate` and the footer — not from the visitor nav. No data, no gating.
 
 **`/terms`, `/privacy`, `/risk` (`Terms.tsx`, `Privacy.tsx`, `Risk.tsx`).** All use `LegalDoc`/`LegalSection` and carry explicit "PLACEHOLDER — not legal advice" banners. Terms includes a placeholder eligibility section (the doc notes a static site cannot enforce it). Risk covers loss/no-guarantees/smart-contract/creator-issuer/concentration-liquidity/pricing-data/exit-mechanics (framed as a mechanical `redeemInKind` swap, never a "fund redemption right"). **These are placeholders to finalize before any public build.** No data, no gating.
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, getAddress, isAddress, type Address, parseAbi } from 'viem'
 import { useAccount, useBalance, useEnsName, usePublicClient, useWriteContract } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
@@ -8,7 +9,7 @@ import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { deploymentFor } from '../../lib/chain/deployments'
 import { clientFor, hasPrivateRpc } from '../../lib/chain/rpc'
 import { starterSuggestionsFor } from '../../lib/chain/starter-suggestions'
-import { findBestPool, isRetryableDetection, PoolDetectionError, Venue, ZERO_POOL_KEY, type BasketRoute } from '../../lib/pools'
+import { findBestPool, PoolDetectionError, rejectedV2Legs, v2LegBlockedMessage } from '../../lib/pools'
 import {
   addAsset,
   adjustWeight,
@@ -17,24 +18,34 @@ import {
   isValid,
   MAX_ASSETS,
   MIN,
+  MIN_ASSETS,
   removeAsset,
   setWeight,
+  SINGLE_ASSET_NOTE,
   STEP,
   sum,
 } from '../../lib/spectrum/weights'
+import { lineageFor } from '../../lib/spectrum/basket-data'
+import {
+  launchSeedReady,
+  launchSplitFromDeployArgs,
+  MIN_FIRST_DEPOSIT_USDC,
+  seedVerdictForLaunch,
+} from '../../lib/spectrum/launch-first-mint'
 import { type FeeConfigInput } from '../../lib/spectrum/abis-v2'
 import { feeSplit, type FeeSplit } from '../../lib/spectrum/fee-model'
-import { LAUNCHER_ADDRESS } from '../../lib/config/operator'
 import { getStoredRef, hasCreatorRefBeenUsed, markCreatorRefUsed } from '../../lib/spectrum/referral'
-import { useFeeBounds, useBasketFees } from '../../lib/spectrum/use-basket-fees'
+import { useFeeBounds } from '../../lib/spectrum/use-basket-fees'
 import { tokenVisual } from '../../lib/spectrum/token-meta'
 import { useTokenColors } from '../../lib/spectrum/use-token-color'
 import { formatPrice, formatUsdCompact, shortAddr } from '../../lib/spectrum/format'
 import { resolveCreator } from '../../lib/spectrum/creator'
 import type { CreatorMetadataInput } from '../../lib/spectrum/creator-metadata'
-import { bumpVersionTicker } from '../../lib/spectrum/versioning'
 import { usePublish } from '../../lib/spectrum/use-publish'
-import { useAllBaskets, useAssetHistory, useBasketData, useCreatorMeta, useDeployPrice } from '../../lib/spectrum/hooks'
+import { useLineageSign } from '../../lib/spectrum/use-lineage-sign'
+import { deriveLauncher, resolveAsset, useVersionSeed, type BuilderAsset } from '../../lib/spectrum/version-seed'
+import { markTickerDeployed } from '../../lib/spectrum/launch-journey'
+import { useAllBaskets, useAssetHistory, useBasketData, useDeployPrice } from '../../lib/spectrum/hooks'
 import { honest24hPct } from '../../lib/spectrum/history'
 import { AssetLogo } from '../AssetLogo'
 import { InfoDot } from '../InfoDot'
@@ -43,6 +54,9 @@ import { BasketBento, type BentoItem } from '../BasketBento'
 import { DeployPortal } from './DeployPortal'
 import { encodeBasketMetaJson, NOTE_KINDS, notesRegistryAbi } from '../../lib/spectrum/profile-registry'
 import { AssetSearch } from './AssetSearch'
+import { routeFeePct } from './CreateAssetPicker'
+import { DuplicateWarning } from './DuplicateWarning'
+import { FeeSplitBar } from './FeeSplitBar'
 import { PopularAssets } from './PopularAssets'
 import { MintOrb, type MintStatus } from './MintOrb'
 import { BasketHealth } from './BasketHealth'
@@ -51,28 +65,12 @@ import { HookForge } from './HookForge'
 import { CompositionBar, WeightStrip } from './WeightStrip'
 import { useDeployBasket } from '../../lib/spectrum/use-deploy'
 
-export interface BuilderAsset {
-  address: string
-  symbol: string
-  decimals: number
-  venueLabel: string
-  depthUsd: number | null
-  warnings: string[]
-  route: BasketRoute
-}
-
-const symbolAbi = [
-  { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-] as const
-
-async function readSymbol(addr: string, chainId: number): Promise<string> {
-  try {
-    const s = await clientFor(chainId).readContract({ address: addr as Address, abi: symbolAbi, functionName: 'symbol' })
-    return (s as string) || shortAddr(addr)
-  } catch {
-    return shortAddr(addr)
-  }
-}
+// BuilderAsset + resolveAsset moved to lib/spectrum/version-seed.ts (the
+// reshape extraction, 2026-08-10): the per-leg live-pool resolution is the
+// shared core of the version seed now. Re-exported so existing importers
+// (BundleForge, PortfolioFlow) keep their path.
+export { resolveAsset } from '../../lib/spectrum/version-seed'
+export type { BuilderAsset } from '../../lib/spectrum/version-seed'
 
 const token0ProbeAbi = parseAbi(['function token0() view returns (address)'])
 /** True when the address is a LIQUIDITY-POOL token (Aerodrome LP, Uni pair…):
@@ -97,22 +95,6 @@ async function isPoolToken(addr: string, chainId: number): Promise<boolean> {
   }
 }
 
-export async function resolveAsset(addr: string, chainId: number, knownSymbol?: string): Promise<BuilderAsset> {
-  const [pool, symbol] = await Promise.all([
-    findBestPool(addr as Address, chainId),
-    knownSymbol ? Promise.resolve(knownSymbol) : readSymbol(addr, chainId),
-  ])
-  return {
-    address: getAddress(addr),
-    symbol,
-    decimals: pool.decimals,
-    venueLabel: pool.best.label,
-    depthUsd: pool.best.depthUsd,
-    warnings: pool.warnings,
-    route: pool.route,
-  }
-}
-
 const DEFAULT_GRAD = 'linear-gradient(135deg, var(--color-cyan), var(--color-violet-bright) 55%, var(--color-magenta))'
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000'
 
@@ -125,14 +107,26 @@ const VERY_LOW_LIQ_USD = 20_000
 const WARN_LIQ_USD = 50_000
 const HEAVY_WEIGHT_PCT = 60
 type LiqTier = 'ok' | 'low' | 'verylow'
+/** UNREADABLE IS NOT OK, AND `!= null` DOES NOT SAY UNREADABLE (2026-08-07,
+ *  the class specallocator hit in pool-safety's own gate). A guard written for
+ *  one spelling of missing lets the other one through: NaN passes `!= null`
+ *  and then fails EVERY `<` comparison, so a depth of unknown shape used to
+ *  clear BOTH warnings here and launch as though the pool were deep. Depth is
+ *  now validated where it enters (finiteUsd in find-best-pool), and these read
+ *  finiteness rather than nullness so the two cannot drift apart again. */
+const readableDepth = (d: number | null): number | null => (typeof d === 'number' && Number.isFinite(d) ? d : null)
 function liqTier(depthUsd: number | null, weightPct: number): LiqTier {
-  if (depthUsd != null && depthUsd < VERY_LOW_LIQ_USD) return 'verylow'
-  if ((depthUsd == null || depthUsd <= WARN_LIQ_USD) && weightPct > HEAVY_WEIGHT_PCT) return 'low'
+  const d = readableDepth(depthUsd)
+  if (d != null && d < VERY_LOW_LIQ_USD) return 'verylow'
+  // d == null covers unreadable as well as absent — both mean "we cannot say
+  // this pool is deep", which is the warning's whole point.
+  if ((d == null || d <= WARN_LIQ_USD) && weightPct > HEAVY_WEIGHT_PCT) return 'low'
   return 'ok'
 }
 // When a pool is flagged, suggest a weight that clears it.
 function suggestedWeight(depthUsd: number | null): number {
-  if (depthUsd != null && depthUsd < VERY_LOW_LIQ_USD) return MIN
+  const d = readableDepth(depthUsd)
+  if (d != null && d < VERY_LOW_LIQ_USD) return MIN
   return Math.min(CAP, HEAVY_WEIGHT_PCT)
 }
 
@@ -183,7 +177,9 @@ function InfoTip({ children }: { children: ReactNode }) {
 // A fee dial: big live value, a spectral-fill range slider spanning the
 // protocol's actual min → max, and endpoint labels. Value flows in/out as the
 // same STRING state the free-typed inputs used, so validation is untouched.
-function FeeSlider({
+// EXPORTED for the bundle publish ceremony (PublishBundleModal) — one fee
+// station, one implementation, per the reuse law.
+export function FeeSlider({
   id,
   label,
   tip,
@@ -401,7 +397,7 @@ function Stepper({ steps, maxStep, current }: { steps: StepState[]; maxStep: num
 // deploy (LAUNCHER_ADDRESS) — NEVER a creator dial. There is no routing table.
 
 /** Whole-% creator-take string ("0".."30") → bps, clamped to the on-chain cap. */
-function creatorShareBpsOf(pctStr: string, maxBps: number): number {
+export function creatorShareBpsOf(pctStr: string, maxBps: number): number {
   const v = parseFloat(pctStr)
   if (!isFinite(v) || v <= 0) return 0
   return Math.min(Math.round(v * 100), maxBps)
@@ -499,16 +495,29 @@ function RowPrice({ chainId, address }: { chainId: number; address: string }) {
  *  deploys, it seeds THIS draft. */
 export function seedLaunchDraft(
   chainId: number,
-  seed: { assets: BuilderAsset[]; weights: number[]; name?: string; symbol?: string },
+  seed: {
+    assets: BuilderAsset[]
+    weights: number[]
+    name?: string
+    symbol?: string
+    /** The create flow's fee station (owner 2026-08-12 addendum): carried into
+     *  the draft so the builder opens with the dials where the user already
+     *  set them. Absent = the old behavior — blank, self-healing to defaults.
+     *  Note the restore law still applies: a zero/empty share re-fills the
+     *  default (owner 2026-07-07 — a deliberate 0 is a this-session choice). */
+    feePct?: string
+    creatorSharePct?: string
+    creatorPayout?: string
+  },
 ): void {
   const d: BuilderDraft = {
     assets: seed.assets,
     weights: seed.weights,
     name: seed.name ?? '',
     symbol: seed.symbol ?? '',
-    feePct: '',
-    creatorSharePct: '',
-    creatorPayout: '',
+    feePct: seed.feePct ?? '',
+    creatorSharePct: seed.creatorSharePct ?? '',
+    creatorPayout: seed.creatorPayout ?? '',
     weightsConfirmed: true,
     basketConfirmed: true,
     maxStep: 6,
@@ -517,6 +526,45 @@ export function seedLaunchDraft(
     localStorage.setItem(draftKey(chainId), JSON.stringify(d))
   } catch {
     /* storage unavailable — the composer's Launch button still navigates */
+  }
+}
+
+/** THE STUDIO DRAFT, MIGRATED FORWARD (the owner live 2026-08-15: "Pick up where
+ *  you left off doesn't work") — the journey's builder drafts now land on the
+ *  modern /create, which only read the composer draft; a studio-era draft was
+ *  invisible there. The Composer calls this at boot when it has no draft of
+ *  its own: newest builder draft across chains, handed over ONCE (the row is
+ *  deleted — the composer persists its own from here, so the journey card
+ *  follows the migrated draft instead of offering the dead one forever). */
+export function takeBuilderDraftForComposer(chainIds: readonly number[]): {
+  chainId: number
+  assets: BuilderAsset[]
+  weights: number[]
+  name: string
+  symbol: string
+  feePct: string
+  creatorSharePct: string
+  creatorPayout: string
+} | null {
+  let best: { chainId: number; d: BuilderDraft } | null = null
+  for (const chainId of chainIds) {
+    const d = loadDraft(chainId)
+    if (d && d.assets.length > 0) {
+      best = { chainId, d }
+      break // drafts carry no timestamp; first configured chain wins
+    }
+  }
+  if (!best) return null
+  clearDraft(best.chainId)
+  return {
+    chainId: best.chainId,
+    assets: best.d.assets,
+    weights: best.d.weights,
+    name: best.d.name ?? '',
+    symbol: best.d.symbol ?? '',
+    feePct: best.d.feePct ?? '',
+    creatorSharePct: best.d.creatorSharePct ?? '',
+    creatorPayout: best.d.creatorPayout ?? '',
   }
 }
 
@@ -560,12 +608,15 @@ export function BasketBuilder({
   // or display names (owner call — see the social-layer plan).
   const { data: ensName } = useEnsName({ address: account, chainId: 1 })
   // Version mode: read the predecessor basket to prefill from (constituents,
-  // weights, fee config + the creator's signed profile text).
+  // weights, fee config). The v1→draft recipe itself lives in useVersionSeed —
+  // ONE implementation, shared with the reshape popup; predData stays read here
+  // too for the "New version of $X" heading (same query key, no extra fetch).
+  // The hook gets the address only while a seed is still owed: once prefillDone
+  // (draft restored / seed consumed) it goes idle instead of re-sweeping pools.
   const predChainId = predecessorChainId ?? chainId
   const { data: predData } = useBasketData(predecessor, predChainId)
-  const { data: predFees } = useBasketFees(predecessor, predChainId)
-  const predMeta = useCreatorMeta(predecessor, predChainId)
   const [prefillDone, setPrefillDone] = useState(false)
+  const versionSeed = useVersionSeed(prefillDone ? null : predecessor, predChainId)
 
   const [assets, setAssets] = useState<BuilderAsset[]>([])
   const [weights, setWeights] = useState<number[]>([])
@@ -629,7 +680,22 @@ export function BasketBuilder({
     if (account && !creatorPayout) setCreatorPayout(account)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account])
-  const payoutValid = isAddress(creatorPayout.trim(), { strict: false })
+  // THE CHECKSUM IS EVIDENCE — READ IT (audit 2026-08-07). This is the one
+  // address a human types by hand that becomes a PERMANENT money destination:
+  // creator fees route there immutably from deploy. It validated with
+  // strict:false and was then passed through viem's getAddress(), which
+  // RE-DERIVES the checksum rather than checking it — so a mixed-case address
+  // with one transposed character passed, was silently re-checksummed into a
+  // valid-looking address, and the fees went to whoever owns it. Meanwhile the
+  // harmless search boxes elsewhere in this flow all use strict:true.
+  //
+  // A lowercase (or all-caps) address carries NO checksum information, so
+  // demanding one there would reject a legitimate paste from a block explorer.
+  // Mixed case means EIP-55 is present, and a present checksum that does not
+  // verify is a typo — the exact case worth catching.
+  const payoutTrimmed = creatorPayout.trim()
+  const payoutHasCase = /[a-f]/.test(payoutTrimmed.slice(2)) && /[A-F]/.test(payoutTrimmed.slice(2))
+  const payoutValid = isAddress(payoutTrimmed, { strict: payoutHasCase })
   // A non-zero take must name a valid payout; a zero take needs no address.
   const creatorTakeValid = creatorShareBps === 0 || payoutValid
   const feeValid = feeInBounds && creatorTakeValid
@@ -645,16 +711,17 @@ export function BasketBuilder({
   // clear. Once they've launched, later deploys revert to the operator launcher.
   const { data: allBaskets } = useAllBaskets()
   const [referrer] = useState<Address | null>(() => getStoredRef())
-  // First-basket gate — default NOT-first until allBaskets has actually LOADED
-  // (audit 2026-07-07: the old `?? []` made a loading state look like "no baskets =
-  // first basket", which could over-credit the referrer on an already-deployed
-  // wallet that deploys before the read resolves).
-  const isFirstBasket = !!account && !!allBaskets && !allBaskets.some((b) => b.deployer?.toLowerCase() === account.toLowerCase())
-  // ...and never credit a SELF-referrer (opened their own share link) as their own
-  // launcher — that just diverts the launcher slice from the operator to themselves.
-  const applyReferrerLauncher =
-    !!referrer && isFirstBasket && !hasCreatorRefBeenUsed() && referrer.toLowerCase() !== account?.toLowerCase()
-  const launcher = ((applyReferrerLauncher ? referrer : LAUNCHER_ADDRESS) ?? ZERO_ADDR) as Address
+  // The derivation itself (first-basket gate that defaults NOT-first while
+  // allBaskets loads · never credit a SELF-referrer · operator fallback) is
+  // deriveLauncher in version-seed.ts — ONE implementation, shared with the
+  // reshape deploy stage. A ReshapeDraft carries the zero address as an
+  // explicit "not derived yet" placeholder; this is where it gets real.
+  const { launcher, appliedReferrer: applyReferrerLauncher } = deriveLauncher({
+    account,
+    allBaskets,
+    referrer,
+    refAlreadyUsed: hasCreatorRefBeenUsed(),
+  })
 
   // Live waterfall the creator sees as they choose — assume a tagging interface
   // (the common case) so their/holders' shown shares are the FLOOR; the launcher
@@ -727,33 +794,21 @@ export function BasketBuilder({
   const queryClient = useQueryClient()
   // Silent lineage-only signature (owner 2026-07-09 ~16:25, adopted REC). Removing
   // the ceremony above also removed the ONLY vehicle that signed `supersedes`, so a
-  // version deploy listed as an unrelated basket. Now the moment a VERSION deploy
-  // succeeds we request exactly one wallet signature over a supersedes-only blob —
-  // no thesis prose, no ceremony UI, publishEnabled stays false. A rejected prompt
-  // is recoverable ("Link previous version" on the basket page). The invalidate
-  // re-runs discovery's tagLineage so the pair collapses into one lineage at once.
-  useEffect(() => {
-    if (!predecessor || !account) return
-    if (!(deploying && deploy.status === 'success' && deploy.token)) return
-    if (publisher.state.status !== 'idle') return
-    void publisher
-      .publish({
-        input: {
-          handle: null,
-          name: null,
-          avatarUrl: null,
-          bannerUrl: null,
-          tagline: null,
-          thesis: null,
-          sectors: [],
-          postUrl: null,
-          supersedes: predecessor,
-        },
-        basket: deploy.token,
-        signer: account,
-      })
-      .then(() => void queryClient.invalidateQueries())
-  }, [account, deploy.status, deploy.token, deploying, predecessor, publisher, queryClient])
+  // version deploy listed as an unrelated basket. The moment a VERSION deploy
+  // succeeds, exactly one wallet signature over a supersedes-only blob — no thesis
+  // prose, no ceremony UI, publishEnabled stays false. A rejected prompt is
+  // recoverable ("Link previous version" on the basket page). The recipe is
+  // useLineageSign — ONE implementation, shared with the reshape popup. It rides
+  // THIS publisher machine (not a private one) because DeployPortal reads it:
+  // silentLineagePending holds the success card until the signature settles, and
+  // Close/Start-over reset it.
+  useLineageSign({
+    predecessor: (predecessor ?? null) as `0x${string}` | null,
+    chainId,
+    newToken: deploy.token ?? null,
+    armed: deploying && deploy.status === 'success',
+    publisher,
+  })
 
   // Launch-time thesis → ON-CHAIN note (lab 2026-07-28). The moment a deploy
   // with thesis text succeeds, prompt exactly ONE setNote tx (SpectrumNotes;
@@ -791,6 +846,35 @@ export function BasketBuilder({
       }
     })()
   }, [account, chainId, deploy.status, deploy.token, deploying, notesRegistry, queryClient, thesis, tagline, sectors, timeHorizon, walletClientPub, writeNoteAsync])
+  // ── the first deposit, collected as part of launching ──────────────────────
+  // Not a later errand on another page: the gap between deploying and depositing
+  // is the window where anyone can make the first deposit instead, with a starved
+  // leg, and cost the next honest buyer 57% of their mint (launch-first-mint.ts).
+  const [seedInput, setSeedInput] = useState('')
+  const [seedWarnAck, setSeedWarnAck] = useState(false)
+  const seedUsd = Number(seedInput)
+  // The split the payload will really fund each leg with. It IS the deploy
+  // arguments' weights here (builder percent × 100 = bps), which is exactly why the
+  // depth guard can run before the basket exists.
+  const seedSplit = useMemo(
+    () => launchSplitFromDeployArgs(weights.map((w) => ({ weight: w * 100 })), weights.length),
+    [weights],
+  )
+  // seedGuard, finally called on something: each leg's share of the deposit against
+  // that leg's own pool depth. A block stops the launch, a warn asks to be seen.
+  const seedVerdict = useMemo(
+    () =>
+      seedSplit
+        ? seedVerdictForLaunch(assets.map((a) => ({ symbol: a.symbol, depthUsd: a.depthUsd })), seedSplit.splitBps, seedUsd)
+        : { blocked: false, verdicts: [], needsAck: false },
+    [assets, seedSplit, seedUsd],
+  )
+  // Fails CLOSED on a split that cannot be built: no split means the guard judged
+  // NOTHING, and an unjudged deposit must not arm a launch. (The weight model already
+  // prevents it, so this is the guard being unskippable rather than a live case.)
+  const seedReady =
+    !!seedSplit && launchSeedReady({ depositUsd: seedUsd, verdict: seedVerdict, acknowledged: seedWarnAck })
+
   // Open the ceremony + kick off the read-only prepare (mine + price + simulate).
   // The on-chain broadcast stays behind the DEPLOY_ENABLED feature flag inside the hook.
   const startDeploy = useCallback(() => {
@@ -806,8 +890,12 @@ export function BasketBuilder({
       assets: assets.map((a) => ({ address: a.address, decimals: a.decimals, route: a.route })),
       weights,
       feeConfig,
+      // The first deposit rides the launch. Where the wallet can batch it is the
+      // same transaction as the deploy, so the fresh basket is never sitting empty
+      // for someone else to first-mint with a starved leg (launch-first-mint.ts).
+      seed: { depositUsd: seedUsd },
     })
-  }, [deploy, name, symbol, assets, weights, feeConfig, applyReferrerLauncher])
+  }, [deploy, name, symbol, assets, weights, feeConfig, applyReferrerLauncher, seedUsd])
   const [basketConfirmed, setBasketConfirmed] = useState(false)
   // The deliberate "Continue" click that ends the weights step and reveals the
   // fee structure + everything below (owner call: break the flow up).
@@ -816,6 +904,12 @@ export function BasketBuilder({
   const [acknowledged, setAcknowledged] = useState(false)
   const [maxStep, setMaxStep] = useState(1)
   const [restored, setRestored] = useState(false)
+  // "Start fresh" discards the recovered draft outright, so it arms first. The
+  // timer is cleared on unmount as well as before every re-arm, so a strip that
+  // disappears mid-countdown strands nothing.
+  const [armedFresh, setArmedFresh] = useState(false)
+  const freshTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(freshTimer.current), [])
   const hydrating = useRef(false)
 
   // On mount + chain switch, restore that chain's saved draft (or reset to empty).
@@ -840,13 +934,20 @@ export function BasketBuilder({
       // community site showed it on a build that scans fine). On restore, drop
       // coverage warnings when THIS build has a private RPC for the chain —
       // point-in-time scan verdicts, re-earned by any re-check/re-add.
+      // …and the mirror image: a route can also be a fossil. A leg saved before
+      // this deployment's venue law carries a stored venue nothing re-checks, so
+      // the leg is STAMPED here, where it appears, with the shared sentence —
+      // silently dropping it would ship a shorter basket (verify pass F4), and
+      // saying nothing would leave the CTA refusing for an invisible reason.
+      const rejected = new Set(rejectedV2Legs(d.assets, chainId).map((a) => a.address.toLowerCase()))
       setAssets(
-        hasPrivateRpc(chainId)
-          ? d.assets.map((a) => ({
-              ...a,
-              warnings: a.warnings.filter((w) => !w.includes('V4 venues were not scanned') && !w.includes('V4 coverage is partial')),
-            }))
-          : d.assets,
+        d.assets.map((a) => {
+          const scrubbed = hasPrivateRpc(chainId)
+            ? a.warnings.filter((w) => !w.includes('V4 venues were not scanned') && !w.includes('V4 coverage is partial'))
+            : a.warnings
+          const blocked = rejected.has(a.address.toLowerCase()) ? v2LegBlockedMessage([a.symbol || a.address]) : null
+          return { ...a, warnings: blocked && !scrubbed.includes(blocked) ? [blocked, ...scrubbed] : scrubbed }
+        }),
       )
       setWeights(d.weights)
       setName(d.name)
@@ -891,105 +992,47 @@ export function BasketBuilder({
   // separate immutable deploy; its link to the predecessor is a deployer-signed
   // `supersedes` claim published with the creator metadata — there is NO on-chain
   // version pointer.
+  //
+  // The recipe (live-pool resolution · weight clamp + remainder-to-largest ·
+  // ticker bump · fee carry) is useVersionSeed — ONE implementation, shared
+  // with the reshape popup. This effect only writes the seed into builder
+  // state, keeping the old postures exactly: the seed waits for the fee read
+  // to SETTLE but never to SUCCEED (a null fee read is best-effort seasoning —
+  // the builder keeps its own visible defaults, and the prefill still lands);
+  // a failed resolution writes NOTHING but the error (the poisoned-draft
+  // guard: a partial name/fees-only prefill autosaved as a draft that wedged
+  // every future visit, 2026-07-07 13:1x); a <2-holdings predecessor stays
+  // silent; an unreadable basket keeps waiting (window-refocus refetch), as
+  // the old data gate did.
   useEffect(() => {
-    // Gate ONLY on the constituent data; wait for the fee query to SETTLE
-    // (undefined = in flight) but never for it to SUCCEED — a null fee read is
-    // best-effort seasoning and must not block the assets/weights prefill (it
-    // once wedged the whole version flow). The old predMeta.isLoading wait was
-    // vestigial: the thesis no longer prefills here (post-deploy popup only).
-    if (prefillDone || !predecessor || !predData || predFees === undefined) return
-    let cancelled = false
-    // Detection availability = the V4 baseline (poolManager); isPoolReady stays
-    // the engine's stricter V2/V3-infra check.
-    const poolReady = !!cfg.poolManager
-    void (async () => {
-      try {
-        const resolved = await Promise.all(
-          predData.holdings.map(async (h) => {
-            try {
-              return await resolveAsset(h.asset, chainId, h.symbol)
-            } catch (e) {
-              // "Could not CHECK" (RPC dropped a venue sweep) is a retry, never
-              // a verdict — dropping the leg here shipped a silently-shorter
-              // version with renormalized weights (verify pass F4). Abort the
-              // whole prefill instead; the catch below says retry.
-              if (poolReady && isRetryableDetection(e)) throw e
-              // No live pool for this leg. If the chain HAS pool infra configured,
-              // the pool is genuinely gone → drop it (a since-dead pool is never
-              // silently kept). If pool detection is unavailable (no factory/pool
-              // config — e.g. a preview / not-yet-deployed build), carry the
-              // predecessor's leg over as-is so the version still prefills; it is
-              // marked 'unverified' and its routing must be re-checked before deploy.
-              if (poolReady) return null
-              try {
-                return {
-                  address: getAddress(h.asset),
-                  symbol: h.symbol,
-                  decimals: h.decimals,
-                  venueLabel: 'unverified',
-                  depthUsd: null,
-                  warnings: ['Routing not re-checked on this build, verify before deploy.'],
-                  route: { venue: Venue.V2, ethPool: ZERO_POOL_KEY, v3Fee: 0, v2Pair: ZERO_ADDR as Address },
-                } as BuilderAsset
-              } catch {
-                return null
-              }
-            }
-          }),
-        )
-        if (cancelled) return
-        const ok = resolved.filter((a): a is BuilderAsset => a !== null)
-        if (ok.length >= 2) {
-          const wByAddr = new Map(predData.holdings.map((h) => [h.asset.toLowerCase(), h.targetWeightPct]))
-          const w = ok.map((a) => Math.max(MIN, Math.round(wByAddr.get(a.address.toLowerCase()) ?? 0)))
-          const total = w.reduce((s, x) => s + x, 0)
-          if (total !== CAP && w.length > 0) {
-            let mi = 0
-            for (let i = 1; i < w.length; i++) if (w[i] > w[mi]) mi = i
-            w[mi] = Math.max(MIN, w[mi] + (CAP - total))
-          }
-          setAssets(ok)
-          setWeights(w)
-          setWeightsConfirmed(true)
-          setBasketConfirmed(isValid(w))
-          setMaxStep(6)
-          setName(predData.name)
-          // Ticker arrives pre-incremented (BLUE→BLUEV2, TBV2→TBV3) — same
-          // ticker is VALID but reads ambiguous on wallets/aggregators once two
-          // versions are live (owner 13:38). A nudge: freely editable below.
-          setSymbol(bumpVersionTicker(predData.symbol))
-          if (predFees) {
-            setFeePct((predFees.basketFeeBps / 100).toFixed(2))
-            setCreatorSharePct((predFees.creatorShareBps / 100).toString())
-            setCreatorPayout(predFees.creatorPayout ?? '')
-          }
-          // (identity is the wallet's ENS/address now — nothing to carry forward)
-        } else if (predData.holdings.length >= 2) {
-          // Legs failed to re-resolve: say so and write NOTHING ELSE — a partial
-          // prefill (name/fees without assets) autosaves as a poisoned draft that
-          // wedges every future visit (2026-07-07 13:1x). Virgin state + the
-          // error = the next load retries cleanly.
-          setError(
-            'Couldn’t re-resolve the predecessor’s constituents against live pools — reload to retry.',
-          )
-        }
-      } catch {
-        // A retryable per-leg refusal aborted the batch: same clean-retry
-        // posture — virgin state, honest message, nothing dropped.
-        if (!cancelled) {
-          setError(
-            'Couldn’t re-check every constituent against live pools (RPC error) — reload to retry.',
-          )
-        }
-      } finally {
-        if (!cancelled) setPrefillDone(true)
+    if (prefillDone || !predecessor) return
+    if (versionSeed.builderLegs && versionSeed.builderWeights && versionSeed.seedName != null && versionSeed.seedSymbol != null) {
+      setAssets(versionSeed.builderLegs)
+      setWeights(versionSeed.builderWeights)
+      setWeightsConfirmed(true)
+      setBasketConfirmed(isValid(versionSeed.builderWeights))
+      setMaxStep(6)
+      setName(versionSeed.seedName)
+      // Ticker arrives KEPT-SAME (owner 2026-08-12: "the default should be to
+      // keep the same ticker") — freely editable below; the note beside the
+      // field states the two-live-versions ambiguity for whoever wants a bump.
+      setSymbol(versionSeed.seedSymbol)
+      if (versionSeed.predFees) {
+        setFeePct((versionSeed.predFees.basketFeeBps / 100).toFixed(2))
+        setCreatorSharePct((versionSeed.predFees.creatorShareBps / 100).toString())
+        setCreatorPayout(versionSeed.predFees.creatorPayout ?? '')
       }
-    })()
-    return () => {
-      cancelled = true
+      // (identity is the wallet's ENS/address now — nothing to carry forward)
+      setPrefillDone(true)
+    } else if (versionSeed.errorKind === 'unresolvable' || versionSeed.errorKind === 'rpc') {
+      setError(versionSeed.error)
+      setPrefillDone(true)
+    } else if (versionSeed.errorKind === 'too-few-holdings') {
+      // Nothing to version and nothing to say — the old builder's exact
+      // silence for a <2-holdings predecessor.
+      setPrefillDone(true)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillDone, predecessor, predData, predFees, predMeta.isLoading, chainId])
+  }, [prefillDone, predecessor, versionSeed])
 
   // Persist the draft as it changes (skip the render that just hydrated it).
   useEffect(() => {
@@ -1019,7 +1062,12 @@ export function BasketBuilder({
 
   // Once the basket actually deploys, drop the saved draft.
   useEffect(() => {
-    if (deploy.status === 'success') clearDraft(chainId, predecessor)
+    if (deploy.status === 'success') {
+      clearDraft(chainId, predecessor)
+      // the deployed-ticker stamp (launch-journey.ts): the resume surfaces
+      // retire this ticker's drafts everywhere, fixtures or lag be damned
+      markTickerDeployed(symbol)
+    }
   }, [deploy.status, chainId, predecessor])
 
   // Discard the draft + reset the builder to a blank slate.
@@ -1068,6 +1116,32 @@ export function BasketBuilder({
         if (await isPoolToken(raw, chainId)) {
           setMinting(null)
           setError('That address is a liquidity-pool token (e.g. an Aerodrome LP), not the asset itself, paste the underlying token\u2019s contract address instead.')
+          setAdding(false)
+          return
+        }
+        // F7 — REFUSE A BASKET TOKEN AS A LEG. The contracts' own feasibility
+        // review (spectrum-contracts/docs/BUNDLE-FEASIBILITY-2026-08-01.md)
+        // flagged this as a LIVE footgun on all three factories and assigned the
+        // kit-side guard here: the constructor accepts any initialized hookless
+        // {ETH, asset} pool, but a basket's REAL liquidity is its hooked
+        // self-pool, which no venue describes. So a basket used as a leg would
+        // be priced and swapped through a separate, thin, unrelated pool — the
+        // wrapper would track that pool, not the leg's NAV. Its buyers eat a
+        // mispriced entry and a manipulable quote. Contract-side F7 rides the
+        // next lineage rev; until then this is the only thing standing in front
+        // of it.
+        //
+        // lineageFor is the right check and already exists: it reads
+        // factory.tokens(addr) across the CURRENT factory and every legacy one,
+        // so a basket from a retired lineage is caught too, and it memoizes.
+        //
+        // A FAILED READ IS NOT A VERDICT (standing guard): if the registries
+        // cannot answer we allow the asset through rather than block a legitimate
+        // token on an RPC hiccup.
+        const basketLineage = await lineageFor(chainId, raw).catch(() => null)
+        if (basketLineage) {
+          setMinting(null)
+          setError('That address is a Spectrum basket, not a plain asset. A basket can\u2019t be a leg of another basket: it would be priced through a thin unrelated pool rather than by what it actually holds, so buyers would get a wrong price. Add the underlying assets instead.')
           setAdding(false)
           return
         }
@@ -1192,8 +1266,25 @@ export function BasketBuilder({
   const weightsValid = isValid(weights)
   const symbolValid = /^[A-Z0-9]{2,11}$/.test(symbol)
   const nameValid = name.trim().length >= 2
-  const enoughAssets = assets.length >= 2
-  const canDeploy = weightsValid && symbolValid && nameValid && enoughAssets && feeValid
+  // ONE asset is a basket (owner 2026-08-13: "for simplicity can't we allow a
+  // basket to just have one asset? since the multi-chain baskets can always
+  // have one asset on one chain and a future upgrade could always add more").
+  // The old ≥2 was our rule, not the factory's — scripts/one-leg-probe.ts
+  // simulates a one-leg deployBasket green on both production factories. What
+  // a single-leg basket IS gets said out loud at Review (SINGLE_ASSET_NOTE)
+  // rather than being prevented.
+  const enoughAssets = assets.length >= MIN_ASSETS
+  const singleAsset = assets.length === 1
+  // ⛔ THE VENUE LAW, AT THE BUTTON (2026-08-13). A leg can carry a venue-2 route
+  // out of a DRAFT SAVED BEFORE THE RULE EXISTED — that is exactly how the
+  // owner's MKR arrived — and detection never re-runs on a restore. So the CTA
+  // asks the shared check directly instead of trusting the stored route, and the
+  // flow refuses in words here rather than dying later at prepare. Empty on
+  // every chain whose contracts accept V2, which is every chain in the shipped
+  // book: production reads exactly as it did.
+  const v2BlockedLegs = rejectedV2Legs(assets, chainId)
+  const venueOk = v2BlockedLegs.length === 0
+  const canDeploy = weightsValid && symbolValid && nameValid && enoughAssets && feeValid && venueOk
   // Live deploy cost — only polled once the basket is deployable. (V2 factories
   // auction it, the new lineage charges a flat fee; the getter is ABI-identical
   // either way, so this code never cares which is deployed.)
@@ -1211,12 +1302,14 @@ export function BasketBuilder({
   const GAS_HEADROOM_WEI = 10_000_000_000_000_000n
   const insufficientEth =
     walletBal != null && deployPrice?.priceWei != null && walletBal.value < deployPrice.priceWei + GAS_HEADROOM_WEI
-  // The launch CTA also requires the deployer acknowledgment (Deploy-step checkbox).
-  const readyToDeploy = canDeploy && acknowledged && !insufficientEth
+  // The launch CTA also requires the deployer acknowledgment (Deploy-step checkbox)
+  // AND a first deposit the seed guard will let through: launching now includes
+  // making that deposit, so a launch that cannot make it is not ready.
+  const readyToDeploy = canDeploy && acknowledged && !insufficientEth && seedReady
 
   // Naming guidance, not enforcement: the protocol does not censor names; names
   // implying a regulated product are the deployer's own legal risk.
-  const nameRiskHint = /\b(fund|etf|index)\b/i.test(`${name} ${symbol}`)
+  const nameRiskHint = /\b(fund|etf|index)\b/i.test(`${name} ${showSymbol(symbol)}`)
 
   // Progressive reveal: the highest stage the basket has earned (monotonic).
   const level =
@@ -1248,9 +1341,10 @@ export function BasketBuilder({
   // any frontier move (a step completed / reopened) snaps the view back to it.
   const [wizardPin, setWizardPin] = useState<number | null>(null)
   useEffect(() => setWizardPin(null), [currentStep])
-  // Step 1 does NOT auto-advance at two assets (owner 2026-07-29): the wizard
-  // holds until the explicit Continue click. Restored drafts that already
-  // progressed (weights confirmed etc.) skip the hold.
+  // Step 1 does NOT auto-advance once the basket is deployable (owner
+  // 2026-07-29 — said of the two-asset floor, and the reason survives it): the
+  // wizard holds until the explicit Continue click. Restored drafts that
+  // already progressed (weights confirmed etc.) skip the hold.
   const [assetsConfirmed, setAssetsConfirmed] = useState(false)
   useEffect(() => {
     if (weightsConfirmed || basketConfirmed) setAssetsConfirmed(true)
@@ -1282,7 +1376,7 @@ export function BasketBuilder({
         {predecessor && (
           <div className="rounded-xl border border-white/12 bg-white/[0.03] px-4 py-3">
             <div className="font-mono text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--color-violet-bright)' }}>
-              ↻ New version{predData?.symbol ? ` of $${predData.symbol}` : ''}
+              ↻ New version{predData?.symbol ? ` of $${showSymbol(predData.symbol)}` : ''}
             </div>
             <p className="mt-1 font-mono text-[11px] leading-relaxed text-ink-dim">
               Constituents, weights and fee config are prefilled below, edit anything, then deploy a new
@@ -1298,12 +1392,29 @@ export function BasketBuilder({
               ↻ Picked up your saved draft
             </span>
             <div className="flex items-center gap-4">
+              {/* TWO PRESSES, because one press threw the draft away (2026-08-07).
+                  This is an unpadded 11px text link sitting ~16px from the ✕ that
+                  merely DISMISSES the strip — adjacent controls, opposite
+                  consequences, and the destructive one was the easier miss. Same
+                  arm-then-confirm the wallet unlink uses, auto-disarming so a
+                  forgotten arm never waits around for a stray tap. */}
               <button
                 type="button"
-                onClick={startFresh}
-                className="press font-mono text-[11px] uppercase tracking-[0.14em] text-ink-dim underline-offset-4 hover:text-ink hover:underline"
+                onClick={() => {
+                  if (armedFresh) {
+                    setArmedFresh(false)
+                    startFresh()
+                    return
+                  }
+                  setArmedFresh(true)
+                  window.clearTimeout(freshTimer.current)
+                  freshTimer.current = window.setTimeout(() => setArmedFresh(false), 3000)
+                }}
+                className={`press min-h-[36px] px-1 font-mono text-[11px] uppercase tracking-[0.14em] underline-offset-4 hover:underline ${
+                  armedFresh ? 'text-magenta' : 'text-ink-dim hover:text-ink'
+                }`}
               >
-                Start fresh
+                {armedFresh ? 'Discard it — press again' : 'Start fresh'}
               </button>
               <button
                 type="button"
@@ -1365,10 +1476,10 @@ export function BasketBuilder({
                   className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] py-1.5 pl-1.5 pr-2.5"
                 >
                   <AssetLogo address={a.address} symbol={a.symbol} chainId={chainId} size={22} />
-                  <span className="font-mono text-xs font-semibold text-ink">{a.symbol}</span>
+                  <span className="font-mono text-xs font-semibold text-ink">{showSymbol(a.symbol)}</span>
                   <button
                     type="button"
-                    aria-label={`Remove ${a.symbol}`}
+                    aria-label={`Remove ${showSymbol(a.symbol)}`}
                     onClick={() => remove(i)}
                     className="press font-mono text-[11px] text-ink-faint hover:text-magenta"
                   >
@@ -1376,9 +1487,9 @@ export function BasketBuilder({
                   </button>
                 </span>
               ))}
-              {assets.length < 2 ? (
+              {!enoughAssets ? (
                 <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                  add {2 - assets.length} more to continue
+                  add an asset to continue
                 </span>
               ) : (
                 <button
@@ -1470,9 +1581,13 @@ export function BasketBuilder({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate font-display text-sm font-bold uppercase tracking-wide text-ink">{a.symbol}</span>
+                        <span className="truncate font-display text-sm font-bold uppercase tracking-wide text-ink">{showSymbol(a.symbol)}</span>
                         <span className="shrink-0 rounded border border-white/12 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-ink-dim">
+                          {/* the fee tier joins the venue (the owner 2026-08-13:
+                              "take V3 · 0.3% fee and surface it") — stated only
+                              where the route states one, never guessed */}
                           {a.venueLabel.replace('Uniswap ', '')}
+                          {routeFeePct(a.route) != null ? ` · ${routeFeePct(a.route)}%` : ''}
                         </span>
                         {tier !== 'ok' && (
                           <span
@@ -1493,7 +1608,7 @@ export function BasketBuilder({
                     <div className="flex shrink-0 items-center overflow-hidden rounded-xl border border-white/15 bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
                       <button
                         type="button"
-                        aria-label={`Decrease ${a.symbol} weight`}
+                        aria-label={`Decrease ${showSymbol(a.symbol)} weight`}
                         onClick={() => bump(i, -STEP)}
                         disabled={w <= MIN}
                         className="press grid h-10 w-10 place-items-center font-num text-lg font-medium leading-none text-ink-dim hover:bg-white/10 hover:text-cyan active:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-ink-dim"
@@ -1503,7 +1618,7 @@ export function BasketBuilder({
                       <WeightInput value={w} onCommit={(v) => setW(i, v)} label={a.symbol} />
                       <button
                         type="button"
-                        aria-label={`Increase ${a.symbol} weight`}
+                        aria-label={`Increase ${showSymbol(a.symbol)} weight`}
                         onClick={() => bump(i, STEP)}
                         className="press grid h-10 w-10 place-items-center font-num text-lg font-medium leading-none text-ink-dim hover:bg-white/10 hover:text-cyan active:bg-white/[0.14]"
                       >
@@ -1513,7 +1628,7 @@ export function BasketBuilder({
 
                     <button
                       type="button"
-                      aria-label={`Remove ${a.symbol}`}
+                      aria-label={`Remove ${showSymbol(a.symbol)}`}
                       onClick={() => remove(i)}
                       className="press grid h-10 w-10 shrink-0 place-items-center rounded-lg text-base text-ink-dim hover:bg-white/8 hover:text-alert"
                     >
@@ -1614,7 +1729,7 @@ export function BasketBuilder({
                   width: `${((weights[i] ?? 0) / (total > 0 ? total : 1)) * 100}%`,
                   background: tokenVisual(a.symbol, a.address).color,
                 }}
-                title={`${a.symbol} · ${weights[i] ?? 0}%`}
+                title={`${showSymbol(a.symbol)} · ${weights[i] ?? 0}%`}
               />
             ))}
           </div>
@@ -1739,6 +1854,12 @@ export function BasketBuilder({
             </div>
           </div>
 
+          {/* who gets what — the split drawn live against the two sliders
+              (owner 2026-08-12: simple, visual; the mental math retired) */}
+          <div className="mt-6">
+            <FeeSplitBar creatorShareBps={creatorShareBps} leagueBps={deploymentFor(chainId).leagueShareBps} />
+          </div>
+
           {/* creator payout — only required/shown when the creator takes a share.
               LOUD until filled (owner 2026-07-29: it must be OBVIOUS this blocks
               the launch): amber ring + REQUIRED chip while empty, calm once valid. */}
@@ -1777,9 +1898,17 @@ export function BasketBuilder({
               </div>
               {!payoutValid && (
                 <p className="mt-1.5 font-mono text-xs text-alert">
-                  {creatorPayout
-                    ? 'That is not a valid address (0x…).'
-                    : 'Your take is above 0%, so the launch needs an address to pay it to — paste one or use your connected address.'}
+                  {!creatorPayout
+                    ? 'Your take is above 0%, so the launch needs an address to pay it to — paste one or use your connected address.'
+                    : /* A CHECKSUM FAILURE IS NOT "not an address" (audit
+                         2026-08-07). It is well-formed and looks right, which is
+                         why the generic wording left people staring at it. The
+                         mixed case IS a checksum, and a checksum that does not
+                         verify means a character moved — the one message that
+                         tells them what to actually look for. */
+                      payoutHasCase && isAddress(payoutTrimmed, { strict: false })
+                      ? 'That address is the right shape but its checksum does not match — a character is off. Re-copy it from your wallet; fees route here permanently.'
+                      : 'That is not a valid address (0x…).'}
                 </p>
               )}
             </div>
@@ -1810,6 +1939,15 @@ export function BasketBuilder({
           show={maxStep >= 4 && stepVisible(4)}
           complete={basketConfirmed}
         >
+          {/* A one-asset basket is allowed (owner 2026-08-13) and is therefore
+              DESCRIBED, not prevented: it tracks its asset instead of spreading
+              risk, and the creator fee is unchanged. Stated once, here, where
+              the other fee facts are — a buyer is owed it. */}
+          {singleAsset && (
+            <p className="mb-4 border-l-2 border-white/15 pl-3 font-mono text-[12px] leading-relaxed text-ink-dim">
+              {SINGLE_ASSET_NOTE}
+            </p>
+          )}
           {/* What you see is what deploys: render the fee facts exactly as the
               Token page's FeePanel will show them post-launch. */}
           {feeValid && feeBps != null && (
@@ -1862,7 +2000,7 @@ export function BasketBuilder({
               </button>
               {!(enoughAssets && weightsValid && feeValid) && (
                 <p className="mt-2 text-center font-mono text-xs text-ink-dim">
-                  Add at least 2 assets balanced to 100%, and complete the fee config.
+                  Add at least one asset balanced to 100%, and complete the fee config.
                 </p>
               )}
             </>
@@ -1930,15 +2068,25 @@ export function BasketBuilder({
                 </div>
               </div>
             </div>
-            {/* Version-mode ticker nudge (owner 13:38): recommendation, never a rule. */}
+            {/* Version-mode ticker note — keep-same is the default (owner
+                2026-08-12); the ambiguity fact stays stated for whoever wants
+                a versioned bump instead. */}
             {predecessor && (
               <p className="mt-2 font-mono text-xs leading-relaxed text-ink-dim">
-                We recommend a versioned ticker (prefilled above) — wallets and aggregators list
-                every version under its ticker, so a new number keeps buyers on the right one.
-                The name can stay the same.
+                The ticker stays the same by default. Wallets and aggregators list every version
+                under its ticker, so if you’d rather keep buyers visibly apart, give this version
+                a new one — the name can stay the same either way.
               </p>
             )}
           </div>
+
+          {/* "Is this already out there?" — the duplicate check before paying
+              (journey round, greenlit 2026-08-13). A warning with a link,
+              never a block; renders nothing until a name/ticker/mix collides. */}
+          <DuplicateWarning
+            candidate={{ chainId, name, symbol, assets: assets.map((a, i) => ({ address: a.address, weightPct: weights[i] ?? 0 })) }}
+            className="mt-3"
+          />
 
           {/* THE STORY — one optional group, deliberately light (owner
               2026-07-29: "make this all easier to read and lighter"). R's design
@@ -2090,14 +2238,14 @@ export function BasketBuilder({
             <div className="min-w-0">
               <div className="truncate font-display text-base font-bold uppercase tracking-tight text-ink">{name || 'Your basket'}</div>
               <div className="font-mono text-[13px] uppercase tracking-[0.15em] text-ink-dim">
-                {symbol ? `$${symbol} · ` : ''}
-                {assets.length} assets · starts at $1.00
+                {symbol ? `$${showSymbol(symbol)} · ` : ''}
+                {assets.length} {assets.length === 1 ? 'asset' : 'assets'} · starts at $1.00
               </div>
             </div>
           </div>
 
           <ul className="mt-5 grid grid-cols-2 gap-x-4 gap-y-2">
-            <Check ok={enoughAssets}>At least 2 assets</Check>
+            <Check ok={enoughAssets}>At least one asset</Check>
             <Check ok={weightsValid}>Weights balanced</Check>
             <Check ok={feeValid}>Fee config complete</Check>
             <Check ok={nameValid}>Basket name set</Check>
@@ -2119,6 +2267,78 @@ export function BasketBuilder({
           )}
 
           <HookForge status={deploy.status} attempts={deploy.attempts} predicted={deploy.predicted} />
+
+          {/* ── First deposit ─────────────────────────────────────────────────
+              Part of launching, not a later errand. A basket that exists and holds
+              nothing can be first-funded by anyone, and whoever does it chooses how
+              their money splits across the holdings, so a deliberately starved leg
+              costs the next buyer most of what they put in. Buying first removes
+              that entirely. Deliberately NO suggested amount anchored here (R
+              2026-07-06: "don't surface the minimum… you don't want to anchor low");
+              the contract's own 10 USDC floor is only named when they go under it. */}
+          <div className="mt-5 rounded-xl border border-white/12 bg-white/[0.02] p-4">
+            <label className="block">
+              <span className="font-display text-base font-bold tracking-tight text-ink">
+                Your first deposit
+              </span>
+              <p className="mt-1 text-sm leading-relaxed text-ink-dim">
+                This buys the holdings and makes ${symbol || 'your basket'} tradable. It goes through with
+                the launch itself, so nobody else can put money in first.
+              </p>
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-white/12 bg-black/45 px-3 py-2.5 focus-within:border-cyan/60">
+                <input
+                  value={seedInput}
+                  onChange={(e) => setSeedInput(e.target.value.replace(/[^0-9.]/g, ''))}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  aria-label={`First deposit in ${cfg.usdcSymbol}`}
+                  className="min-w-0 flex-1 bg-transparent font-num text-lg tabular-nums text-ink outline-none placeholder:text-ink-faint"
+                />
+                <span className="shrink-0 font-mono text-xs uppercase tracking-[0.15em] text-ink-dim">
+                  {cfg.usdcSymbol}
+                </span>
+              </div>
+            </label>
+            {seedInput.trim() !== '' && seedUsd > 0 && seedUsd < MIN_FIRST_DEPOSIT_USDC && (
+              <p className="mt-2 font-mono text-[11px] text-amber-200/90">
+                The first deposit has to be at least {MIN_FIRST_DEPOSIT_USDC} {cfg.usdcSymbol}.
+              </p>
+            )}
+            {seedVerdict.verdicts.length > 0 && (
+              <ul className="mt-3 space-y-2">
+                {seedVerdict.verdicts.map((v) => (
+                  <li
+                    key={`${v.symbol}-${v.code}`}
+                    className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${
+                      v.severity === 'block'
+                        ? 'border-alert/40 bg-alert/[0.07] text-alert'
+                        : 'border-amber-400/30 bg-amber-400/[0.06] text-amber-200/90'
+                    }`}
+                  >
+                    {v.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {seedVerdict.blocked && (
+              <p className="mt-2 text-sm leading-relaxed text-alert">
+                Lower the deposit, or give that holding a smaller share of the basket, and this clears.
+              </p>
+            )}
+            {seedVerdict.needsAck && (
+              <label className="mt-3 flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={seedWarnAck}
+                  onChange={(e) => setSeedWarnAck(e.target.checked)}
+                  className="mt-0.5 h-5 w-5 shrink-0 accent-amber-300"
+                />
+                <span className="text-sm leading-relaxed text-ink-dim">
+                  I have read that and want to deposit this amount anyway.
+                </span>
+              </label>
+            )}
+          </div>
 
           {/* Deployer self-attestation — required before the launch CTA below. The
               deployer-is-issuer acknowledgment must survive every refactor.
@@ -2153,7 +2373,7 @@ export function BasketBuilder({
         >
           <div className={readyToDeploy ? 'text-black' : 'text-ink-dim'}>
             <div className="font-display text-2xl font-bold uppercase leading-none tracking-tight sm:text-3xl">
-              Ready to launch {symbol ? `$${symbol}` : 'your basket'}?
+              Ready to launch {symbol ? `$${showSymbol(symbol)}` : 'your basket'}?
             </div>
             <div className="mt-2 font-mono text-[13px] uppercase tracking-[0.15em] opacity-80">
               {assets.length} {assets.length === 1 ? 'asset' : 'assets'} · starts at $1.00 NAV
@@ -2186,9 +2406,47 @@ export function BasketBuilder({
           </div>
         </div>
         )}
-        {(!wizard || viewStep === 6) && canDeploy && !acknowledged && !insufficientEth && (
+        {/* THE OTHER HALF OF "WHY IS THIS OFF" (2026-08-07). The line below was
+            gated on canDeploy being TRUE, so it only ever explained the seed and
+            acknowledgment gates — the five gates that make up canDeploy itself
+            (weights, ticker, name, asset count, fee) turned the one button that
+            costs money grey and said nothing at all. Step 5 has no inline
+            validation either, and `Step` only renders a tick, so a 1-character
+            ticker or unbalanced weights was a dead button and a hunt. Reasons
+            are listed rather than ranked: fixing one and finding another
+            silently waiting is its own small betrayal. */}
+        {/* The rejected venue gets its OWN line, in the shared sentence, above the
+            list of missing pieces — it is not a piece you are missing, it is a leg
+            the contracts will refuse, and it names which leg and what to do. */}
+        {(!wizard || viewStep === 6) && !venueOk && (
+          <p className="text-center font-mono text-xs text-amber-300">
+            {v2LegBlockedMessage(v2BlockedLegs.map((a) => a.symbol || a.address))}
+          </p>
+        )}
+        {(!wizard || viewStep === 6) && !canDeploy && (
           <p className="text-center font-mono text-xs text-ink-dim">
-            Check the creator acknowledgment in step 6 to enable deploy.
+            Deploy needs{' '}
+            {[
+              !enoughAssets && 'at least one asset',
+              !weightsValid && 'weights that total 100%',
+              !nameValid && 'a name of two characters or more',
+              !symbolValid && 'a ticker of 2–11 capitals or digits',
+              !feeValid && 'a fee inside the allowed range',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            .
+          </p>
+        )}
+        {(!wizard || viewStep === 6) && canDeploy && !insufficientEth && !readyToDeploy && (
+          <p className="text-center font-mono text-xs text-ink-dim">
+            {!seedReady
+              ? seedVerdict.blocked
+                ? 'Clear the first-deposit warning in step 6 to enable deploy.'
+                : seedVerdict.needsAck
+                  ? 'Confirm the first-deposit note in step 6 to enable deploy.'
+                  : 'Set your first deposit in step 6 to enable deploy.'
+              : 'Check the creator acknowledgment in step 6 to enable deploy.'}
           </p>
         )}
 
@@ -2256,6 +2514,7 @@ export function BasketBuilder({
         deploy={{
           status: deploy.status,
           attempts: deploy.attempts,
+          mining: deploy.mining,
           predicted: deploy.predicted,
           priceWei: deploy.priceWei,
           txHash: deploy.txHash,
@@ -2263,6 +2522,12 @@ export function BasketBuilder({
           error: deploy.error,
           enabled: deploy.enabled,
           onSign: () => void deploy.broadcast(),
+          canBatch: deploy.canBatch,
+          hasSeed: deploy.hasSeed,
+          seeded: deploy.seeded,
+          seedTxHash: deploy.seedTxHash,
+          seedError: deploy.seedError,
+          onSeed: () => void deploy.seedNow(),
         }}
         publish={{
           enabled: publishEnabled,

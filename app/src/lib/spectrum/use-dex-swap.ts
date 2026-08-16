@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { showSymbol } from './safe-copy'
 import { useAccount, usePublicClient, useSendTransaction, useWriteContract } from 'wagmi'
 import { encodeFunctionData, formatUnits, parseEventLogs, type Address, type Hex } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
 import { chainCfg } from '../chain/chains'
-import { deploymentFor } from '../chain/deployments'
+import { deploymentFor, settlementDecimalsFor } from '../chain/deployments'
+import { verifiedSettlementDecimals } from './settlement-verify'
 import { clientFor } from '../chain/rpc'
 import { SWAP_ENABLED } from '../config/features'
 import type { BasketData } from './basket-data'
@@ -14,6 +16,9 @@ import type { HubToken as HubTokenT, PayToken as PayTokenT } from './pay-token'
 import { getStoredRef } from './referral'
 import { erc20ApproveAbi, erc20BalanceAbi, swapRouterAbi } from './abis-v2'
 import { simulateSwapOut } from './swap-sim'
+import { firstMintShapeGapSentence, fundingSplitBpsOf, lensFactoryFor, resolveMintFunding, type MintFundingPlan } from './mint-funding'
+import { firstMintSplitFromWeights } from './first-mint-split'
+import { legWeightsBpsOf } from './basket-data'
 import type { Side } from './use-basket-swap'
 
 // ERC-20 Transfer event — used to measure what a swap ACTUALLY delivered from its
@@ -33,6 +38,7 @@ import { bestExactInTier, minOutFor, quoteBuyLegFills, swapRouter02Abi } from '.
 import { approvalPlan } from './migrate-math'
 import { gasWithHeadroom } from './gas'
 import { friendlyRevert } from './decode-revert'
+import { shownFloorMismatch, type ShownFloor } from './shown-floor'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The /swap page's DEX-style route executor: pay with ETH / WETH / USDC (or a
@@ -69,7 +75,6 @@ export type DexDirection = 'buy' | 'sell'
 /** SwapRouter02's ADDRESS_THIS sentinel — keeps the hop's WETH in the router so
  *  the batched unwrapWETH9 can pay out native ETH. */
 const ADDRESS_THIS = '0x0000000000000000000000000000000000000002' as Address
-const USDC_DECIMALS = 6
 
 export type DexTxStatus = 'idle' | 'signing' | 'confirming' | 'success' | 'error'
 export interface DexTxState {
@@ -86,6 +91,17 @@ export interface DexQuote {
   outRaw: bigint
   /** Binding floor on the receive side, raw. */
   minOutRaw: bigint
+  /** WHERE minOutRaw CAME FROM, because it changes what we are entitled to
+   *  promise about it (audit 2026-08-07).
+   *  'simulated' — a haircut on a real simulated fill; what the user reads is
+   *  what the execution aims to hold.
+   *  'nav' — the frictionless NAV estimate, used when no simulation was
+   *  available. It knowingly ignores the two-hop acquisition cost, so it sits
+   *  ABOVE what the mint can deliver, and the execute path REPLACES it with a
+   *  probe-derived floor at signing (the aggregate-floor block in `run`).
+   *  Printing it as a firm "Minimum received" promises protection we do not
+   *  sign, so the card is told which one it is holding. */
+  floorBasis: 'simulated' | 'nav'
   /** The USDC that crosses the basket leg (est.), raw 6dp. */
   usdcLegRaw: bigint
   /** Hub-leg fee tier when a hub swap is involved (display). */
@@ -112,6 +128,9 @@ export function useDexSwap(
   const erc20Pay = pay.kind === 'erc20' ? pay : null
   const cfg = chainCfg(chainId)
   const dep = deploymentFor(chainId)
+  // Settlement decimals from the deployment book (INFO-1) — quotes, floats and
+  // floors on this hook all read the chain's own value, never a hardcoded 6.
+  const settlementDecimals = settlementDecimalsFor(chainId)
   const { address, isConnected, chainId: walletChainId } = useAccount()
   const publicClient = usePublicClient({ chainId })
   const { writeContractAsync } = useWriteContract()
@@ -140,7 +159,35 @@ export function useDexSwap(
   // swap-quote.ts with the token panel and had the identical break: frictionless
   // floors reverted sells above ~5 shares and buys at EVERY size (see swap-sim.ts).
   // undefined ⇒ buildSwapQuote degrades to its estimate; never blocks a route.
-  const simRealised = async (side: Side, amountRaw: bigint): Promise<bigint | undefined> => {
+  // The funding split a buy payload must carry, for THIS amount, straight from the
+  // factory's lens (mint-funding.ts). Throws the refusal as the route's error: a buy with
+  // no split acquires nothing and reverts NoOutput, and a locally-derived split is the
+  // starved-basket exploit. Every buy encode below goes through this first.
+  const mintFundingFor = async (amountIn: bigint): Promise<MintFundingPlan> => {
+    if (!ix) throw new Error('No basket loaded for this route.')
+    // The basket's OWN lineage factory, not the chain's current one: a superseded
+    // basket cannot read a split its retired contracts never had (mint-funding.ts).
+    const factory = await lensFactoryFor(chainId, ix.address as Address)
+    if (!factory) {
+      throw new Error('Could not tell which contracts this basket belongs to. Refresh and try again.')
+    }
+    const plan = await resolveMintFunding(clientFor(chainId), {
+      chainId,
+      factory,
+      basket: ix.address as Address,
+      amountIn,
+      legCount: ix.holdings.length,
+      firstMint: (ix.effectiveSupply ?? 1) === 0,
+    })
+    if (!plan.ok) throw new Error(plan.reason)
+    return plan
+  }
+
+  const simRealised = async (
+    side: Side,
+    amountRaw: bigint,
+    fundingSplitBps?: readonly number[] | null,
+  ): Promise<bigint | undefined> => {
     if (!publicClient || !spectrumRouter || !usdc || !address || !ix || amountRaw <= 0n) return undefined
     const tokenIn = side === 'buy' ? (usdc as Address) : (ix.address as Address)
     const allow = (await publicClient
@@ -160,6 +207,7 @@ export function useDexSwap(
       legCount: ix.holdings.length,
       holder: address,
       allowanceCovers: allow >= amountRaw,
+      fundingSplitBps,
     })
     return out ?? undefined
   }
@@ -283,8 +331,11 @@ export function useDexSwap(
               throw new Error('Uniswap router/quoter not configured for ETH/WETH routes.')
             }
           }
-          const usdcFloat = Number(formatUnits(usdcLegRaw, USDC_DECIMALS))
-          const realisedBuy = await simRealised('buy', usdcLegRaw)
+          const usdcFloat = Number(formatUnits(usdcLegRaw, settlementDecimals))
+          // The quote is priced against the funding the payload will carry, so the
+          // preview and the signed trade cannot disagree about which leg gets what.
+          const quoteSplit = fundingSplitBpsOf((await mintFundingFor(usdcLegRaw)).funding)
+          const realisedBuy = await simRealised('buy', usdcLegRaw, quoteSplit)
           const bq = buildSwapQuote({
             side: 'buy',
             realisedOutRaw: realisedBuy,
@@ -294,14 +345,24 @@ export function useDexSwap(
             slippageBps: slip,
             holdings: ix.holdings,
             basketDecimals: ix.decimals,
+            settlementDecimals,
+            fundingSplitBps: quoteSplit,
           })
           if (seq !== quoteSeq.current) return
           if (!bq) throw new Error('Basket quote unavailable (a leg is unpriced or the amount rounds to zero).')
           // Display estimate: the SIMULATED realised fill when the sim delivered
           // one — NAV math is fee-only and arithmetically cannot show impact, so
           // it reads "paid minus fee" at any size (audit R5). NAV shares stay as
-          // the degrade path; the signed floor is minOutRaw either way, and the
-          // shown figure never dips below it.
+          // the degrade path.
+          //
+          // ⚠ THE OLD CLAIM HERE — "the signed floor is minOutRaw either way" —
+          // WAS NOT TRUE, and it is why the card promised a protection the
+          // signature did not carry (audit 2026-08-07). On a buy the execute
+          // path probes the real mint and signs `minOutFor(real, slip)`, which
+          // is deliberately BELOW a NAV-derived minOutRaw, because a NAV floor
+          // ignores the two-hop acquisition cost and reverts honest buys. So the
+          // floor's basis travels with the quote now and the card says which it
+          // is holding, rather than printing a firm number for both.
           const estShares = (usdcFloat * (1 - feeFrac)) / ix.navPerToken
           const navOutRaw = BigInt(Math.floor(estShares * 10 ** Math.min(ix.decimals, 18)))
           const outRaw = realisedBuy != null && realisedBuy > 0n ? realisedBuy : navOutRaw
@@ -309,6 +370,7 @@ export function useDexSwap(
             amountInRaw,
             outRaw: outRaw > bq.minOutRaw ? outRaw : bq.minOutRaw,
             minOutRaw: bq.minOutRaw,
+            floorBasis: bq.basis,
             usdcLegRaw,
             hubFee,
             legCount: bq.legCount,
@@ -326,6 +388,7 @@ export function useDexSwap(
             slippageBps: slip,
             holdings: ix.holdings,
             basketDecimals: ix.decimals,
+            settlementDecimals,
           })
           if (!bq) throw new Error('Basket quote unavailable.')
           let outRaw = bq.minOutRaw
@@ -372,6 +435,11 @@ export function useDexSwap(
             amountInRaw,
             outRaw,
             minOutRaw: outRaw,
+            // The SELL side signs exactly what it shows: minOutRaw is the
+            // router-enforced floor itself, and nothing re-derives it at click.
+            // It carries the sell quote's own basis so the caveat only ever
+            // appears where the number really is provisional.
+            floorBasis: bq.basis,
             usdcLegRaw: bq.minOutRaw,
             hubFee,
             legCount: bq.legCount,
@@ -398,8 +466,8 @@ export function useDexSwap(
         const list: DexStep[] = []
         if (erc20Pay)
           list.push(
-            { key: 'approve-in', label: `Approve ${erc20Pay.symbol}` },
-            { key: 'hub-in', label: `Swap ${erc20Pay.symbol} → ${usdcSym}` },
+            { key: 'approve-in', label: `Approve ${showSymbol(erc20Pay.symbol)}` },
+            { key: 'hub-in', label: `Swap ${showSymbol(erc20Pay.symbol)} → ${usdcSym}` },
           )
         if (hub === 'ETH') list.push({ key: 'hub-in', label: `Swap ETH → ${usdcSym}` })
         if (hub === 'WETH')
@@ -414,7 +482,7 @@ export function useDexSwap(
       if (erc20Pay)
         list.push(
           { key: 'approve-usdc', label: `Approve ${usdcSym}` },
-          { key: 'hub-out', label: `Swap ${usdcSym} → ${erc20Pay.symbol}` },
+          { key: 'hub-out', label: `Swap ${usdcSym} → ${showSymbol(erc20Pay.symbol)}` },
         )
       else if (hub !== 'USDC')
         list.push(
@@ -427,8 +495,14 @@ export function useDexSwap(
   )
 
   // ── execution ───────────────────────────────────────────────────────────────
+  /** `shown` is the floor AS PAINTED, captured by the card in an effect. It is
+   *  what makes the last gate a real comparison rather than f(x) === f(x): every
+   *  other number in here is rebuilt at click, so the only honest other side has
+   *  to arrive from the render. See lib/spectrum/shown-floor.ts for when it
+   *  binds — passing null is legitimate and common (the details fold ships
+   *  closed), so this is optional by design and not an oversight. */
   const execute = useCallback(
-    async (amountInRaw: bigint, slippageBps: number, feeFrac: number) => {
+    async (amountInRaw: bigint, slippageBps: number, feeFrac: number, shown?: ShownFloor | null) => {
       // Hard stop independent of UI gating — keep through every refactor.
       if (!SWAP_ENABLED) return setError('Buy/sell is disabled on this build (VITE_ENABLE_SWAP).')
       if (!configured || !spectrumRouter || !usdc) return setError('No swap router configured.')
@@ -444,6 +518,17 @@ export function useDexSwap(
       const holder = address
       const basket = ix.address as Address
       const slip = clampSlippageBps(slippageBps)
+
+      // law S2b, console form (SpectrumContracts follow-up 2026-08-16): every
+      // amount/floor below converts at configured settlement decimals — verify
+      // the config against the token itself before any signature
+      try {
+        await verifiedSettlementDecimals(client, chainId, usdc as Address)
+      } catch (e) {
+        runningRef.current = false
+        setRunning(false)
+        return setError(e instanceof Error ? e.message : String(e))
+      }
 
       const approveIfNeeded = async (key: string, token: Address, spender: Address, needed: bigint) => {
         const allowance = await client.readContract({
@@ -587,13 +672,37 @@ export function useDexSwap(
           // Fresh basket seed rule (C-1): the FIRST mint must be ≥ 10 USDC.
           if ((ix.effectiveSupply ?? 1) === 0 && usdcIn < 10_000_000n) {
             throw new Error(
-              `This is $${ix.symbol}'s first buy — it seeds the basket and needs at least 10 ${usdcSym} on the basket leg (got ${formatUnits(usdcIn, 6)}).`,
+              `This is $${showSymbol(ix.symbol)}'s first buy — it seeds the basket and needs at least 10 ${usdcSym} on the basket leg (got ${formatUnits(usdcIn, 6)}).`,
             )
           }
 
           // ── basket leg: floors recomputed off the MEASURED USDC ──
-          const usdcFloat = Number(formatUnits(usdcIn, USDC_DECIMALS))
-          const realisedBuyExec = await simRealised('buy', usdcIn)
+          const usdcFloat = Number(formatUnits(usdcIn, settlementDecimals))
+          // Funding split for the amount that ACTUALLY arrived, not the quoted one: the
+          // split is read per size, and this is the size being signed.
+          const funding = await mintFundingFor(usdcIn)
+          const execSplit = fundingSplitBpsOf(funding.funding)
+          const realisedBuyExec = await simRealised('buy', usdcIn, execSplit)
+          // A first mint that resolved UNSPLIT and would not simulate is either a
+          // genuinely dead route or a packing factory whose deployments entry lost
+          // its packsFundingSplit flag — opposite remedies, identical revert
+          // (FirstMintUnderValued, which reads as pool conditions and once sent a
+          // real operator hunting fee tiers for a config key). Only a probe with the
+          // weights packed can tell them apart, and a first mint is the one place
+          // that probe is lawful (mint-funding.ts names the exception). Diagnose
+          // BEFORE the approval, so the doomed payload never costs a signature.
+          if ((ix.effectiveSupply ?? 1) === 0 && funding.funding.source === 'basket-weights' && realisedBuyExec === undefined) {
+            const weights = await legWeightsBpsOf(ix.address as Address, chainId).catch(() => null)
+            const probeSplit = weights ? firstMintSplitFromWeights(weights, ix.holdings.length) : null
+            const weightsProbe = probeSplit ? await simRealised('buy', usdcIn, probeSplit.splitBps) : undefined
+            const gap = firstMintShapeGapSentence({
+              firstMint: true,
+              funding: funding.funding,
+              resolvedProbeAnswered: false,
+              weightsProbeAnswered: weightsProbe !== undefined && weightsProbe > 0n,
+            })
+            if (gap) throw new Error(gap)
+          }
           const bq = buildSwapQuote({
             side: 'buy',
             realisedOutRaw: realisedBuyExec,
@@ -603,8 +712,27 @@ export function useDexSwap(
             slippageBps: slip,
             holdings: ix.holdings,
             basketDecimals: ix.decimals,
+            settlementDecimals,
+            fundingSplitBps: execSplit,
           })
           if (!bq) throw new Error('Basket quote unavailable at execution — refresh and retry.')
+          // THE LAST GATE, before any approval and before the wallet prompt. The
+          // floor above was rebuilt from a fresh simulation; this is the only
+          // point where it meets the number the user actually read. On the
+          // direct route usdcIn IS amountInRaw, so the two floors are
+          // comparable; on a multi-hop it is the receipt-measured delivery and
+          // the gate stands down by that difference alone.
+          //
+          // ⚠ AND IT BINDS ONLY ON THE DIRECT ROUTE, stated rather than left to
+          // emerge: `shown.quotedInRaw` is the PAY token's raw amount while
+          // `usdcIn` is settlement at 6dp, so on a hub route those are different
+          // tokens at different scales and the equality could never hold. The
+          // gate stood down there for a UNITS reason dressed as an
+          // input-changed reason — right outcome, wrong justification, and a
+          // coverage claim that read stronger than it was.
+          const about = { basket: ix.address as string, chainId, direction: 'buy' as const }
+          const buyGate = hub === 'USDC' ? shownFloorMismatch(shown, usdcIn, bq.minOutRaw, about) : null
+          if (buyGate) throw new Error(buyGate)
           await approveIfNeeded('approve-usdc', usdc, spectrumRouter, usdcIn)
           // Per-leg floors off the REAL acquire route (USDC→ETH→leg), not frictionless
           // spot — so a leg whose pool fee+impact exceeds the flat tolerance no longer
@@ -621,7 +749,9 @@ export function useDexSwap(
               weth,
               ix.holdings.map((h, i) => ({
                 asset: h.asset as Address,
-                weightPct: h.targetWeightPct,
+                // The share of the money this leg will really get: the payload's split
+                // when there is one (bps → percent), else the basket's target weight.
+                weightPct: execSplit ? execSplit[i] / 100 : h.targetWeightPct,
                 isUsdc: h.asset.toLowerCase() === usdc.toLowerCase(),
                 spotAmount: bq.quotedLegAmounts[i],
               })),
@@ -637,7 +767,12 @@ export function useDexSwap(
           // below THAT — a real buffer. Falls back to the NAV floor if the probe can't run.
           let minShares = bq.minOutRaw
           try {
-            const probe = encodeMintHookData({ quotedLegAmounts: legAmounts, slippageBps: slip, minOut: 1n })
+            const probe = encodeMintHookData({
+              quotedLegAmounts: legAmounts,
+              slippageBps: slip,
+              minOut: 1n,
+              funding: funding.funding,
+            })
             const sim = await publicClient.simulateContract({
               account: holder,
               address: spectrumRouter,
@@ -650,6 +785,27 @@ export function useDexSwap(
           } catch {
             /* probe failed — keep the NAV-based floor */
           }
+          // ⚠⚠ THE GATE THAT ACTUALLY MATTERS — against the number being SIGNED.
+          // The check before the approval compares `bq.minOutRaw`, but that is
+          // NOT what gets signed: `minShares` is rebuilt from a fresh probe
+          // twenty lines above, and on the normal path (probe succeeds) the
+          // signed floor is a number nothing had ever compared to the screen
+          // (adversarial review, 2026-08-08). The first version of this gate
+          // closed the defect it was written for on the sell side and left the
+          // buy side open in exactly the shape the module's own header
+          // describes — a floor rebuilt at click, with nothing between it and
+          // the wallet.
+          //
+          // IT RUNS AFTER THE APPROVAL BECAUSE THE APPROVAL IS INSIDE THE
+          // WINDOW BY CONSTRUCTION: the probe needs the allowance to simulate,
+          // so the user's signature and the pool's state both move between the
+          // early gate and this one. A refusal here has cost an approval's gas,
+          // which is real — and strictly cheaper than signing a floor the user
+          // never read. Both gates stay: the early one refuses before spending
+          // anything when the quote has already moved, this one refuses before
+          // signing when the probe moved it afterwards.
+          const signedGate = hub === 'USDC' ? shownFloorMismatch(shown, usdcIn, minShares, about) : null
+          if (signedGate) throw new Error(signedGate)
           const mint = encodeMintHookData({
             quotedLegAmounts: legAmounts,
             slippageBps: slip,
@@ -657,6 +813,7 @@ export function useDexSwap(
             // referral (owner 2026-07-07): a stored ?ref tags this buy's interface
             // slice to the referrer; null → the operator's default tag.
             interfaceTag: getStoredRef(address),
+            funding: funding.funding,
           })
           const buyArgs = {
             account: holder,
@@ -694,8 +851,33 @@ export function useDexSwap(
             slippageBps: slip,
             holdings: ix.holdings,
             basketDecimals: ix.decimals,
+            settlementDecimals,
           })
           if (!bq) throw new Error('Basket quote unavailable at execution — refresh and retry.')
+          // THE LAST GATE (sell side). The input here is the user's own basket
+          // amount and no hop precedes this leg — the hub swap happens AFTER —
+          // so the input is always the quoted one and the gate is live whenever
+          // the fold was open. This is the path where the floor IS the seller's
+          // only protection, so a moved quote must stop rather than resolve.
+          //
+          // ⚠ IT BINDS ONLY ON THE DIRECT ROUTE, and the first version of this
+          // gate did not check that — a defect that REFUSED EVERY NON-USDC SELL
+          // (adversarial review, 2026-08-08). The quote paints `outRaw`, the
+          // FINAL receive-token amount, and on a hub route that is ETH/WETH/an
+          // ERC-20 at its own decimals, while this leg signs `bq.minOutRaw` in
+          // USDC at 6. Comparing them is a units error, not a price check: it
+          // can never agree, so it fired on honest sells and — being sticky per
+          // quote — kept firing on every retry until the user changed an input.
+          //
+          // Where hub !== 'USDC' the painted number is a COMPOSED end-to-end
+          // estimate signed in two places (this leg's USDC floor, then the hub
+          // leg's own floor derived at :894). No single signed value equals it,
+          // so there is nothing here to compare and the gate stands down —
+          // the same reasoning as the multi-hop buy exclusion, for the same
+          // reason: the two sides describe different quantities.
+          const sellAbout = { basket: ix.address as string, chainId, direction: 'sell' as const }
+          const sellGate = hub === 'USDC' ? shownFloorMismatch(shown, amountInRaw, bq.minOutRaw, sellAbout) : null
+          if (sellGate) throw new Error(sellGate)
           await approveIfNeeded('approve-in', basket, spectrumRouter, amountInRaw)
           const redeem = encodeRedeemHookData({ legCount: bq.legCount, minOut: bq.minOutRaw, interfaceTag: getStoredRef(address) })
           patchTx('spectrum', { status: 'signing', error: null })
@@ -737,7 +919,7 @@ export function useDexSwap(
               slippageBps: slip,
             }).catch((e) => {
               throw new Error(
-                `${e instanceof Error ? e.message : 'No route.'} Your ${cfg.usdcSymbol} is in your wallet; convert it manually.`,
+                `${e instanceof Error ? e.message : 'No route.'} Your ${showSymbol(cfg.usdcSymbol)} is in your wallet; convert it manually.`,
               )
             })
             await approveIfNeeded('approve-usdc', usdc, lq.approvalAddress, usdcOut)
@@ -766,7 +948,7 @@ export function useDexSwap(
               slippageBps: slip,
             }).catch((e) => {
               throw new Error(
-                `${e instanceof Error ? e.message : 'No route.'} Your ${cfg.usdcSymbol} is in your wallet; convert it manually.`,
+                `${e instanceof Error ? e.message : 'No route.'} Your ${showSymbol(cfg.usdcSymbol)} is in your wallet; convert it manually.`,
               )
             })
             await approveIfNeeded('approve-usdc', usdc, lq.approvalAddress, usdcOut)
@@ -861,7 +1043,32 @@ export function useDexSwap(
         }
         void queryClient.invalidateQueries()
       } catch (e) {
-        const msg = friendlyRevert(e, e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e))
+        let msg = friendlyRevert(e, e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e))
+        // NAME THE REFUSER (owner 2026-08-15: "it should say explicitly the
+        // ticker/token it has an issue with"). The constituent-refusal class
+        // carries the token's own selector; this basket's legs are known here,
+        // so sweep their BYTECODE for it — the carrier is the refuser. The
+        // same probe that root-caused FWA live, now automatic.
+        const selM = msg.match(/refused this route with its own rule \((0x[0-9a-fA-F]{8})/)
+        if (selM && ix) {
+          try {
+            const sel = selM[1].slice(2).toLowerCase()
+            const carriers = (
+              await Promise.all(
+                ix.holdings.map(async (h) => {
+                  const code = await clientFor(chainId).getCode({ address: h.asset as Address }).catch(() => null)
+                  return code?.toLowerCase().includes(sel) ? h.symbol : null
+                }),
+              )
+            ).filter((x): x is string => !!x)
+            if (carriers.length > 0) {
+              msg = msg.replace('One holding refused', `$${showSymbol(carriers[0])} refused`)
+              if (carriers.length === 1) msg = msg.replace('the mix needs that holding swapped', `the mix needs $${showSymbol(carriers[0])} swapped`)
+            }
+          } catch {
+            /* naming is best-effort — the honest generic sentence stands */
+          }
+        }
         setTxs((s) => {
           const next = { ...s }
           for (const k of Object.keys(next)) {

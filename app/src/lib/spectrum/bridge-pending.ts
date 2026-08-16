@@ -30,6 +30,8 @@ export interface PendingBridge {
   /** Quoted settlement arrival (display; the real figure comes from status). */
   quotedToAmountRaw: bigint
   startedAt: number
+  /** Route ETA in seconds at quote time (display only; absent = unknown). */
+  etaSec?: number
   /** Terminal state, cached once observed so resolved rows stop polling. */
   resolved?:
     | { state: 'done'; toAmount: bigint }

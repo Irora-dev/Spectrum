@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
 import { useAccount } from 'wagmi'
 import { SWAP_ENABLED } from '../lib/config/features'
@@ -61,7 +62,7 @@ export function SeedBasketModal({ ix, chainId }: { ix: BasketData; chainId: numb
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Seed $${ix.symbol}`}
+        aria-label={`Seed $${showSymbol(ix.symbol)}`}
         onClick={(e) => e.stopPropagation()}
         className="search-pop relative my-8 w-full max-w-lg overflow-hidden rounded-3xl card-surface backdrop-blur-md"
       >
@@ -70,7 +71,7 @@ export function SeedBasketModal({ ix, chainId }: { ix: BasketData; chainId: numb
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-teal">✓ Basket created</div>
-              <h2 className="mt-1 font-display text-3xl font-bold tracking-tight text-ink">Now seed ${ix.symbol}</h2>
+              <h2 className="mt-1 font-display text-3xl font-bold tracking-tight text-ink">Now seed ${showSymbol(ix.symbol)}</h2>
             </div>
             <button
               type="button"
@@ -84,7 +85,7 @@ export function SeedBasketModal({ ix, chainId }: { ix: BasketData; chainId: numb
 
           {/* Short + readable (owner 2026-07-07: "less text, bigger text"). */}
           <p className="mt-3 text-base leading-relaxed text-ink-dim">
-            Your first buy initializes the pool, sandwich-protected, and makes ${ix.symbol} tradable —
+            Your first buy initializes the pool, sandwich-protected, and makes ${showSymbol(ix.symbol)} tradable —
             here and on aggregators. Seed it with any amount.
           </p>
 

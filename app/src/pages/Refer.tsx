@@ -1,7 +1,11 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
+import { Link as RouterLink } from 'react-router'
+import { flowHref } from '../lib/spectrum/flow-link'
 import { useAccount, useEnsName } from 'wagmi'
 import { MAINNET_CHAIN_ID } from '../lib/chain/constants'
+import { SUPPORTED_CHAIN_IDS, chainCfg } from '../lib/chain/chains'
 import { WalletButton } from '../components/WalletButton'
 import { ConceptReveal } from '../components/ConceptReveal'
 import { useReferralEarned } from '../components/ReferralCard'
@@ -123,7 +127,18 @@ function HeroLink() {
   }
   const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
   const nativeShare = () => {
-    void navigator.share?.({ title: 'Spectrum', text: 'Trade and launch onchain basket tokens on Spectrum:', url: link }).catch(() => {})
+    // Repositioned per the 2026-08-02 R/C daily (the owner: "it's no longer about
+    // 'refer them to build a basket', it's 'refer them to handle their
+    // portfolio' — it's much more of an easier sell"). Managing what you hold
+    // is the wide door; launching a basket is the thing a few people graduate
+    // into, so it stays named but stops leading.
+    void navigator
+      .share?.({
+        title: 'Spectrum',
+        text: 'Manage your onchain portfolio across networks, and basket it for others when you want to:',
+        url: link,
+      })
+      .catch(() => {})
   }
   return (
     <div className="w-full max-w-xl rounded-2xl border border-cyan/30 bg-cyan/[0.04] p-4 backdrop-blur">
@@ -161,15 +176,32 @@ function HeroLink() {
   )
 }
 
+/** Does ANY configured chain carry a league pool? Build-time truth from the
+ *  deployments book — chains.ts's own contract is "unset -> no /league page, no
+ *  league copy anywhere", so this is what makes the second half true. */
+const ANY_LEAGUE_CHAIN = SUPPORTED_CHAIN_IDS.some((id) => {
+  try {
+    return !!chainCfg(id).leaguePool
+  } catch {
+    return false
+  }
+})
+
 export function Refer() {
   const { address } = useAccount()
-  const { items, total, claimableTotal } = useReferralEarned()
+  const { items, total, claimableTotal, loading: earningsLoading } = useReferralEarned()
   const ca = useClaimAll()
   // Only genuinely flushable pots reach the claim button — a mainnet pot at or
   // under the 10-USDC crank floor is refused by the contract (F-1), so sending
   // it would only confuse (and on the incumbent lineage, strip it to the cranker).
   const flushableItems = items.filter((it) => it.flushable)
-  const canClaim = TRADING_ENABLED && flushableItems.length > 0 && !ca.running
+  // `!ca.running` used to be part of this, which UNMOUNTED the button the
+  // instant it was pressed (QOL 2026-08-07): the sweep then fired a wallet
+  // prompt per pot with nothing on the page saying it was running, and the
+  // button's own "Claiming x/y…" label and disabled state were unreachable
+  // code. Running is a DISABLED state, not an absent one — the classic Earn
+  // card (Portfolio.tsx:268) and PortfolioClaims.tsx:83 both already do that.
+  const canClaim = TRADING_ENABLED && flushableItems.length > 0
   const [modal, setModal] = useState<null | 'buyer' | 'creator' | 'spectrum'>(null)
 
   // Creator earnings belong on this page too (owner 2026-07-30): the accrual
@@ -220,6 +252,17 @@ export function Refer() {
           <div className="mt-9 flex w-full flex-col items-center">
             <HeroLink />
           </div>
+          {/* the earn→create seam (owner ~17:1x): the homepage sends people
+              HERE to learn about the fee — this sends them back to create the
+              thing that earns it. Gated on the flow; never a dead door. */}
+          {flowHref('publish') && (
+            <p className="enter mt-6 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint" style={{ '--enter-i': 3 } as CSSProperties}>
+              the creator fee starts with a basket ·{' '}
+              <RouterLink to="/create" className="text-cyan transition-colors hover:text-ink">
+                create one →
+              </RouterLink>
+            </p>
+          )}
         </div>
       </section>
 
@@ -231,8 +274,13 @@ export function Refer() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan">Claimable · USDC</div>
+              {/* A TOTAL IS NOT AN ANSWER UNTIL THE READS LAND (QOL
+                  2026-08-07). The hook sums `q.data ?? 0`, so mid-flight is
+                  arithmetically identical to nothing-earned — and this page is
+                  SHARED, so a cold load told a referrer with real pending fees
+                  "$0.00" with a straight face. An ellipsis while counting. */}
               <div className="mt-1 font-num text-5xl font-semibold tabular-nums text-ink sm:text-6xl">
-                {TRADING_ENABLED ? fmtUsd(claimableTotal) : '—'}
+                {!TRADING_ENABLED ? '—' : earningsLoading ? '…' : fmtUsd(claimableTotal)}
               </div>
               {/* pots under a chain's crank floor accrue but can't flush yet —
                   count them separately, never inside "claimable" (F-1) */}
@@ -260,7 +308,7 @@ export function Refer() {
               {items.map((it) => (
                 <div key={`${it.chainId}:${it.address}`} className="flex items-center justify-between gap-3 py-2.5">
                   <span className="flex min-w-0 items-baseline gap-2.5">
-                    <span className="font-display text-sm font-bold uppercase tracking-wide text-ink">${it.symbol}</span>
+                    <span className="font-display text-sm font-bold uppercase tracking-wide text-ink">${showSymbol(it.symbol)}</span>
                     {createdKeys.has(`${it.chainId}:${it.address.toLowerCase()}`) && (
                       <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">your basket</span>
                     )}
@@ -283,17 +331,21 @@ export function Refer() {
               {quietCreated.map((b) => (
                 <div key={`q:${b.chainId}:${b.address}`} className="flex items-center justify-between gap-3 py-2.5">
                   <span className="flex min-w-0 items-baseline gap-2.5">
-                    <span className="font-display text-sm font-bold uppercase tracking-wide text-ink-dim">${b.symbol}</span>
+                    <span className="font-display text-sm font-bold uppercase tracking-wide text-ink-dim">${showSymbol(b.symbol)}</span>
                     <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">your basket</span>
                   </span>
                   <span className="font-num text-sm tabular-nums text-ink-faint">{fmtUsd(0)}</span>
                 </div>
               ))}
             </div>
+          ) : earningsLoading ? (
+            /* "nothing yet" is a CLAIM about the chain, and it needs the reads
+               to have finished before it can be made honestly */
+            <p className="mt-4 text-sm text-ink-dim">Checking every basket for fees accrued to you…</p>
           ) : (
             <p className="mt-4 text-sm text-ink-dim">
-              Nothing to claim yet. Share your link, or launch a basket — referral, launcher and creator
-              fees all accrue here.
+              Nothing to claim yet. Share your link with someone managing a portfolio, or launch a
+              basket of your own — referral, launcher and creator fees all accrue here.
             </p>
           )}
 
@@ -307,8 +359,18 @@ export function Refer() {
             {chainsFailed > 0 ? ` ${chainsFailed} network${chainsFailed === 1 ? '' : 's'} unavailable right now — the total may be missing accruals there.` : ''}
             {' '}This total is fee-TAG income only — fees your address earns because a trade, launch or
             basket points at it. Fees you earn as a HOLDER accrue per token to each basket&rsquo;s own
-            reserve and are claimed per basket; they are listed separately below. Crown earnings from
-            the creator league are separate and withdrawable any time, also below.
+            reserve and are claimed per basket; they are listed separately below.
+            {/* THE LEAGUE IS ROBINHOOD-ONLY (the owner ruled 2026-08-04, relayed by
+                SpectrumContracts): mainline src carries ZERO league references, so
+                on Base/Ethereum a creator earns their creator share and NOTHING
+                from a league. This sentence promised crown income on every chain —
+                the dishonest-copy class. Said only where a league pool exists. */}
+            {ANY_LEAGUE_CHAIN && (
+              <>
+                {' '}Crown earnings from the creator league are separate and withdrawable any time,
+                also below.
+              </>
+            )}
           </p>
         </section>
 

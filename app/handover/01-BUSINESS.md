@@ -415,11 +415,12 @@ hypothetical baskets — factual past performance of deployed baskets only.
 
 ### 3.8.1 In-app content — Learn, FAQ, and the integrator Docs
 
-**What it does for the user.** Three shipped, always-on content surfaces that sit alongside the app
-chrome: **Learn** (`/learn`) — six plain-language explainer sections (basket tokens; "the token is
-the pool"; the fee and where it goes; why it's different; anyone can launch one; and the PRISM burn
-mechanism); **FAQ** (`/faq`) — a tap-to-expand accordion of common questions; and **Docs**
-(`/docs`, plus `/docs/valuation`) — a mechanism-factual integrator guide that explains how to read
+**What it does for the user.** Two shipped, always-on content surfaces that sit alongside the app
+chrome, one per reader. **Learn** (`/learn`) — six plain-language explainer sections (basket tokens;
+"the token is the pool"; the fee and where it goes; why it's different; anyone can launch one; and
+the PRISM burn mechanism), followed by the tap-to-expand FAQ accordion in the same page. *(The old
+separate `/faq` merged in here 2026-08-01 and redirects — nobody could guess which of the two held
+their answer.)* And **Docs** (`/docs`, plus `/docs/valuation`) — a mechanism-factual integrator guide that explains how to read
 NAV, the keyless discovery/read model, the no-API-key reads, the V4 pool-detection caveat, and the
 draft V2 ABI to integrate against (*"integrate against the contracts, not against any website"*).
 

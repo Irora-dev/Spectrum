@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { PageHeader } from './PageHeader'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 // Shared chrome for the static legal pages (Terms / Privacy / Risk). Matches the Docs
 // page header pattern.

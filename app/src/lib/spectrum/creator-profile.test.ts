@@ -79,4 +79,21 @@ describe('buildCreatorProfile', () => {
     expect(p.seriesCount).toBe(0)
     expect(p.chains).toEqual([])
   })
+
+  it('counts unknown deployers so a truly-empty profile is distinguishable from an unverifiable one', () => {
+    // A failed registry read leaves deployer null, and any such basket COULD
+    // be this creator's — the page may only assert "published nothing" when
+    // this count is zero. A rate-limited RPC once made the creator page claim
+    // a four-basket creator had published none (found demoing 2026-08-06).
+    const withUnknowns = buildCreatorProfile(ME, [
+      b({ address: '0x99', deployer: OTHER }),
+      b({ address: '0x9a', deployer: null }),
+      b({ address: '0x9b', deployer: null }),
+    ])
+    expect(withUnknowns.basketCount).toBe(0)
+    expect(withUnknowns.unknownDeployerCount).toBe(2)
+    // every deployer known → a zero-basket profile is a REAL "nothing"
+    const allKnown = buildCreatorProfile(ME, [b({ address: '0x99', deployer: OTHER })])
+    expect(allKnown.unknownDeployerCount).toBe(0)
+  })
 })

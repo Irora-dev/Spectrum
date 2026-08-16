@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { useQueries, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAccount, useReadContract } from 'wagmi'
 import type { Address } from 'viem'
 import { basketAbi, erc20BalanceAbi } from '../lib/spectrum/abis-v2'
@@ -162,7 +163,7 @@ export function PositionPnl({
               {usd(balance * navPerToken)}
             </span>
             <span className="font-mono text-[11px] tabular-nums text-ink-dim">
-              {balance.toLocaleString('en-US', { maximumFractionDigits: balance < 1 ? 4 : 2 })}{symbol ? ` $${symbol}` : ' tokens'}
+              {balance.toLocaleString('en-US', { maximumFractionDigits: balance < 1 ? 4 : 2 })}{symbol ? ` $${showSymbol(symbol)}` : ' tokens'}
             </span>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import { shortAddr } from './format'
+import { showName } from './safe-copy'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Creator self-attribution. Priority order: a typed/pasted X (Twitter) handle →
@@ -62,8 +63,16 @@ export function resolveCreator(input: CreatorInput): ResolvedCreator {
   const x = normalizeXHandle(input.handle) ?? normalizeXHandle(input.xUrl)
   if (x) return { label: x.handle, kind: 'x', xUrl: x.url, address: input.deployer ?? null }
 
-  const name = input.name?.trim()
-  if (name) return { label: name, kind: 'name', xUrl: null, address: input.deployer ?? null }
+  // A SELF-CHOSEN NAME MUST NOT BE ABLE TO DRESS AS A VERIFIED HANDLE (audit
+  // 2026-08-07). The 'x' branch above returns a handle verified from the signed
+  // metadata; this branch returns free text the deployer typed, and both render
+  // identically on every card, row and embed — so a deployer who signs
+  // `name: "@spectrumdev"` with no handle is credited as @spectrumdev
+  // everywhere. The leading @ is what does the impersonating, so it is stripped
+  // at the source rather than at each render site, and the text is made inert
+  // on the way out like every other deployer-controlled string.
+  const name = showName(input.name?.trim().replace(/^@+/, '')).trim()
+  if (name && name !== 'unnamed') return { label: name, kind: 'name', xUrl: null, address: input.deployer ?? null }
 
   if (input.deployer)
     return { label: shortAddr(input.deployer), kind: 'address', xUrl: null, address: input.deployer }

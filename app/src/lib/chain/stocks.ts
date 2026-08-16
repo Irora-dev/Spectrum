@@ -12,8 +12,14 @@
 // HERE — they age in hours (AAPL was "USDG-quoted only" when first written;
 // its ETH pool was initialized and basket-proven on launch night 2026-07-30).
 // The deepest liquidity for some tickers remains on USDG-paired pools, which
-// the CLEAN lineage cannot use as legs — that class waits on the separate
-// stocks (V4Q) lineage.
+// the CLEAN lineage cannot use as legs. UPDATED 2026-08-02 (SpectrumContracts):
+// that class no longer waits on a separate stocks fork — V4Q is classed CORE in
+// V3-LINEAGE-SPEC D-V4 and is planned into MAINLINE as the next lineage rev, at
+// which point the standalone stocks fork retires. So USDG-only tickers become
+// venue-3 legs when D-V4 ships as lineage v2, which needs R's spec ratification
+// and is NOT scheduled. Until then the honest line for any user-facing copy is:
+// stocks with ETH-side liquidity are supported; USDG-only stocks come with the
+// next contract lineage.
 //
 // These are issuer-backed tracking tokens (a Robinhood entity's liability),
 // globally pausable, with corporate actions via ERC-8056 uiMultiplier — and

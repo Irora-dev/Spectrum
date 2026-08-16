@@ -1,13 +1,19 @@
+import { Link as RouterLink } from 'react-router'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import brand from '../brand.config'
+import { pageEnabled } from '../theme/brand'
+import { WALLET_ENABLED } from '../lib/config/features'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { formatUnits, isAddress, parseUnits } from 'viem'
-import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
+import { useAccount, useReadContract } from 'wagmi'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { deploymentFor } from '../lib/chain/deployments'
 import type { BasketData } from '../lib/spectrum/basket-data'
 import { useAllBaskets, useBasketData } from '../lib/spectrum/hooks'
 import { useBasketFees } from '../lib/spectrum/use-basket-fees'
-import { useDexSwap, type DexTxState, type HubToken } from '../lib/spectrum/use-dex-swap'
+import { useDexSwap, type DexQuote, type DexTxState, type HubToken } from '../lib/spectrum/use-dex-swap'
+import type { ShownFloor } from '../lib/spectrum/shown-floor'
 import {
   hubPay,
   parseStoredPayToken,
@@ -15,16 +21,21 @@ import {
   serializePayToken,
   type PayToken,
 } from '../lib/spectrum/pay-token'
+import { payTokenFromHoldings } from '../lib/spectrum/pay-prefill'
+import { useRawHoldings } from '../lib/spectrum/use-raw-holdings'
 import { erc20BalanceAbi } from '../lib/spectrum/abis-v2'
 import { clampSlippageBps, DEFAULT_SLIPPAGE_BPS } from '../lib/spectrum/hook-data'
 import { formatNav, formatUsdCompact, shortAddr } from '../lib/spectrum/format'
 import { AssetLogo } from './AssetLogo'
+import { InfoDot } from './InfoDot'
 import { BasketAvatar } from './BasketAvatar'
 import { BridgeBanner, BridgeFund } from './BridgeFund'
+import { appendExec } from '../lib/spectrum/exec-log'
 import { PayTokenPicker } from './PayTokenPicker'
 import { RevertCauses } from './RevertCauses'
 import { SwapPendingOverlay } from './SwapPendingOverlay'
 import { ShareEarnNudge } from './ShareEarnNudge'
+import { useNetworkSwitch, WrongNetworkNotice } from './WrongNetwork'
 import { hasFinePointer } from '../lib/wallet/mobile'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +131,8 @@ export function DexSwapCard({
   initialAmount = null,
   large = false,
   strip = false,
-  defaultHub = 'ETH',
+  defaultHub,
+  payFromHoldings = false,
   onBasketChange,
 }: {
   chainId: number
@@ -136,15 +148,25 @@ export function DexSwapCard({
    *  Same state machine, quotes, guards and overlay — just the strip layout. */
   strip?: boolean
   /** Pay-side token preselected on mount — the seed prompt opens on USDC
-   *  (owner 2026-07-07 13:57); everywhere else stays ETH. */
+   *  (owner 2026-07-07 13:57); everywhere else stays ETH. Left UNSET means the
+   *  host has no opinion, which is what lets the holdings prefill below have
+   *  one; a value here is host context and beats any suggestion. */
   defaultHub?: HubToken
+  /** Opt in to opening the pay side on what the wallet actually holds (owner
+   *  QOL round 2026-08-05). Off by default: it costs a wallet-wide holdings
+   *  read, which only the standalone console is roomy enough to earn — the
+   *  Explore strips and the Token page card stay exactly as cheap as they were. */
+  payFromHoldings?: boolean
   /** Fired when the selected basket changes — lets a host page (the /swap
    *  context panel) follow the console's selection. */
   onBasketChange?: (address: string | null) => void
 }) {
   const cfg = chainCfg(chainId)
-  const { isConnected, chainId: walletChainId } = useAccount()
-  const { switchChain, isPending: switching } = useSwitchChain()
+  const { isConnected } = useAccount()
+  // One switch mutation for the console: the CTA state machine below performs the
+  // switch, the shared notice speaks for it (the 2026-08-05 wrong-network
+  // consolidation — see WrongNetwork.tsx).
+  const netSwitch = useNetworkSwitch(chainId)
   const { data: all } = useAllBaskets()
 
   const heads = useMemo(
@@ -197,7 +219,7 @@ export function DexSwapCard({
     } catch {
       /* privacy mode — fall through to the default */
     }
-    return hubPay(defaultHub)
+    return hubPay(defaultHub ?? 'ETH')
   })
   // The hub view of the pay side (null = a custom ERC-20 riding LiFi).
   const hub: HubToken | null = pay.kind === 'hub' ? pay.hub : null
@@ -264,6 +286,13 @@ export function DexSwapCard({
   // Whether the pending-animation pop-up is showing (opened on execute, dismissed
   // by the user on done/error).
   const [pending, setPending] = useState(false)
+  /** THE FLOOR AS PAINTED — the other half of the displayed-vs-signed gate.
+   *  Written in an effect below (never during render, never in a memo) so it
+   *  holds what was on screen when the user decided, which is the only thing
+   *  worth comparing a click-time recomputation against. Null whenever the
+   *  minimum is not on screen, which is normal: see lib/spectrum/shown-floor.ts
+   *  for why null must mean "no promise made" rather than "refuse". */
+  const shownFloorRef = useRef<ShownFloor | null>(null)
 
   const dex = useDexSwap(ix, dir, pay, chainId)
 
@@ -310,6 +339,90 @@ export function DexSwapCard({
     setPay(hubPay('USDC'))
   }, [viewerUsdc, hub, dir, ix?.effectiveSupply])
 
+  // ── THE CONSOLE KNOWS WHAT YOU HOLD ────────────────────────────────────────
+  // Owner QOL round 2026-08-05, from his own captured idea: the swap page should
+  // interface the portfolio and basket systems and be smart about what you
+  // already have. First step, and deliberately the smallest one: the pay box
+  // OPENS on the wallet's largest priced holding on this network instead of a
+  // static ETH. Form default only — quoting, routing, approvals and slippage are
+  // untouched. The choice itself lives in pay-prefill.ts (pure, with the honesty
+  // laws: unpriced is null and never "biggest", and nothing priced here means the
+  // existing default stands exactly as it was).
+  //
+  // A SUGGESTION, NEVER A HIJACK. It applies at most once, and only to a form
+  // nobody has expressed anything about yet:
+  //  · `hubPicked` — the user chose a pay token — blocks it forever, exactly as
+  //    it blocks the seed default above. Their pick is never overridden.
+  //  · A REMEMBERED pay token for this chain is that same pick from a past visit
+  //    (only an explicit pick is ever persisted), so it wins outright.
+  //  · A host-supplied `defaultHub` and a quick-buy `initialAmount` are
+  //    instructions from a link, and an instruction beats a guess. The amount
+  //    matters twice: an amount is denominated in the PAY token, so re-seating
+  //    the token would silently change what that number means.
+  //  · A typed amount closes the window for that same reason.
+  //  · Buys only, and never mid-run: in sell mode this side is the basket.
+  // ONE-SHOT THROUGH A REF, NOT A TIMER: the holdings read refetches on its own
+  // schedule, and re-applying on a refetch would yank the box out from under
+  // somebody who had already moved on. The ref also switches the read off again,
+  // so the sweep stops the moment the question is answered. Switching network
+  // does NOT re-open it either — one mount, one suggestion; the chain toggle
+  // keeps whatever the pay side already is, exactly as it did before.
+  const payPrefilled = useRef(false)
+  const rememberedPay = useMemo(() => {
+    try {
+      const saved = parseStoredPayToken(window.localStorage.getItem(payMemKey), chainId, hubInfra ? HUBS : ['ETH', 'USDC'])
+      return saved != null
+    } catch {
+      return false // privacy mode: no stored preference to respect
+    }
+  }, [payMemKey, chainId, hubInfra])
+  const wantPayPrefill =
+    payFromHoldings &&
+    isConnected &&
+    !!viewerAddr &&
+    !payPrefilled.current &&
+    !hubPicked.current &&
+    !rememberedPay &&
+    defaultHub == null &&
+    !initialAmount &&
+    amount === '' &&
+    dir === 'buy' &&
+    !dex.running &&
+    dex.done == null
+  // The portfolio's own reader, not a second one — and the CONNECTED wallet
+  // alone, never the linked-wallet group the book pages read: this console spends
+  // from one wallet, and suggesting a token a different wallet holds would seat a
+  // balance of zero.
+  const { data: rawBook } = useRawHoldings(wantPayPrefill ? viewerAddr : undefined)
+  useEffect(() => {
+    // Anything the user does to this form closes the window for good: a box that
+    // has been typed in (even if cleared again) or flipped to sell is not an
+    // untouched form, so the suggestion never gets a second chance at it.
+    if (amount !== '' || dir !== 'buy') payPrefilled.current = true
+    if (!wantPayPrefill || payPrefilled.current || !rawBook) return
+    // Wait for the basket, then stand aside for an UNSEEDED first buy: the seed
+    // default above is about the trade being possible at all (the 10 USDC floor
+    // on the basket leg), which outranks a comfort default.
+    if (!ix || ix.effectiveSupply === 0) return
+    // Asked once, answered once — whatever the answer.
+    payPrefilled.current = true
+    const next = payTokenFromHoldings(rawBook.holdings, {
+      chainId,
+      hubChoices,
+      anyTokenPay,
+      weth: depHere.weth,
+      usdc: depHere.usdc,
+      exclude: [ix.address],
+    })
+    if (!next) return // nothing priced on this network: leave the default alone
+    // No-op guard: the default may already be the right answer.
+    if (next.kind === 'hub' && pay.kind === 'hub' && pay.hub === next.hub) return
+    if (next.kind === 'erc20' && pay.kind === 'erc20' && pay.address.toLowerCase() === next.address.toLowerCase()) return
+    // NOT persisted: a suggestion is not a preference. persistPay is for picks.
+    setPay(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawBook, wantPayPrefill, amount, dir, chainId, ix?.address, ix?.effectiveSupply])
+
   // Share-&-earn nudge shown on the swap-success overlay (owner 2026-07-07): a
   // buyer who just bought can share the basket, and their link carries ?ref so
   // buys through it pay them the interface slice (~5%). SUPPRESSED for the
@@ -322,7 +435,7 @@ export function DexSwapCard({
     const url = `${window.location.origin}/token?addr=${ix.address}&chain=${chainId}&ref=${viewerAddr}`
     // Natural first-person share (owner 2026-07-09) — reads like a holder talking,
     // not a product blurb; the intent appends the (ref-carrying) link after it.
-    const text = `I just added $${ix.symbol} to my portfolio, take a look`
+    const text = `I just added $${showSymbol(ix.symbol)} to my portfolio, take a look`
     const xHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`
     return { url, xHref }
   })()
@@ -349,7 +462,7 @@ export function DexSwapCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [amountRaw, slippageBps, feeFrac, pay, dir, ix?.address, chainId])
 
-  const wrongChain = isConnected && walletChainId !== chainId
+  const wrongChain = netSwitch.mismatch
   const insufficient = dex.payBalance != null && amountRaw > 0n && amountRaw > dex.payBalance
   const seedShort =
     dir === 'buy' && ix?.effectiveSupply === 0 && dex.quote != null && dex.quote.usdcLegRaw < 10_000_000n
@@ -404,6 +517,19 @@ export function DexSwapCard({
       ? null
       : `≈ $${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+  // NAV-fair deviation of the LIVE quote (the LPADS report, 2026-08-02): a
+  // basket whose holdings have DRIFTED from its target weights mints every buy
+  // at the most-drifted leg (the router splits funding by TARGET weights; the
+  // min-rule keeps the other legs' overshoot in the basket), so fills can sit
+  // FAR under NAV at every size — measured live: −28% flat from $10 to $1,000.
+  // The number is honest; unexplained it reads as a wrong price. Facts only:
+  // both sides are already valued above (receive at NAV, pay in settlement $).
+  const navDeviationPct =
+    payUsd != null && receiveUsd != null && payUsd > 0 && ix?.navPerToken
+      ? (receiveUsd / payUsd - 1) * 100
+      : null
+  const showNavGap = navDeviationPct != null && navDeviationPct < -3
+
   // ── CTA state machine ────────────────────────────────────────────────────
   let cta: { label: string; onClick?: () => void; disabled: boolean } = { label: 'Swap', disabled: true }
   if (!dex.configured) cta = { label: 'Preview only · no router configured', disabled: true }
@@ -417,19 +543,23 @@ export function DexSwapCard({
     cta = { label: 'Connect wallet', onClick: () => window.dispatchEvent(new Event('spectrum:connect')), disabled: false }
   else if (wrongChain)
     cta = {
-      label: switching ? 'Confirm in wallet…' : `Switch wallet to ${cfg.name}`,
-      onClick: () => switchChain({ chainId }),
-      disabled: switching,
+      label: netSwitch.switching ? 'Confirm in wallet…' : `Switch wallet to ${cfg.name}`,
+      onClick: netSwitch.switchNow,
+      disabled: netSwitch.switching,
     }
   else if (dex.running) cta = { label: 'Swapping…', disabled: true }
   else if (dex.done) cta = { label: 'Swap again', onClick: () => { setAmount(''); dex.resetRun() }, disabled: false }
   else if (amountRaw === 0n) cta = { label: 'Enter an amount', disabled: true }
-  else if (insufficient) cta = { label: `Insufficient ${dir === 'buy' ? paySymbol : `$${ix.symbol}`} balance`, disabled: true }
+  else if (insufficient) cta = { label: `Insufficient ${dir === 'buy' ? paySymbol : `$${showSymbol(ix.symbol)}`} balance`, disabled: true }
   else if (seedShort) cta = { label: `First buy needs ≥ 10 ${usdcSym} on the basket leg`, disabled: true }
   else if (dex.quoting) cta = { label: 'Quoting…', disabled: true }
-  else if (!dex.quote) cta = { label: 'Quote unavailable', disabled: true }
+  else if (!Number.isFinite(feeFrac)) cta = { label: 'Loading fees…', disabled: true }
+  else if (!dex.quote)
+    // a re-quote lever, not a dead label (audit 2026-08-16: the quote effect
+    // only re-fires on input changes, so this state had no way out)
+    cta = { label: 'Re-quote', onClick: () => dex.refreshQuote(amountRaw, slippageBps, feeFrac), disabled: false }
   else if (dex.error) cta = { label: 'Retry swap', onClick: () => runSwap(), disabled: false }
-  else cta = { label: dir === 'buy' ? `Buy $${ix.symbol}` : `Sell $${ix.symbol}`, onClick: () => runSwap(), disabled: false }
+  else cta = { label: dir === 'buy' ? `Buy $${showSymbol(ix.symbol)}` : `Sell $${showSymbol(ix.symbol)}`, onClick: () => runSwap(), disabled: false }
 
   // The last completed swap, kept AFTER the overlay closes — the page itself
   // remembers what just happened (expected units captured at fire time; the
@@ -440,7 +570,24 @@ export function DexSwapCard({
     if (dex.done && pendingRef.current) {
       setLastSwap({ hash: dex.done.hash, label: pendingRef.current })
       pendingRef.current = null
+      // SINGLE SWAPS JOIN THE HISTORY (owner 2026-08-16: "recent transactions
+      // still only show basket trades, should show all txs") — one exec-log
+      // row per completed console swap, the same store the portfolio runs
+      // write, so the recent-transactions card reads one stream. The dollar
+      // figure is the quote's settlement leg captured at fire time; unknown
+      // stays null, never zero.
+      if (viewerAddr && ix) {
+        const usd = dex.quote?.usdcLegRaw != null ? Number(dex.quote.usdcLegRaw) / 1e6 : null
+        appendExec(viewerAddr, {
+          ts: Date.now(),
+          kind: 'swap',
+          totalUsd: dir === 'buy' ? usd : null,
+          changes: [{ symbol: ix.symbol, deltaUsd: usd == null ? 0 : dir === 'buy' ? usd : -usd }],
+          simulated: false,
+        })
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dex.done])
 
   // Kick off the swap AND raise the pending pop-up (the on-brand wait animation).
@@ -449,13 +596,53 @@ export function DexSwapCard({
     pendingRef.current =
       out && ix
         ? dir === 'buy'
-          ? `≈ ${out} $${ix.symbol} received`
-          : `≈ ${out} ${paySymbol} received`
+          ? `≈ ${out} $${showSymbol(ix.symbol)} received`
+          : `≈ ${out} ${showSymbol(paySymbol)} received`
         : 'Swap confirmed'
     setLastSwap(null)
     setPending(true)
-    void dex.execute(amountRaw, slippageBps, feeFrac)
+    void dex.execute(amountRaw, slippageBps, feeFrac, shownFloorRef.current)
   }
+
+  // THE CAPTURE, in an effect so it records what was PAINTED rather than what a
+  // memo happens to hold at click — the distinction is the whole gate, because
+  // comparing a click-time value against another click-time value can never fire.
+  //
+  // ⚠ THE CLAIM IS STICKY PER QUOTE, NOT PER FOLD (specallocator's cold pass,
+  // 2026-08-07). The first version cleared it whenever `detailsOpen` went false,
+  // which discarded a promise that HAD been made: open the fold, read "Minimum
+  // received", close the fold, swap — three clicks, and the gate silently
+  // stopped applying because of a UI action with nothing to do with the money.
+  // Hiding a number does not unsee it. So the claim now survives the fold
+  // closing and dies only when a NEWER quote replaces the one that was painted.
+  //
+  // Keying on `[dex.quote]` alone would be wrong in the OPPOSITE direction: a
+  // fold never opened would carry a claim about a number nobody ever saw, and
+  // refuse on it. `paintedForRef` is what separates the three states this
+  // reasoning actually needs — never painted (no claim), painted and visible
+  // (claim), painted then hidden (claim persists).
+  const paintedForRef = useRef<DexQuote | null>(null)
+  useEffect(() => {
+    const q = dex.quote
+    if (detailsOpen && q) {
+      paintedForRef.current = q
+      shownFloorRef.current = {
+        minOutRaw: q.minOutRaw,
+        quotedInRaw: q.amountInRaw,
+        floorBasis: q.floorBasis,
+        // what this claim is ABOUT — switching baskets does not remount this
+        // card, so without these the claim outlives the trade it describes
+        basket: ix?.address ?? '',
+        chainId,
+        direction: dir,
+      }
+    } else if (q !== paintedForRef.current) {
+      // no quote at all, or a quote NEWER than the painted one — either way the
+      // claim describes a number that is no longer the one on screen
+      paintedForRef.current = null
+      shownFloorRef.current = null
+    }
+  }, [dex.quote, detailsOpen])
 
   const boxPad = large ? 'p-6' : 'p-5'
   const amountText = large ? 'text-5xl' : 'text-4xl'
@@ -631,6 +818,57 @@ export function DexSwapCard({
             </button>
           </div>
         </div>
+        {/* Wrong network, said before the signature. The strip is ONE line and is
+            not where prose goes (see the CTA label comment above), so the shared
+            notice rides below the card in its compact form: both networks named,
+            the CTA above stays the switch, its short label unchanged. */}
+        <WrongNetworkNotice
+          sw={netSwitch}
+          requiredChainId={chainId}
+          action="This swap runs"
+          enabled={dex.configured}
+          compact
+          className="mt-2"
+        />
+        {/* THE REASON THE BUTTON IS DEAD, WHERE A FINGER CAN READ IT (QOL
+            2026-08-07). The strip returns long before the full card's seed-min
+            and quote-error notices, so on this layout those two states reached
+            the user as a TRUNCATED label and nothing else — "Quote unavailable"
+            became "Quote", "First buy needs ≥ 10 USDG…" became "Minimum" — with
+            the sentence itself only in title=, which a phone cannot show at all.
+            The compact wrong-network notice directly above is the precedent: the
+            strip stays one line and the prose rides underneath it. */}
+        {seedShort && ix && (
+          <div className="mt-2 rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-200/90">
+            This is ${showSymbol(ix.symbol)}&rsquo;s FIRST buy, it seeds the basket&rsquo;s reserves and the
+            contract requires at least 10 {usdcSym} to reach the basket leg. Increase the amount.
+          </div>
+        )}
+        {dex.quoteError && amountRaw > 0n && !dex.quoting && (
+          <p className="mt-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 font-mono text-[10px] leading-relaxed text-ink-dim">
+            {dex.quoteError}
+          </p>
+        )}
+        {/* the strip states WHY a swap failed (audit 2026-08-16: the reason
+            lived only in the transient overlay — closed, it was gone, leaving
+            a bare Retry label; the full card always had this block) */}
+        {dex.error && !dex.running && (
+          <p className="mt-2 rounded-lg border border-magenta/25 bg-magenta/[0.05] px-3 py-2 font-mono text-[10px] leading-relaxed text-ink-dim">
+            {dex.error}
+            <RevertCauses error={dex.error} />
+          </p>
+        )}
+        {/* the low-balance state gets its sentence AND its bridge door on the
+            strip too (they were full-card-only; on touch the title attr where
+            the sentence hid is unreachable) */}
+        {insufficient && dir === 'buy' && bridgeAvailable && (
+          <p className="mt-2 rounded-lg border border-amber-400/25 bg-amber-400/[0.05] px-3 py-2 font-mono text-[10px] leading-relaxed text-ink-dim">
+            Not enough {paySymbol} on {cfg.name} for this buy.{' '}
+            <button type="button" onClick={() => setBridgeOpen(true)} className="press text-cyan hover:underline">
+              Move funds from another network →
+            </button>
+          </p>
+        )}
         {pickerOpen && !fixedBasket && (
           <BasketPicker
             heads={heads}
@@ -644,11 +882,16 @@ export function DexSwapCard({
           />
         )}
         {payTokenPicker}
-        {/* arrivals banner (compact hosts get the tracking, not the launcher) */}
-        <div className="mt-2 empty:hidden">
-          <BridgeBanner chainId={chainId} onUse={useArrived} />
-        </div>
+        {/* arrivals banner — the STANDALONE swap page only (owner 2026-08-16:
+            "shouldnt show above the swap on basket/bundle page"); compact
+            hosts ride without it */}
+        {large && (
+          <div className="mt-2 empty:hidden">
+            <BridgeBanner chainId={chainId} onUse={useArrived} />
+          </div>
+        )}
         <SwapPendingOverlay
+          onRetry={() => void runSwap()}
           open={pending && (dex.running || dex.done != null || dex.error != null)}
           dir={dir}
           symbol={ix?.symbol ?? ''}
@@ -667,16 +910,24 @@ export function DexSwapCard({
           decimals={ix?.decimals}
           usdRaw={dex.quote?.usdcLegRaw}
         />
+        {/* the strip's own mount — the full card's (below) is unreachable
+            from this early return */}
+        {bridgeOpen && <BridgeFund destChainId={chainId} onClose={() => setBridgeOpen(false)} />}
       </div>
     )
   }
 
   return (
     <div className="relative">
-      {/* live cross-chain arrivals into this wallet (persisted; survives reload) */}
-      <div className="mb-3 empty:hidden">
-        <BridgeBanner chainId={chainId} onUse={useArrived} />
-      </div>
+      {/* live cross-chain arrivals into this wallet (persisted; survives
+          reload) — the STANDALONE swap page only (owner 2026-08-16: the
+          basket/bundle pages' consoles stay clean; /swap is where funding
+          and bridging is the page's own job) */}
+      {large && (
+        <div className="mb-3 empty:hidden">
+          <BridgeBanner chainId={chainId} onUse={useArrived} />
+        </div>
+      )}
 
       {/* ── PAY ─────────────────────────────────────────────────────────── */}
       <section className={`relative rounded-3xl card-surface backdrop-blur-md transition-shadow focus-within:ring-1 focus-within:ring-cyan/25 ${boxPad} ${dir === 'buy' ? hubBoxZ : 'z-[1]'}`}>
@@ -704,7 +955,13 @@ export function DexSwapCard({
             </span>
           )}
         </div>
-        <div className="mt-2 flex items-center gap-3">
+        {/* mt-4 on phones (owner 2026-08-06 23:13: "a little bit more padding
+            between the ETH and the buttons above it"). 8px put the ETH chip
+            directly under the balance row's 25%/50%/Max chips — and those chips
+            carry an `after:-inset-2.5` touch pad that reaches 10px DOWN, i.e.
+            past the gap and into the chip's own tap area. 16px clears the pad
+            and gives the money row room to breathe. sm: keeps desktop at 8px. */}
+        <div className="mt-4 flex items-center gap-3 sm:mt-2">
           <input
             value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
@@ -725,9 +982,20 @@ export function DexSwapCard({
             <button
               type="button"
               onClick={() => setBridgeOpen(true)}
-              className="press font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-cyan"
+              /* thumb target + no orphaned arrow (mobile sweep 2026-08-06: a
+                 ~13px hit area, wrapping with the → alone on line 2). Its
+                 setMax/half siblings already got this treatment.
+                 ONE LINE at phone width (owner 2026-08-06 23:13: "that just
+                 needs to be maybe just one line of text"): `text-balance` still
+                 gave two lines because the old question-form label measured
+                 ~315px inside a ~292px card. The question form is gone — the
+                 label is now the imperative it always meant, short enough to
+                 hold one line in the narrowest host that mounts this console
+                 (the seed modal, ~270px inner), and `whitespace-nowrap` keeps
+                 it that way. The 36px thumb target stays. */
+              className="press inline-flex min-h-[36px] items-center whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-cyan sm:min-h-0"
             >
-              Funds on another network? Move them here →
+              Move funds from another network →
             </button>
           </div>
         )}
@@ -757,7 +1025,9 @@ export function DexSwapCard({
             <span className="tabular-nums">You hold {fmtAmt(basketHolding, Math.min(ix.decimals ?? 18, 18))}</span>
           )}
         </div>
-        <div className="mt-2 flex items-center gap-3">
+        {/* same phone gap as the pay box above — the two boxes are one visual
+            pair on a phone, and only one of them breathing reads as a bug */}
+        <div className="mt-4 flex items-center gap-3 sm:mt-2">
           <div className={`min-w-0 flex-1 truncate font-num ${amountText} font-light tabular-nums ${dex.quote ? 'text-ink' : 'text-ink-faint'}`}>
             {dex.quoting ? <span className="animate-pulse">…</span> : fmtAmt(dex.quote?.outRaw ?? null, receiveDecimals)}
           </div>
@@ -771,7 +1041,45 @@ export function DexSwapCard({
       {/* ── details: ONE summary line (rate · slip · chevron); everything else
              folds behind it. Appears once there's an amount or a quote, an
              untouched console shows just the two boxes and the button. ─────── */}
+      {/* WHAT HAPPENS WHEN I BUY (owner 2026-08-03: the buy moment is where a
+          newcomer hesitates) — three steps, one quiet line, buys only, and
+          deliberately OUTSIDE the typed-amount gate: the person this serves
+          has an empty console. */}
+      {dir === 'buy' && ix && (
+        // ONE line, less text (the owner live 2026-08-15, superseding the
+        // 2026-08-13 two-line balance)
+        <p className="mt-3 px-1 text-center font-mono text-[11px] leading-relaxed text-ink-faint">
+          You pay, it buys all {ix.holdings.length} assets, ${showSymbol(ix.symbol)} lands in your wallet. Sell anytime.
+        </p>
+      )}
       {(amountRaw > 0n || dex.quote != null) && (
+        <>
+        {showNavGap && (
+          <p className="mt-3 flex items-baseline gap-1.5 rounded-xl border border-magenta/25 bg-magenta/[0.05] px-3.5 py-2.5 font-mono text-[11px] leading-relaxed text-ink-dim">
+            <span className="font-num font-semibold tabular-nums text-magenta">{navDeviationPct!.toFixed(1)}%</span>
+            <span>
+              vs the basket&rsquo;s NAV price
+              <InfoDot>
+                {dir === 'buy' ? (
+                  <>
+                    This basket&rsquo;s holdings have drifted from its target mix, and a buy mints
+                    at the most-drifted holding: the buy is split by the ORIGINAL target weights,
+                    and whatever overshoots on the other holdings stays in the basket for its
+                    existing holders. Nobody collects this as a fee, and a smaller buy does not
+                    reduce it — the gap is the same at every size until the basket is rebalanced
+                    back toward its targets or the drifted holding&rsquo;s price converges.
+                  </>
+                ) : (
+                  <>
+                    This sale fills below the basket&rsquo;s NAV price: exiting sells each holding
+                    into its own pool, and thin pools plus fees take their real cost. The quote is
+                    what the chain pays right now.
+                  </>
+                )}
+              </InfoDot>
+            </span>
+          </p>
+        )}
         <div className="mt-3 overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] font-mono text-[11px] text-ink-dim">
           <button
             type="button"
@@ -784,14 +1092,29 @@ export function DexSwapCard({
                 <span className="animate-pulse text-ink-faint">Quoting…</span>
               ) : rate && ix ? (
                 dir === 'buy'
-                  ? `1 ${paySymbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 4 })} $${ix.symbol}`
-                  : `1 $${ix.symbol} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${paySymbol}`
+                  ? `1 ${showSymbol(paySymbol)} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 4 })} $${showSymbol(ix.symbol)}`
+                  : `1 $${showSymbol(ix.symbol)} ≈ ${rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${showSymbol(paySymbol)}`
               ) : (
                 <span className="text-ink-faint">Trade details</span>
               )}
             </span>
             <span className="flex shrink-0 items-center gap-2 text-ink-faint">
-              <span className="tabular-nums">{(slippageBps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}% slip</span>
+              {/* A WIDE TOLERANCE ON A SELL IS THE EXPOSURE (SpectrumContracts
+                  measured it 2026-08-04: a floorless sell gave up 700 BPS to a
+                  sandwich, and the aggregate floor IS the seller's only
+                  protection — there are no per-leg floors on this path). Our
+                  own revert advice suggests raising tolerance, so the cost of
+                  doing it has to be visible at the place it is set. */}
+              <span
+                className={`tabular-nums ${dir === 'sell' && slippageBps > DEFAULT_SLIPPAGE_BPS ? 'text-amber-300/90' : ''}`}
+                title={
+                  dir === 'sell' && slippageBps > DEFAULT_SLIPPAGE_BPS
+                    ? 'On a sell this tolerance is your only protection — a wide one is what a sandwich extracts'
+                    : undefined
+                }
+              >
+                {(slippageBps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}% slip
+              </span>
               <svg
                 viewBox="0 0 24 24"
                 width="12"
@@ -811,25 +1134,54 @@ export function DexSwapCard({
             <div className="space-y-1.5 border-t border-white/[0.07] px-4 pb-3.5 pt-2.5">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-ink-faint">Basket fee</span>
-                <span className="tabular-nums">{fees ? `${(fees.basketFeeBps / 100).toFixed(2)}%` : '—'}</span>
+                {/* The fee in DOLLARS beside the percent (owner 2026-08-03:
+                    simplify — say the money). payUsd is the quote's own USDC
+                    mid-leg, the same money the route pivots through — never a
+                    second price. Buys only: exits carry no basket fee here. */}
+                <span className="tabular-nums">
+                  {fees ? `${(fees.basketFeeBps / 100).toFixed(2)}%` : '—'}
+                  {fees && dir === 'buy' && payUsd != null && payUsd > 0 && (
+                    <span className="text-ink-faint">
+                      {' '}
+                      · ≈ ${(payUsd * feeFrac).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} on this buy
+                    </span>
+                  )}
+                </span>
               </div>
+              {/* WE MAY ONLY CALL IT A MINIMUM IF WE SIGN IT (audit 2026-08-07).
+                  On a buy whose quote fell back to the NAV estimate, this number
+                  sits ABOVE what the mint can deliver — the acquisition cost is
+                  not in it — so the execute path probes the real fill and signs a
+                  LOWER floor on purpose, otherwise honest buys revert. Printing
+                  "Minimum received" for that case promised a protection the
+                  signature never carried. The number still shows, because it is
+                  the best estimate we have; what changes is that it stops
+                  claiming to be the floor. */}
               <div className="flex items-center justify-between gap-3">
-                <span className="text-ink-faint">Minimum received</span>
+                <span className="text-ink-faint">
+                  {dex.quote?.floorBasis === 'nav' ? 'Expected minimum' : 'Minimum received'}
+                </span>
                 <span className="tabular-nums">
                   {dex.quote ? `${fmtAmt(dex.quote.minOutRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : paySymbol}` : '—'}
                 </span>
               </div>
+              {dex.quote?.floorBasis === 'nav' && (
+                <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
+                  An estimate — this route could not be simulated, so the floor actually signed is
+                  measured from a live simulation at the moment you confirm, and can land below this.
+                </p>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <span className="text-ink-faint">Route</span>
                 <span className="truncate">
                   {ix
                     ? dir === 'buy'
                       ? hub === 'USDC'
-                        ? `${usdcSym} → $${ix.symbol} · self-pool`
-                        : `${paySymbol} → ${usdcSym} → $${ix.symbol} · ${pay.kind === 'erc20' || lifiHubChain ? 'LiFi' : 'V3'} + self-pool`
+                        ? `${usdcSym} → $${showSymbol(ix.symbol)} · self-pool`
+                        : `${showSymbol(paySymbol)} → ${usdcSym} → $${showSymbol(ix.symbol)} · ${pay.kind === 'erc20' || lifiHubChain ? 'LiFi' : 'V3'} + self-pool`
                       : hub === 'USDC'
-                        ? `$${ix.symbol} → ${usdcSym} · self-pool`
-                        : `$${ix.symbol} → ${usdcSym} → ${paySymbol} · self-pool + ${pay.kind === 'erc20' || lifiHubChain ? 'LiFi' : 'V3'}`
+                        ? `$${showSymbol(ix.symbol)} → ${usdcSym} · self-pool`
+                        : `$${showSymbol(ix.symbol)} → ${usdcSym} → ${showSymbol(paySymbol)} · self-pool + ${pay.kind === 'erc20' || lifiHubChain ? 'LiFi' : 'V3'}`
                     : '—'}
                   {dex.quote && dir === 'buy' ? ` · ${dex.quote.legCount} legs, each with its own floor` : ''}
                 </span>
@@ -871,13 +1223,14 @@ export function DexSwapCard({
             </div>
           )}
         </div>
+        </>
       )}
 
       {/* seed-min warning */}
       {seedShort && ix && (
         <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-200/90">
-          This is ${ix.symbol}&rsquo;s FIRST buy, it seeds the basket&rsquo;s reserves and the contract
-          requires at least 10 USDC to reach the basket leg. Increase the amount.
+          This is ${showSymbol(ix.symbol)}&rsquo;s FIRST buy, it seeds the basket&rsquo;s reserves and the contract
+          requires at least 10 {usdcSym} to reach the basket leg. Increase the amount.
         </div>
       )}
 
@@ -887,6 +1240,18 @@ export function DexSwapCard({
           {dex.quoteError}
         </p>
       )}
+
+      {/* wrong network, in words, above the action. The CTA below IS the switch in
+          this state, so the notice carries no button of its own; `enabled` mirrors
+          the state machine's own precedence (a preview-only build with no router,
+          or no basket picked yet, has no signature to warn about). */}
+      <WrongNetworkNotice
+        sw={netSwitch}
+        requiredChainId={chainId}
+        action="This swap runs"
+        enabled={dex.configured && !!ix}
+        className="mt-3"
+      />
 
       {/* CTA — the gradient is EARNED by an executable trade (same rule as the
           strip): quiet outline while idle/disabled, spectral once armed. */}
@@ -912,6 +1277,12 @@ export function DexSwapCard({
           <a href={`${cfg.explorer}/tx/${lastSwap.hash}`} target="_blank" rel="noreferrer" className="text-cyan hover:underline">
             view tx ↗
           </a>
+          {/* the post-trade seam: the result lives in the book */}
+          {WALLET_ENABLED && pageEnabled(brand.pages, 'portfolio') && (
+            <RouterLink to="/portfolio" className="text-cyan hover:underline">
+              portfolio →
+            </RouterLink>
+          )}
         </div>
       )}
 
@@ -965,6 +1336,7 @@ export function DexSwapCard({
 
       {/* on-brand wait animation while the swap's steps confirm (token page + /swap) */}
       <SwapPendingOverlay
+        onRetry={() => void runSwap()}
         open={pending && (dex.running || dex.done != null || dex.error != null)}
         dir={dir}
         symbol={ix?.symbol ?? ''}
@@ -1094,7 +1466,7 @@ function BasketChip({ ix, onClick, disabled }: { ix: { address: string; symbol: 
   const inner = ix ? (
     <>
       <BasketAvatar address={ix.address} symbol={ix.symbol} size={22} />
-      <span className="max-w-[6.5rem] truncate font-display text-sm font-bold text-ink">${ix.symbol}</span>
+      <span className="max-w-[6.5rem] truncate font-display text-sm font-bold text-ink">${showSymbol(ix.symbol)}</span>
     </>
   ) : (
     <span className="font-display text-sm font-bold text-ink-dim">Select basket</span>
@@ -1191,7 +1563,7 @@ function BasketPicker({
               >
                 <BasketAvatar address={b.address} symbol={b.symbol} size={36} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-display text-sm font-semibold text-ink">${b.symbol}</span>
+                  <span className="block truncate font-display text-sm font-semibold text-ink">${showSymbol(b.symbol)}</span>
                   <span className="block truncate font-mono text-[10px] text-ink-faint">
                     {b.name} · {shortAddr(b.address)}
                   </span>

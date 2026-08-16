@@ -2,6 +2,9 @@
 
 interface ImportMetaEnv {
   readonly VITE_ALCHEMY_API_KEY?: string
+  /** Which chain the site opens on. Absent =&gt; the kit's Base-first default;
+   *  the RH test deploy sets 4663 here instead of diverging brand.config.ts. */
+  readonly VITE_DEFAULT_CHAIN_ID?: string
   readonly VITE_BASE_RPC_URL?: string
   readonly VITE_MAINNET_RPC_URL?: string
   // Robinhood Chain has no Alchemy tier — this explicit URL or its public endpoint.

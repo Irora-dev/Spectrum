@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   The site's design tokens, carried over verbatim — the popup is the same
+   product in a 380px window, so it inherits the palette rather than inventing
+   one. SOURCE OF TRUTH: app/src/index.css @theme. theme-parity.test.ts fails
+   if these drift from the app's values; change them THERE, then re-copy here.
+
+   Deliberate divergences (each one documented, tested as exceptions):
+   · --font-num maps to Chakra Petch, not the app's Space Grotesk — the
+     extension bundles two faces, and the extension spec (2026-08-02) sets
+     numbers in Chakra Petch.
+   ──────────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Typefaces */
+  --font-display: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+  --font-num: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+
+  /* Surfaces — near-black with a cool tint, layered upward */
+  --color-void: #07070b;
+  --color-panel: #0c0c12;
+  --color-panel-2: #111119;
+  --color-line: #1c1c28;
+  --color-line-bright: #2c2c3c;
+
+  /* Ink ramp (ink-faint is the 2026-08-01 AA-raised value; the parity test
+     pins it — the old sub-AA hex must never come back) */
+  --color-ink: #e8e8f0;
+  --color-ink-dim: #8b8b9e;
+  --color-ink-faint: #7a7a8d;
+
+  /* Accents */
+  --color-violet: #7b5cff;
+  --color-violet-bright: #a48bff;
+  --color-violet-deep: #4326a8;
+  --color-alert: #ff3b52;
+  --color-teal: #34d6c4;
+
+  /* Optics palette — the spectral ramp, used as meaning, never decoration */
+  --color-cyan: #35e0ff;
+  --color-magenta: #ff4db8;
+  --color-amber: #ff9248;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* The popup window: 380 × 600 (Chrome caps at 800 × 600; 380 is the width
+   where two columns of numbers still read). The ground is the site's void +
+   its barely-there technical grid — no WebGL, no band canvas: a popup that
+   spins up three.js to paint a background is the decorative-crash class that
+   blanked the app on 2026-08-01. */
+body {
+  width: 380px;
+  height: 600px;
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--color-void);
+  background-image:
+    radial-gradient(
+      120% 80% at 50% -10%,
+      color-mix(in srgb, var(--color-violet) 10%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--color-line) 45%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-line) 45%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 100% 100%, 72px 72px, 72px 72px;
+  color: var(--color-ink);
+  /* Per-style body face, exactly as the site: applyBrand sets --font-body for
+     styles that use a sans body; the spectral default stays mono. */
+  font-family: var(--font-body, var(--font-mono));
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Raised card surface — the site's rule verbatim: the active design style's
+   --st-* vars (written by applyBrand at startup) drive the treatment; the
+   fallbacks are the reference spectral glass, so the default paint is
+   byte-identical to the site's. */
+.card-surface {
+  background: var(--st-card-bg, rgba(23, 23, 32, 0.78));
+  border: var(--st-card-border, 1px solid rgba(255, 255, 255, 0.1));
+  box-shadow: var(--st-card-shadow, inset 0 1px 0 rgba(255, 255, 255, 0.05));
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tactile press — always 0.96; bundles hover transitions (never `all`). */
+.press {
+  transition-property: color, background-color, border-color, box-shadow, scale;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.press:active {
+  scale: 0.96;
+}
+@media (prefers-reduced-motion: reduce) {
+  .press:active {
+    scale: 1;
+  }
+}
+
+/* Image containment outline — 1px pure white at 10% (a tinted ring reads as
+   dirt on the edge), drawn inside so layout never shifts. */
+.img-outline {
+  outline: 1px solid rgba(255, 255, 255, 0.1);
+  outline-offset: -1px;
+}
+
+/* The one scrolling column. Quiet scrollbar on the void. */
+.popup-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-bright) transparent;
+}
+.popup-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.popup-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-line-bright);
+  border-radius: 3px;
+}
+.popup-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Refresh spinner — a spectral hairline arc. Crossfades away under
+   prefers-reduced-motion rather than spinning. */
+.spin-arc {
+  animation: spin-arc 900ms linear infinite;
+}
+@keyframes spin-arc {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin-arc {
+    animation: none;
+    opacity: 0.6;
+  }
+}

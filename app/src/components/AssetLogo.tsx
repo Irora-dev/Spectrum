@@ -1,8 +1,27 @@
 import { useEffect, useState } from 'react'
+import { deploymentFor } from '../lib/chain/deployments'
 import { blockscoutIconUrl, coingeckoLogoUrl, logoSources } from '../lib/spectrum/token-art'
+import { stockLogoUrl } from '../lib/spectrum/token-meta'
 
 // Token icon with a multi-source fallback chain (token-art.ts: DexScreener →
 // TrustWallet → async Coingecko contract lookup) and an initials terminal state.
+/** The native-ETH sentinel the holdings reader keys native rows on (0xeee…)
+ *  plus the zero address — neither exists on any explorer or logo registry. */
+function isNativeSentinel(addr: string): boolean {
+  const a = (addr || '').toLowerCase()
+  return a === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' || a === '0x0000000000000000000000000000000000000000'
+}
+
+/** The chain's wrapped-native address, or null — a failed config read means
+ *  the ladder simply runs on the sentinel and falls to initials, as before. */
+function wethAddressFor(chainId: number): string | null {
+  try {
+    return deploymentFor(chainId).weth ?? null
+  } catch {
+    return null
+  }
+}
+
 export function AssetLogo({
   address,
   symbol,
@@ -28,7 +47,25 @@ export function AssetLogo({
   const [cgUrl, setCgUrl] = useState<string | null | undefined>(undefined)
   const [tries, setTries] = useState(0)
   const box = { width: size, height: size }
-  const srcs = [...(preferredSrc ? [preferredSrc] : []), ...logoSources(address, chainId), ...(cgUrl ? [cgUrl] : [])]
+  // A TOKENISED STOCK LEADS WITH ITS COMPANY'S MARK (the owner 2026-08-06: "it just
+  // shows robinhood logo for the stocks"). Robinhood's CDN serves the same
+  // feather for every one of them — verified by fetching NVDA, AAPL and TSLA,
+  // all byte-identical — so the address-keyed rungs below can never produce a
+  // company logo. This rung is registry-gated and returns null for everything
+  // else, so on failure the ladder is exactly what it always was.
+  const stockSrc = stockLogoUrl(symbol)
+  // NATIVE ETH wears the chain's WETH mark (the owner, live 13:19: "the ETH logo
+  // doesn't appear — it should appear definitely"). The book keys native rows
+  // on a sentinel, and every address-keyed rung below answers nothing for a
+  // sentinel — so resolve it to the chain's wrapped-native address FIRST and
+  // let the same ladder do its normal work.
+  const effAddress = isNativeSentinel(address) ? wethAddressFor(chainId) ?? address : address
+  const srcs = [
+    ...(preferredSrc ? [preferredSrc] : []),
+    ...(stockSrc ? [stockSrc] : []),
+    ...logoSources(effAddress, chainId),
+    ...(cgUrl ? [cgUrl] : []),
+  ]
   const src = srcs[srcIdx] as string | undefined
   const initials = (symbol || '?').replace(/^\$/, '').slice(0, 3).toUpperCase()
   const next = () => setSrcIdx((i) => i + 1)
@@ -51,8 +88,8 @@ export function AssetLogo({
     if (src != null || cgUrl !== undefined) return
     let stale = false
     let timer: number | undefined
-    void blockscoutIconUrl(address, chainId)
-      .then((bs) => bs ?? coingeckoLogoUrl(address, chainId))
+    void blockscoutIconUrl(effAddress, chainId)
+      .then((bs) => bs ?? coingeckoLogoUrl(effAddress, chainId))
       .then((u) => {
         if (stale) return
         if (u == null && tries < 2) {
@@ -71,10 +108,18 @@ export function AssetLogo({
   // rim (most logos are opaque circles, so a plain bg behind them never shows).
   if (discColor) {
     const pad = Math.max(2, Math.round(size * 0.06))
+    // A COMPANY MARK NEEDS A LIGHT DISC. The disc normally tints from the tile
+    // so the rim reads as part of it — but now that tiles carry the BRAND
+    // colour and stocks carry the BRAND mark, those are the same hue by
+    // definition, and Tesla's red T on a Tesla-red disc disappeared (my own
+    // regression, same session). Company favicons are drawn for light
+    // backgrounds, so stock marks get one; every other token keeps the tinted
+    // rim exactly as before.
+    const disc = src === stockSrc ? '#F4F0F4' : discColor
     return (
       <span
         className="grid shrink-0 place-items-center rounded-full"
-        style={{ ...box, padding: pad, backgroundColor: discColor, boxShadow: '0 2px 5px rgba(0,0,0,0.3)' }}
+        style={{ ...box, padding: pad, backgroundColor: disc, boxShadow: '0 2px 5px rgba(0,0,0,0.3)' }}
       >
         {src ? (
           <img src={src} alt={symbol} onError={next} className="h-full w-full rounded-full object-cover" />
@@ -90,9 +135,7 @@ export function AssetLogo({
     )
   }
 
-  // Default variant — a 1px white@10% containment outline (matches BasketAvatar),
-  // no disc. A pure-white hairline catches the logo edge on the dark surface; a
-  // tinted/black ring would read as a dirty rim.
+  // Default variant — a 1px white@10% containment outline (matches BasketAvatar).
   if (!src) {
     return (
       <span
@@ -103,13 +146,28 @@ export function AssetLogo({
       </span>
     )
   }
+  // A REAL DISC BEHIND THE MARK, not bg-white/5 (owner 2026-08-07: "the stock
+  // logos look broken, they have no bg / cutout").
+  //
+  // The old background was 5% white — invisible on a near-black card — and the
+  // comment that used to sit above stated the assumption which made that fine:
+  // "most logos are opaque circles, so a plain bg behind them never shows".
+  // True of crypto tokens, FALSE of the company marks that came with the
+  // tokenised stocks: NVIDIA's eye, Tesla's T and USDG's G are transparent
+  // brand art, so the page showed straight through them and the hairline ring
+  // drew a circle around nothing.
+  //
+  // The remedy is the treatment this component already proves one element away:
+  // the bento tiles frame these very same logos on a disc, which is why on a
+  // basket page the tiles read as finished while the table beneath them read as
+  // broken. An opaque logo covers the disc completely, so this costs those
+  // nothing — and a transparent one finally has something to sit on.
   return (
-    <img
-      src={src}
-      alt={symbol}
-      onError={next}
-      className="shrink-0 rounded-full bg-white/5 object-cover ring-1 ring-white/10"
-      style={box}
-    />
+    <span
+      className="grid shrink-0 place-items-center overflow-hidden rounded-full bg-white ring-1 ring-white/10"
+      style={{ ...box, padding: Math.max(1, Math.round(size * 0.04)) }}
+    >
+      <img src={src} alt={symbol} onError={next} className="h-full w-full rounded-full object-cover" />
+    </span>
   )
 }

@@ -2,6 +2,9 @@ import { stocksForChain } from '../chain/stocks'
 import { chainCfg } from '../chain/chains'
 import { cacheGet, cacheSet } from './persist-cache'
 import { normalizeLogo, verifiedTokens, type ListedToken } from './token-list'
+import { PRISM_V2_HOOK } from '../prism/claim'
+import { isAddress } from 'viem'
+import { describeTokens } from './token-discovery'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Token search by name/symbol for the launch basket builder.
@@ -60,6 +63,26 @@ export interface TokenHit {
   verified: boolean
   /** Verified-list logo (preferred icon source when present). */
   logoURI?: string
+  /** HOUSE-CURATED identity (owner 2026-08-15: "when you type prism into the
+   *  portfolio add or reweight it should always show THIS prism first"): the
+   *  app's own load-bearing address for a name the user typed. Outranks even
+   *  the verified tier in every sort — a house pin exists only when the query
+   *  matched its own name terms, so it can never hijack unrelated searches. */
+  housePinned?: boolean
+}
+
+/** The app's own load-bearing identities, pinned FIRST when the user types
+ *  their name — by ADDRESS from the app's own constants (the same doctrine as
+ *  the curated stock registry on Blockscout rows: identity from our registry,
+ *  never from what an indexer ranks). Per chain; match is prefix-both-ways at
+ *  ≥3 chars so "pri", "prism", "prism v2" all pin and "p" alone does not. */
+const HOUSE_CURATED: Record<number, { token: ListedToken; match: (ql: string) => boolean }[]> = {
+  1: [
+    {
+      token: { address: PRISM_V2_HOOK, symbol: 'PRISM', name: 'Prism', decimals: 18, chainId: 1 },
+      match: (ql) => ql.length >= 3 && ('prism'.startsWith(ql) || ql.startsWith('prism')),
+    },
+  ],
 }
 
 export interface DexPair {
@@ -212,6 +235,11 @@ function matchVerified(list: ListedToken[], ql: string): ListedToken[] {
     .map((x) => x.t)
 }
 
+/** Whole-result cache TTL: short enough to stay fresh, long enough that
+ *  retyping and the second surface (mode add bar vs flow picker) reuse the
+ *  answer instead of multiplying rate-limited calls. */
+const SEARCH_TTL_MS = 60_000
+
 export async function searchTokens(
   query: string,
   chainId: number,
@@ -221,14 +249,47 @@ export async function searchTokens(
   if (q.length < 2) return []
   const cfg = chainCfg(chainId)
   const ql = q.toLowerCase()
+  const cacheKey = `toksearch:v1:${chainId}:${ql}`
+  const cached = cacheGet<TokenHit[]>(cacheKey)
+  if (cached) return cached
+  // ── A PASTED ADDRESS RESOLVES DIRECTLY (owner 2026-08-15, live: LNOC pasted
+  // into the portfolio add bar answered "no routable market found" while its
+  // V3 pool held real liquidity — every text rung filters on symbol/name
+  // CONTAINING the query, which a hex string can never satisfy; the launch
+  // picker special-cases pastes, these searches did not). The chain's own
+  // contract is the identity source; depth enrichment is best-effort — the
+  // add-time probe (findBestPool) stays the routability judge, as everywhere.
+  if (isAddress(q, { strict: false })) {
+    try {
+      const [desc] = await describeTokens(chainId, [q])
+      if (!desc) return [] // no code / not an ERC-20 on THIS chain — other chains may still answer
+      // no depth enrichment here: the paste IS the identity claim, and the
+      // add-time probe (findBestPool) stays the routability judge — a figure
+      // of 0 shows honestly as no-figure rather than blocking the row
+      const hit: TokenHit = {
+        address: q,
+        symbol: desc.symbol,
+        name: desc.symbol,
+        liquidityUsd: 0,
+        marketCapUsd: 0,
+        volumeH24Usd: 0,
+        verified: false,
+      }
+      cacheSet(cacheKey, [hit], SEARCH_TTL_MS)
+      return [hit]
+    } catch {
+      return []
+    }
+  }
   const slug = cfg.dexscreenerSlug // 'base' | 'ethereum' — matches DexScreener chainId
-  // DexScreener-unindexed chain (Robinhood): the chain's own BLOCKSCOUT is the
-  // name index — its /api/v2/tokens?q= search knows every token on the chain
+  // The chain's own BLOCKSCOUT knows EVERY token on the chain — the rung for
+  // chains DexScreener doesn't index, and the ZERO-HIT FALLBACK where it does
   // (owner report 2026-07-29: typing "Pons" found nothing while PONS sat there
-  // with 21k holders; audit #2 caught the first landing of this attempt
-  // silently missing). Ranked by Blockscout's own order (holders); depth stays
-  // the builder's job downstream (findBestPool is the routability judge).
-  if (!slug) {
+  // with 21k holders — and again 2026-08-03, because the no-slug premise had
+  // gone stale after DexScreener started indexing Robinhood). Ranked by
+  // Blockscout's own order (holders); depth stays the builder's job
+  // downstream (findBestPool is the routability judge).
+  const searchBlockscout = async (): Promise<TokenHit[]> => {
     if (!cfg.explorer.includes('blockscout')) return []
     try {
       const r = await fetch(`${cfg.explorer}/api/v2/tokens?q=${encodeURIComponent(q)}`, {
@@ -276,6 +337,11 @@ export async function searchTokens(
       return []
     }
   }
+  if (!slug) {
+    const bs = await searchBlockscout()
+    cacheSet(cacheKey, bs, SEARCH_TTL_MS)
+    return bs
+  }
   const hubs = ethHubsFor(chainId)
 
   // ── pass 1: DexScreener search + the verified list, in parallel ────────────
@@ -308,6 +374,20 @@ export async function searchTokens(
 
   const verifiedMatches = matchVerified(listed, ql)
   const verifiedByAddr = new Map(verifiedMatches.map((t) => [t.address.toLowerCase(), t]))
+
+  // House-curated identities join the verified set (and get pinned first in the
+  // sort below): injected-if-absent exactly like verified matches, so a depth
+  // endpoint missing them can never hide them.
+  const housePinnedAddrs = new Set<string>()
+  for (const c of HOUSE_CURATED[chainId] ?? []) {
+    if (!c.match(ql)) continue
+    const key = c.token.address.toLowerCase()
+    housePinnedAddrs.add(key)
+    if (!verifiedByAddr.has(key)) {
+      verifiedMatches.push(c.token)
+      verifiedByAddr.set(key, c.token)
+    }
+  }
 
   // ── pass 2: full-pair-set depth for every candidate that could rank ────────
   const candidates = [
@@ -360,7 +440,17 @@ export async function searchTokens(
     (h) => h.liquidityUsd > 0 || verifiedByAddr.has(h.address.toLowerCase()),
   )
 
-  return pool
+  // Zero hits on an indexed chain → the Blockscout rung still knows every
+  // token on the chain (untraded/unindexed long tail); better a hit without
+  // depth figures than a silent nothing. The on-chain probe stays the
+  // eligibility authority at add time.
+  if (pool.length === 0) {
+    const bs = await searchBlockscout()
+    cacheSet(cacheKey, bs, SEARCH_TTL_MS)
+    return bs
+  }
+
+  const ranked = pool
     .map(({ address, symbol, name, liquidityUsd, marketCapUsd, volumeH24Usd }): TokenHit => {
       const v = verifiedByAddr.get(address.toLowerCase())
       return {
@@ -373,9 +463,13 @@ export async function searchTokens(
         volumeH24Usd,
         verified: !!v,
         logoURI: v?.logoURI,
+        housePinned: housePinnedAddrs.has(address.toLowerCase()) || undefined,
       }
     })
     .sort((a, b) => {
+      // House-curated identity outranks everything — see HOUSE_CURATED.
+      const dp = Number(!!b.housePinned) - Number(!!a.housePinned)
+      if (dp !== 0) return dp
       // Verified first, then exact/prefix symbol match. WITHIN the verified
       // tier market cap ranks (two list-verified tokens sharing a symbol —
       // e.g. "Mog Coin" vs "Based Mog Coin" — differ by SIZE, and quote-pair
@@ -402,4 +496,87 @@ export async function searchTokens(
       return dm !== 0 ? dm : b.volumeH24Usd - a.volumeH24Usd
     })
     .slice(0, 8)
+  cacheSet(cacheKey, ranked, SEARCH_TTL_MS)
+  return ranked
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CROSS-CHAIN MERGE (owner 2026-08-03 ~10:3x: "why can't I find PONS on
+// Robinhood in the suggestions? ensure the highest mcap on the most relevant
+// chain appears first"). The old merge deduped same-symbol listings by
+// measured ETH-quoted liquidity — but some chains' pairs (Robinhood) measure
+// 0 there, so ANY same-ticker listing elsewhere silently hid the real one.
+//
+// The law, one home for both search surfaces (the flow picker + the mode's
+// add bar):
+//   · within one SYMBOL: verified identity wins outright; otherwise the
+//     highest REPORTED MARKET CAP wins its symbol — that is what puts the
+//     canonical token's home chain first — with real (quote-side) liquidity
+//     and then volume as tiebreaks;
+//   · across rows: an EXACT symbol match pins above everything, then
+//     verified, then market cap, then real liquidity, then volume.
+// Reported mcap is manipulable, so real liquidity stays the tiebreak and the
+// add-time on-chain probe stays the final authority; the suggestion row also
+// always shows its chain, so the pick stays verifiable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ChainHit {
+  h: TokenHit
+  chainId: number
+}
+
+/** Reported mcap counts ONLY when real (quote-side) liquidity corroborates
+ *  it. Found live within the hour of the first mcap-primary cut: an ETH
+ *  "Pons" pair claiming $14M liquidity and $28.5M mcap off 0.0003 WETH of
+ *  actual reserve — reported numbers are self-priced, the quote reserve is
+ *  not. Below the floor a mcap claim scores zero and real liquidity (then
+ *  raw mcap, for depthless rungs like Blockscout rows) decides. */
+const CREDIBLE_LIQ_FLOOR_USD = 5_000
+const credibleMcap = (h: TokenHit) => (h.liquidityUsd >= CREDIBLE_LIQ_FLOOR_USD ? h.marketCapUsd : 0)
+/** Dust reserves don't count as depth: $0.58 of real WETH must not outrank a
+ *  listing whose rung reports no figure at all (Blockscout rows carry 0). */
+const DUST_LIQ_FLOOR_USD = 100
+const meaningfulLiq = (h: TokenHit) => (h.liquidityUsd >= DUST_LIQ_FLOOR_USD ? h.liquidityUsd : 0)
+
+export function mergeCrossChainHits(rows: ChainHit[], query: string, limit: number): ChainHit[] {
+  const q = query.trim().toUpperCase()
+  const better = (a: ChainHit, b: ChainHit): boolean => {
+    // A house-curated identity wins its symbol outright (see HOUSE_CURATED) —
+    // a fatter same-ticker listing on another chain must not displace it.
+    if (!!a.h.housePinned !== !!b.h.housePinned) return !!a.h.housePinned
+    if (a.h.verified !== b.h.verified) return a.h.verified
+    const ca = credibleMcap(a.h)
+    const cb = credibleMcap(b.h)
+    if (ca !== cb) return ca > cb
+    const la = meaningfulLiq(a.h)
+    const lb = meaningfulLiq(b.h)
+    if (la !== lb) return la > lb
+    if (a.h.marketCapUsd !== b.h.marketCapUsd) return a.h.marketCapUsd > b.h.marketCapUsd
+    return a.h.volumeH24Usd > b.h.volumeH24Usd
+  }
+  const bySym = new Map<string, ChainHit>()
+  for (const row of rows) {
+    const k = row.h.symbol.toUpperCase()
+    const prev = bySym.get(k)
+    if (!prev || better(row, prev)) bySym.set(k, row)
+  }
+  return [...bySym.values()]
+    .sort((a, b) => {
+      // House pin above even the exact-symbol row: the pin only exists when
+      // the user's query matched its own name terms, so this is "the thing
+      // they typed", not a hijack.
+      const dp = Number(!!b.h.housePinned) - Number(!!a.h.housePinned)
+      if (dp !== 0) return dp
+      const ax = a.h.symbol.toUpperCase() === q ? 1 : 0
+      const bx = b.h.symbol.toUpperCase() === q ? 1 : 0
+      if (ax !== bx) return bx - ax
+      if (a.h.verified !== b.h.verified) return a.h.verified ? -1 : 1
+      const cm = credibleMcap(b.h) - credibleMcap(a.h)
+      if (cm !== 0) return cm
+      const dl = meaningfulLiq(b.h) - meaningfulLiq(a.h)
+      if (dl !== 0) return dl
+      if (a.h.marketCapUsd !== b.h.marketCapUsd) return b.h.marketCapUsd - a.h.marketCapUsd
+      return b.h.volumeH24Usd - a.h.volumeH24Usd
+    })
+    .slice(0, limit)
 }

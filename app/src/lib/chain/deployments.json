@@ -1,30 +1,9 @@
 {
-  "8453": {
-    "factory": "0xa60ce83A4048f2157A65d596002541311D694E5D",
-    "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    "poolManager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
-    "swapRouter": "0x2E39Ae825C697BE3e15ACd003d1398287C83D4b6",
-    "weth": "0x4200000000000000000000000000000000000006",
-    "uniV2Factory": "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
-    "uniV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
-    "uniV3SwapRouter": "0x2626664c2603336E57B271c5C0b26F421741e481",
-    "uniV3Quoter": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
-    "aerodromeFactory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
-    "v4Quoter": "0x0d5e0F971ED27FBfF6c2837bf31316121532048D",
-    "universalRouter": "0x6fF5693b99212Da76ad316178A184AB56D299b43",
-    "notesRegistry": "0xd30C187db729F7af160709d384dA1A2a3886ac3b",
-    "legacy": [
-      {
-        "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
-        "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA"
-      }
-    ]
-  },
   "1": {
-    "factory": "0x4d3590a5B0aCee04Bb7Ab721B23fDdae8B880486",
+    "factory": "0xd0798c3743E15594a6918C0C0fD6F86eC76e96de",
     "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
-    "swapRouter": "0x2eC8C0C87946ead5f9AE436374F6A6d0191c6803",
+    "swapRouter": "0xe15dd0a854d41a1282cAfD4CeeE10221350C7BF0",
     "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
     "uniV2Factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
     "uniV3Factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
@@ -38,14 +17,23 @@
       {
         "factory": "0xEf520C7f354d03253149388F6338189Bc1A0Ba01",
         "swapRouter": "0x15D9C385dC3d3f4fB50321F6e224b25A391F0025"
+      },
+      {
+        "factory": "0x4d3590a5B0aCee04Bb7Ab721B23fDdae8B880486",
+        "swapRouter": "0x2eC8C0C87946ead5f9AE436374F6A6d0191c6803"
       }
-    ]
+    ],
+    "batcher": "0xfb4646c26cfbbe8d4682aeb42e90b1ab8159764f",
+    "directSwapWrapper": "0xCE01C930E548421867A8C1DBD7cE83a7D26C5c99",
+    "feeGeneration": 2,
+    "rejectsV2Legs": true,
+    "usdcDecimals": 6
   },
   "4663": {
-    "factory": "0x07Bfce0976b205FcfDF115F7aD1401Ab1f197e6f",
+    "factory": "0xf47443C33D2DF877bf5d80B46557636E08C8083A",
     "usdc": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
-    "swapRouter": "0x4d3590a5B0aCee04Bb7Ab721B23fDdae8B880486",
+    "swapRouter": "0x10b083c7A2584f98732B0d6C46b0460d63eF2C59",
     "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
     "uniV2Factory": "",
     "uniV3Factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
@@ -54,8 +42,49 @@
     "aerodromeFactory": "",
     "v4Quoter": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
     "universalRouter": "0x8876789976dEcBfCbBbe364623C63652db8C0904",
-    "leaguePool": "0xd1B485a0C40fb40fd94aa8dDbA32Ed6DCaDC35Be",
+    "leaguePool": "0x620c1596178988ECcb846CD7788a65B5bAb8B9ba",
     "notesRegistry": "0xd30C187db729F7af160709d384dA1A2a3886ac3b",
-    "leagueShareBps": 500
+    "leagueShareBps": 500,
+    "legacy": [
+      {
+        "factory": "0x07Bfce0976b205FcfDF115F7aD1401Ab1f197e6f",
+        "swapRouter": "0x4d3590a5B0aCee04Bb7Ab721B23fDdae8B880486"
+      }
+    ],
+    "batcher": "0x65bf8842700498f99375c267dcd31e324d8f874c",
+    "directSwapWrapper": "0xBeC653154735a0D1928430E82c5a17229227c067",
+    "feeGeneration": 2,
+    "rejectsV2Legs": true,
+    "usdcDecimals": 6
+  },
+  "8453": {
+    "factory": "0xfD168aFf1321f3dd9Fe310759ED73a8De536e4b7",
+    "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "poolManager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+    "swapRouter": "0xC2d5dA99E6aDc5688f728716aec205b937Cf0835",
+    "weth": "0x4200000000000000000000000000000000000006",
+    "uniV2Factory": "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
+    "uniV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+    "uniV3SwapRouter": "0x2626664c2603336E57B271c5C0b26F421741e481",
+    "uniV3Quoter": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+    "aerodromeFactory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+    "v4Quoter": "0x0d5e0F971ED27FBfF6c2837bf31316121532048D",
+    "universalRouter": "0x6fF5693b99212Da76ad316178A184AB56D299b43",
+    "notesRegistry": "0xd30C187db729F7af160709d384dA1A2a3886ac3b",
+    "legacy": [
+      {
+        "factory": "0x91ca52C4095c795f6e05DABF7d53Db44101ef7A6",
+        "swapRouter": "0x10139577Eb5a710De69aE0fD60F9E881d39cb6bA"
+      },
+      {
+        "factory": "0xa60ce83A4048f2157A65d596002541311D694E5D",
+        "swapRouter": "0x2E39Ae825C697BE3e15ACd003d1398287C83D4b6"
+      }
+    ],
+    "batcher": "0x2ec8c0c87946ead5f9ae436374f6a6d0191c6803",
+    "directSwapWrapper": "0xEf88CC32C34172D9cAA09b405fBed2151785bF03",
+    "feeGeneration": 2,
+    "rejectsV2Legs": true,
+    "usdcDecimals": 6
   }
 }

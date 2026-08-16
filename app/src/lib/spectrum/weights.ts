@@ -4,9 +4,41 @@
 // the same Weight[] feeds the bento preview and the deploy basket (bps = pct × 100).
 
 export const CAP = 100 // total weight (%)
-export const STEP = 5 // +/- increment
-export const MIN = 5 // floor per asset (remove the asset entirely to go lower)
-export const MAX_ASSETS = Math.floor(CAP / MIN) // 20
+export const STEP = 5 // +/- increment (steppers + dials keep the 5-feel)
+// FLOOR = 1 (owner 2026-08-12: "i want it to be 1% min") — the contract only
+// enforces Σ=100 (toBasketEntries), so the old 5 was a UI law; 1% tail
+// positions are now composable AND deployable end-to-end. Removing an asset
+// entirely stays the way below 1.
+export const MIN = 1
+/** New assets land at a visible weight (the old MIN), never at the 1% floor. */
+export const ADD_AT = STEP
+// The 20-asset cap is a PRODUCT law, not arithmetic: it derived from CAP/MIN
+// when the floor was 5 and every deploy surface converged on it — the floor
+// relaxing to 1 must not silently allow 100-leg baskets.
+export const MAX_ASSETS = 20
+// ── THE FLOOR ON LEG COUNT IS 1 (owner 2026-08-13) ──────────────────────────
+// "for simplicity can't we allow a basket to just have one asset? since the
+// multi-chain baskets can always have one asset on one chain and a future
+// upgrade could always add more."
+//
+// The old ≥2 was OURS, never the contract's. Proved rather than assumed
+// (scripts/one-leg-probe.ts): a one-leg basket at weight 100 was assembled
+// through toBasketEntries, salted against predictTokenAddress, and eth_call
+// SIMULATED green on the production Base factory, the production Ethereum
+// factory, and the rehearsal Base factory — each alongside a two-leg control
+// through the identical code. The factory does not count legs; it enforces
+// Σ=10000 bps, which one leg at 100% satisfies exactly.
+//
+// The arithmetic below is already single-leg-correct and is meant to be:
+// equalSplit(1)=[100], isValid([100])=true, addAsset([100])=[95,5],
+// removeAsset back to one re-lands it on 100, and adjustWeight REFUSES at n=1
+// (a lone leg is pinned at 100% — see its comment).
+export const MIN_ASSETS = 1
+/** What a one-asset basket actually IS, said once so every surface says it the
+ *  same way: it tracks that asset instead of spreading risk, and the creator
+ *  fee is unchanged. A fact the buyer is owed — not a warning, not a lecture. */
+export const SINGLE_ASSET_NOTE =
+  'One asset: this basket tracks it rather than spreading risk, and the creator fee still applies.'
 
 /** Even split across n assets, summing to exactly CAP (remainder spread over the first few). */
 export function equalSplit(n: number): number[] {
@@ -64,15 +96,27 @@ export function setWeight(weights: number[], i: number, value: number): number[]
   return adjustWeight(weights, i, value - (weights[i] ?? 0))
 }
 
-/** Append an asset at MIN, borrowing from the largest existing holding. */
+/** Append an asset at ADD_AT (a visible landing, never the bare floor),
+ *  borrowing from the largest existing holding. */
 export function addAsset(weights: number[]): number[] {
   if (weights.length >= MAX_ASSETS) return weights
-  const w = [...weights, MIN]
-  // borrow MIN from the largest other
+  const w = [...weights, ADD_AT]
+  // borrow the whole landing weight from the largest other that can spare it
+  // (staying at or above the floor); Σ re-lands on exactly CAP
   let j = -1
-  let best = MIN
+  let best = MIN + ADD_AT - 1
   for (let k = 0; k < w.length - 1; k++) if (w[k] > best) ((best = w[k]), (j = k))
-  if (j >= 0) w[j] -= MIN
+  if (j >= 0) w[j] -= ADD_AT
+  else {
+    // nothing can spare the whole landing: land at the floor instead and
+    // borrow the floor (the pre-2026-08-12 behaviour, still Σ-exact)
+    w[w.length - 1] = MIN
+    let j2 = -1
+    let b2 = MIN
+    for (let k = 0; k < w.length - 1; k++) if (w[k] > b2) ((b2 = w[k]), (j2 = k))
+    if (j2 >= 0) w[j2] -= MIN
+    else return weights
+  }
   return w
 }
 

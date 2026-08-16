@@ -1,7 +1,7 @@
 // Integrator docs — keep copy mechanism-factual.
 import { useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import {
   Callout,
   Checklist,
@@ -52,15 +52,26 @@ MIN_BASKET_FEE_BPS = 100 / MAX_BASKET_FEE_BPS = 300 / CRANK_BOUNTY_BPS = 50
 const HOOKDATA = `// hookData is OPTIONAL (v3). TAGGED path: frontends encoding floors + attribution.
 abi.encode(
   uint256   minOut,    // aggregate minimum out
-  uint256[] legMins,   // per-leg minimums: quotedLeg[i] * (1 - slippageBps/10000)
+  uint256[] legMins,   // TWO FIELDS PER WORD, see below
   address   frontend   // interface tag; address(0) = none (interface slice not carved → stays in remainder)
 )
+// legMins[i] = (fundingSplitBps << 240) | perLegFloor
+//   bits [255:240]  the share of this buy that funds leg i, in bps
+//   bits [239:0]    the per-leg minimum: quotedLeg[i] * (1 - slippageBps/10000)
+// A TAGGED buy is funded ONLY by those splits. Leave them zero and nothing is
+// acquired: the mint reverts NoOutput even on a healthy basket.
+// TAKE THE SPLITS FROM factory.bareLegMins(basket, amountIn) AND PASS THEM
+// THROUGH UNTOUCHED (its words are already packed this way). Do NOT derive them
+// from the basket's target weights: on a basket whose first minter starved a leg,
+// target weights left a $10,000 buyer with $4,255 where the lens split left
+// $9,900. A leg the lens funds with 0 must carry a 0 floor too.
 // BARE path (empty hookData: generic aggregators / canonical v4 routers):
-// minOut = 0 (the caller's settlement check owns slippage) and a buy gets
-// in-protocol per-leg floors from the factory's immutable TWAP lens.
+// minOut = 0 (the caller's settlement check owns slippage) and a buy gets both
+// the split and in-protocol per-leg floors from the factory's immutable TWAP lens.
 // EXCEPTION: the FIRST mint (effectiveSupply() == 0) still hard-requires the
 // full tagged payload with non-zero legMins on every swapped leg, since it sets
-// the share basis every future holder inherits.`
+// the share basis every future holder inherits — and the lens refuses there
+// (MissingHookData), so a first mint supplies its own funding split.`
 
 const REDEEM_IN_KIND = `// Unconditional exit, works even if every pool is dead:
 redeemInKind(uint256 amount, bool[] legMask, address to)
@@ -136,7 +147,9 @@ export function Docs() {
 
       {/* two-column: TOC + article */}
       <div className="mt-10 lg:grid lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-12">
-        <Toc items={TOC} />
+        {/* the filter set goes to the nav too — a row whose section is hidden
+            has nothing to scroll to */}
+        <Toc items={TOC} hiddenIds={hiddenIds} />
 
         <article className="min-w-0 max-w-3xl space-y-12">
           {/* 1 — the page OPENS on what a basket is (owner 17:34); the pricing

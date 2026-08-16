@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
 import { captureRefFromUrl, getStoredRef, refLinkFor, resolveRefInput } from './referral'
 
@@ -6,6 +6,22 @@ import { captureRefFromUrl, getStoredRef, refLinkFor, resolveRefInput } from './
 // `node` environment (no DOM), so stub a minimal in-memory localStorage for the
 // read/write/capture paths. The ENS branch of resolveRefInput hits the network and
 // is intentionally not exercised here (only the 0x-address + invalid paths are).
+//
+// The CLAIMED-NAME branch resolves through the handle registry (desk 202); the
+// registry is mocked so these tests stay hermetic — and so the pre-existing
+// "rejects a non-address string" case keeps meaning what it says now that a
+// syntactically-valid name goes to the registry instead of straight to null.
+// vi.mock is hoisted above this file's consts, so the fixture the factory
+// closes over must be hoisted with it.
+const { OWNER } = vi.hoisted(() => ({ OWNER: `0x${'2'.repeat(40)}` }))
+vi.mock('./handle-registry', () => ({
+  addressFor: vi.fn(async (name: string) =>
+    name === 'takenname'
+      ? { status: 'found', owner: { address: OWNER, handle: 'takenname', display: 'takenname', blockNumber: 0n, logIndex: 0 } }
+      : { status: 'none' },
+  ),
+  ownerAddress: (o: { address: string }) => o.address,
+}))
 const makeStorage = () => {
   const m = new Map<string, string>()
   return {
@@ -88,8 +104,24 @@ describe('resolveRefInput', () => {
     expect(await resolveRefInput(ZERO)).toBeNull()
   })
 
-  it('rejects a non-address, non-ENS string', async () => {
+  it('rejects a non-address, non-ENS string that no one has claimed', async () => {
     expect(await resolveRefInput('nope')).toBeNull()
+  })
+
+  it('resolves a CLAIMED spectrum name to its owner (the short invite link)', async () => {
+    expect((await resolveRefInput('takenname'))?.toLowerCase()).toBe(OWNER.toLowerCase())
+  })
+
+  it('rejects a string that cannot be a handle without a registry read', async () => {
+    const { addressFor } = await import('./handle-registry')
+    ;(addressFor as ReturnType<typeof vi.fn>).mockClear()
+    expect(await resolveRefInput('@@not a handle@@')).toBeNull()
+    expect(addressFor).not.toHaveBeenCalled()
+  })
+
+  it('captures a claimed-name ref end-to-end', async () => {
+    await captureRefFromUrl('?ref=takenname')
+    expect(getStoredRef()?.toLowerCase()).toBe(OWNER.toLowerCase())
   })
 })
 

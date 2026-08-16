@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import type { AssetExposure, ExposureBreakdown, WeightBasis } from '../lib/spectrum/exposure'
 import { AssetLogo } from './AssetLogo'
 import { ChainBadge } from './ChainBadge'
@@ -207,7 +208,7 @@ export function PortfolioExposure({
           {barAssets.map((a) => (
             <div
               key={a.key}
-              title={`${a.symbol} · ${a.pct.toFixed(1)}%`}
+              title={`${showSymbol(a.symbol)} · ${a.pct.toFixed(1)}%`}
               style={{ width: `${a.pct}%`, background: tokenVisual(a.symbol, a.address).color }}
               className="h-full transition-[width] duration-500 ease-out"
             />

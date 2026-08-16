@@ -1,5 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { erc20Abi, formatUnits, type Address } from 'viem'
@@ -598,7 +599,7 @@ function BundleBuilder() {
                   <button key={`${b.chainId}:${b.address}`} type="button" onClick={() => add(b)} className="press flex items-center gap-2.5 rounded-xl px-2 py-1.5 text-left hover:bg-white/[0.05]">
                     <BasketAvatar address={b.address} symbol={b.symbol} size={26} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-display text-sm font-semibold text-ink">${b.symbol}</span>
+                      <span className="block truncate font-display text-sm font-semibold text-ink">${showSymbol(b.symbol)}</span>
                       <span className="block truncate font-mono text-[10px] text-ink-faint">{b.name}</span>
                     </span>
                     <ChainBadge chainId={b.chainId} />

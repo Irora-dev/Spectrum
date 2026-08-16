@@ -164,20 +164,23 @@ export function computeBasketDiff(prev: BasketData, next: BasketData): BasketDif
   }
 }
 
-// ── the version-ticker nudge ──────────────────────────────────────────────────
+// ── the version-ticker bump (an OFFERED convenience) ──────────────────────────
 // Same name + ticker on a new version is VALID (identity = contract address),
 // but on wallets/DEX UIs/aggregators two live tokens under one ticker read as
-// "which one do I buy?" (owner 2026-07-07 13:38). So the new-version flow
-// PREFILLS an incremented ticker — a gentle default, freely editable, never
-// enforced: BLUE → BLUEV2 · BLUEV1 → BLUEV2 · TBV2 → TBV3.
+// "which one do I buy?" (owner 2026-07-07 13:38). The bump was the seed
+// default for a while; since the owner's 2026-08-12 ruling an edit KEEPS the
+// predecessor's ticker (version-seed.ts) and the UIs offer this bump behind
+// their change-ticker toggle: BLUE → BLUEV2 · BLUEV1 → BLUEV2 · TBV2 → TBV3.
 
 /** Max ERC-20-symbol length the builder accepts (mirrors its input cap). */
 const MAX_SYMBOL_LEN = 11
 
-/** Next versioned ticker for a successor basket. A trailing `V<digits>` suffix
- *  increments; anything else gets `V2` appended, trimming the base to fit the
- *  11-char cap. Input is expected uppercase-alphanumeric (the builder's rule);
- *  anything unparseable is returned untouched. */
+/** Next versioned ticker for a successor basket — an OFFERED convenience for
+ *  the UIs' change-ticker toggle, NO LONGER the seed default (keep-same,
+ *  owner 2026-08-12; version-seed.ts seeds v1's own symbol). A trailing
+ *  `V<digits>` suffix increments; anything else gets `V2` appended, trimming
+ *  the base to fit the 11-char cap. Input is expected uppercase-alphanumeric
+ *  (the builder's rule); anything unparseable is returned untouched. */
 export function bumpVersionTicker(symbol: string): string {
   const s = symbol.trim().toUpperCase()
   if (!/^[A-Z0-9]{1,11}$/.test(s)) return symbol

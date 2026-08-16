@@ -46,12 +46,22 @@ test('PAGE_KEYS mirrors app/src/theme/brand.ts exactly, and in order', () => {
 // this renderer has to be able to emit every one of them.
 test('every default-ON BrandConfig knob the app declares is emittable here', () => {
   const src = readFileSync(new URL('../app/src/theme/brand.ts', import.meta.url), 'utf8')
-  const declared = ['stocks', 'starterTokens', 'prismCredit', 'setupStudio']
+  // setupStudio left this list 2026-08-02: it is OPT-IN now, so its emittable
+  // value is `true`, not `false`. Covered just below rather than dropped.
+  const declared = ['stocks', 'starterTokens', 'prismCredit']
   for (const k of declared) {
     assert.match(src, new RegExp(`\\n\\s*${k}\\?: boolean`), `${k} should be a BrandConfig knob`)
     const out = renderBrandConfig({ name: 'Baskets', palette: {}, [k]: false })
     assert.match(out, new RegExp(`${k}: false`), `renderBrandConfig must emit ${k}: false`)
   }
+  // The OPT-IN knob gets the same protection in its own direction: the app must
+  // declare it, and this renderer must be able to emit it.
+  assert.match(src, /\n\s*setupStudio\?: boolean/, 'setupStudio should be a BrandConfig knob')
+  assert.match(
+    renderBrandConfig({ name: 'Baskets', palette: {}, setupStudio: true }),
+    /setupStudio: true/,
+    'renderBrandConfig must emit setupStudio: true',
+  )
 })
 
 test('renderBrandConfig emits the default-ON feature knobs only when turned OFF', () => {
@@ -71,8 +81,16 @@ test('renderBrandConfig emits the default-ON feature knobs only when turned OFF'
   assert.match(off, /stocks: false/)
   assert.match(off, /starterTokens: false/)
   assert.match(off, /prismCredit: false/)
-  assert.match(off, /setupStudio: false/)
+  // setupStudio is OPT-IN since 2026-08-02, so `false` is the DEFAULT and emits
+  // nothing: an absent key already means off. Asserting its absence is what
+  // catches a regression back to opt-out.
+  assert.doesNotMatch(off, /setupStudio/)
   assert.match(off, /defaultChainId: 8453/)
+})
+
+test('setupStudio is OPT-IN: the key is emitted only when explicitly enabled', () => {
+  const optedIn = renderBrandConfig({ name: 'Baskets', palette: {}, setupStudio: true })
+  assert.match(optedIn, /setupStudio: true/)
 })
 
 test('renderEnv carries only the RPC key + explicit overrides; flags/identity move to site.config.json', () => {

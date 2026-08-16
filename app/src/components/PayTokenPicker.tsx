@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
 import { formatUnits, isAddress, type Address } from 'viem'
 import { useAccount } from 'wagmi'
@@ -64,6 +65,10 @@ export function PayTokenPicker({
   const [custom, setCustom] = useState<Row | null>(null)
   const [customState, setCustomState] = useState<'idle' | 'loading' | 'unreadable'>('idle')
   const [picking, setPicking] = useState<string | null>(null)
+  // Rows whose pick-time decimals() read came back empty, by lowercased address.
+  // A Set, not one slot: a second failing row must not silently erase the first
+  // row's explanation while the user is still looking at it.
+  const [unreadable, setUnreadable] = useState<Set<string>>(new Set())
 
   const excluded = useMemo(
     () => new Set(exclude.filter(Boolean).map((a) => (a as string).toLowerCase())),
@@ -144,6 +149,7 @@ export function PayTokenPicker({
     fetchedRef.current = new Set()
     setBalances(new Map())
     setDecimalsMap(new Map())
+    setUnreadable(new Set()) // a different chain is a different set of contracts
   }, [viewer, chainId])
   useEffect(() => {
     if (!viewer) return
@@ -248,13 +254,26 @@ export function PayTokenPicker({
     let d = decimalsOf(r)
     if (d == null) {
       // Stock-shelf rows carry no decimals — one read resolves it at pick time.
-      setPicking(r.address.toLowerCase())
+      const key = r.address.toLowerCase()
+      setUnreadable((s) => {
+        if (!s.has(key)) return s
+        const next = new Set(s)
+        next.delete(key)
+        return next
+      })
+      setPicking(key)
       d = await clientFor(chainId)
         .readContract({ address: r.address as Address, abi: erc20MetaAbi, functionName: 'decimals' })
         .then(asTokenDecimals)
         .catch(() => null)
       setPicking(null)
-      if (d == null) return // unreadable token — leave the picker open, no guess
+      // Still no guess — but say so on the row. Bailing out silently cleared the
+      // spinner and left the picker exactly as it was, so an RPC hiccup read as
+      // a dead button and people tapped it over and over (audit 2026-08-07).
+      if (d == null) {
+        setUnreadable((s) => new Set(s).add(key))
+        return
+      }
     }
     onPick({ kind: 'erc20', address: r.address as Address, symbol: r.symbol, decimals: d, chainId })
   }
@@ -290,11 +309,7 @@ export function PayTokenPicker({
             {customState === 'loading' && (
               <p className="px-2 py-4 text-center font-mono text-[11px] text-ink-faint">Reading token…</p>
             )}
-            {customState === 'unreadable' && (
-              <p className="px-2 py-4 text-center font-mono text-[11px] text-ink-faint">
-                That address doesn&rsquo;t answer as an ERC-20 on {cfg.name}.
-              </p>
-            )}
+            {customState === 'unreadable' && <UnreadableNote chainName={cfg.name} />}
             {custom && (
               <>
                 <TokenRow row={custom} chainId={chainId} balance={balanceLabel(custom)} busy={false} onPick={() => void pick(custom)} />
@@ -310,14 +325,18 @@ export function PayTokenPicker({
               </p>
             )}
             {view.map((r) => (
-              <TokenRow
-                key={r.address}
-                row={r}
-                chainId={chainId}
-                balance={balanceLabel(r)}
-                busy={picking === r.address.toLowerCase()}
-                onPick={() => void pick(r)}
-              />
+              <div key={r.address}>
+                <TokenRow
+                  row={r}
+                  chainId={chainId}
+                  balance={balanceLabel(r)}
+                  busy={picking === r.address.toLowerCase()}
+                  onPick={() => void pick(r)}
+                />
+                {unreadable.has(r.address.toLowerCase()) && (
+                  <UnreadableNote chainName={cfg.name} className="px-2 pb-1 text-left" />
+                )}
+              </div>
             ))}
           </div>
 
@@ -330,6 +349,17 @@ export function PayTokenPicker({
       </div>
     </div>,
     document.body,
+  )
+}
+
+/** "This contract didn't answer" — defined once so a row whose decimals() read
+ *  fails speaks in the same words as a pasted dud address, rather than getting a
+ *  second wording invented for the same dead end. */
+function UnreadableNote({ chainName, className = 'px-2 py-4 text-center' }: { chainName: string; className?: string }) {
+  return (
+    <p className={`font-mono text-[11px] text-ink-faint ${className}`}>
+      That address doesn&rsquo;t answer as an ERC-20 on {chainName}.
+    </p>
   )
 }
 
@@ -356,7 +386,7 @@ function TokenRow({
       <AssetLogo address={row.address} symbol={row.symbol} chainId={chainId} size={32} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="truncate font-display text-sm font-semibold text-ink">{row.symbol}</span>
+          <span className="truncate font-display text-sm font-semibold text-ink">{showSymbol(row.symbol)}</span>
           {row.source === 'recent' && (
             <span className="rounded-md border border-white/10 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-ink-faint">
               recent

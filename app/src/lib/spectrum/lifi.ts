@@ -42,7 +42,11 @@ const LIFI_API = 'https://li.quest/v1/quote'
 // A chain absent here has NO LiFi path: fail closed, never fall through.
 // If LiFi migrates a diamond this refuses routes until the constant is
 // updated — deliberate for a money path; re-run the probe to refresh.
-const LIFI_TARGETS: Record<number, string> = {
+// EXPORTED so the approvals ledger single-sources it (battle-test finding,
+// 2026-08-04): allowances.ts kept its own copy of these addresses, and at a
+// diamond migration one could update without the other — leaving a standing
+// LiFi approval invisible in the ledger that exists to reveal it.
+export const LIFI_TARGETS: Record<number, string> = {
   1: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae',
   8453: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae',
   4663: '0xb477751b76cf82d00a686a1232f5fcd772414af3',
@@ -67,26 +71,44 @@ export interface LifiQuote {
   approvalAddress: Address
   /** The transaction to send verbatim. */
   tx: { to: Address; data: Hex; value: bigint; gasLimit: bigint | null }
+  /** The route's own gas estimate in USD, as LiFi reports it
+   *  (`estimate.gasCosts[].amountUSD` summed — never re-priced here). null
+   *  whenever the answer is not WHOLE: no gasCosts, empty, or any entry
+   *  unreadable. A partial sum would UNDERSTATE the route's gas and tilt a
+   *  net-of-gas comparison toward the aggregator — so callers get the whole
+   *  truth or an honest null, which the Phase-3 comparator treats as
+   *  'direct wins uncontested' (specallocator B1), never as zero. */
+  gasCostUsd: number | null
   /** True when settlement is asynchronous (see fetchLifiStatus). */
   crossChain?: boolean
+  /** Native charged ON TOP of `fromAmount` by the route (messaging/relayer
+   *  fees, `estimate.feeCosts` with included:false on the signing chain) —
+   *  already inside `tx.value`, reconciled byte-exact at parse. 0n when none.
+   *  Callers sizing a native spend against a balance must count it: the
+   *  wallet will be asked for fromAmount PLUS this. */
+  nativeFeeRaw: bigint
+  /** The route's own duration estimate, whole seconds (LiFi
+   *  `estimate.executionDuration`). null when absent/unreadable — an ETA is
+   *  display truth, never a promise, and a missing one stays missing. */
+  etaSec: number | null
 }
 
 export class LifiQuoteError extends Error {}
 
 const ADDR = /^0x[0-9a-fA-F]{40}$/
 
-/**
- * One same-chain quote: `fromToken` → `toToken` for `fromAmount` raw units.
- * `slippageBps` maps to LiFi's fractional slippage. Throws LifiQuoteError with
- * an honest message on no-route/failure — callers surface it, never guess.
- */
-export async function fetchLifiQuote(args: {
+export interface LifiQuoteArgs {
   chainId: number
   fromToken: Address
   toToken: Address
   fromAmount: bigint
   fromAddress: Address
   slippageBps: number
+  /** Route ordering LiFi optimises for. DEFAULT 'CHEAPEST' (the owner 2026-08-09:
+   *  cheapest — that one word is the kit-wide flip). A parameter so a future
+   *  surface can differ DELIBERATELY, per call — never by editing the shared
+   *  default out from under every other caller. */
+  order?: 'CHEAPEST' | 'FASTEST'
   /** CROSS-CHAIN pay side (owner 2026-07-29). Omit for a same-chain swap — every
    *  existing caller does, and gets byte-identical behaviour. When set, the route
    *  starts on `fromChainId` and DELIVERS on `chainId`, which makes settlement
@@ -94,11 +116,30 @@ export async function fetchLifiQuote(args: {
    *  caller MUST track delivery with `fetchLifiStatus` before it can treat the
    *  funds as usable. */
   fromChainId?: number
+  /** REFUEL (bridging ruling, the owner 2026-08-02): deliver this much of the
+   *  bridged amount as destination NATIVE GAS, in fromToken raw units — so a
+   *  fresh wallet can sign on arrival. Appended to the query ONLY when > 0:
+   *  refuel coverage is not universal per route/tool, and sending the
+   *  parameter unconditionally can turn a working route into an error.
+   *  (4663 note, probed live 2026-08-02: bridge routes INTO 4663 exist via
+   *  Relay, and ETH IS that chain's gas — an ETH-funded bridge needs no
+   *  refuel there at all; refuel matters for settlement-denominated bridging
+   *  into ETH/Base.) The value is the caller's to compute from
+   *  SpectrumContracts' sizing rule (lib/spectrum/refuel.ts) — never a
+   *  hardcoded figure, which goes stale and silently under-refuels into the
+   *  exact wall this exists to close. KNOWN LIMIT: the quote response carries
+   *  no verifiable refuel echo, so a route that silently ignores this
+   *  parameter is undetectable client-side — Phase-3 callers must treat
+   *  refuel as best-effort and verify DESTINATION NATIVE BALANCE on arrival
+   *  before telling the user they can sign. */
+  fromAmountForGas?: bigint
   signal?: AbortSignal
-}): Promise<LifiQuote> {
-  const fromChainId = args.fromChainId ?? args.chainId
+}
+
+/** Pure query assembly for the quote endpoint (unit-tested; fetch-free). */
+export function buildLifiQuoteQuery(args: Omit<LifiQuoteArgs, 'signal'>): URLSearchParams {
   const q = new URLSearchParams({
-    fromChain: String(fromChainId),
+    fromChain: String(args.fromChainId ?? args.chainId),
     toChain: String(args.chainId),
     fromToken: args.fromToken,
     toToken: args.toToken,
@@ -106,10 +147,39 @@ export async function fetchLifiQuote(args: {
     fromAddress: args.fromAddress,
     // Pin the recipient explicitly rather than relying on the service's
     // default-to-sender (F-5): asking for it is what makes the echo check
-    // below meaningful.
+    // in parseLifiQuote meaningful.
     toAddress: args.fromAddress,
     slippage: (args.slippageBps / 10_000).toString(),
   })
+  // Route order: CHEAPEST unless a surface deliberately differs (the owner
+  // 2026-08-09 ruling — cheapest; flipping the kit's preference is this one
+  // word, in this one place).
+  q.set('order', args.order ?? 'CHEAPEST')
+  // WHITE-LABEL LAW: this kit ships origin-less by design, so attribution to
+  // LiFi is the OPERATOR'S choice — made only by setting VITE_LIFI_INTEGRATOR
+  // in their own deployment env. Absent/empty ⇒ the parameter is OMITTED
+  // entirely. NEVER hardcode an identity here: a baked-in integrator would
+  // stamp every operator's traffic with someone else's name.
+  const integrator: string | undefined = import.meta.env?.VITE_LIFI_INTEGRATOR
+  if (typeof integrator === 'string' && integrator.trim() !== '') q.set('integrator', integrator.trim())
+  // With refuel set, the quote's toAmount/toAmountMin remain the TOKEN delivery
+  // alone — the gas portion rides beside it. A refuel-carrying quote therefore
+  // shows a lower toAmount than a bare one for the same fromAmount; that is
+  // honest (the gas has value), and quote races must compare like with like.
+  if (args.fromAmountForGas != null && args.fromAmountForGas > 0n) {
+    q.set('fromAmountForGas', args.fromAmountForGas.toString())
+  }
+  return q
+}
+
+/**
+ * One same-chain quote: `fromToken` → `toToken` for `fromAmount` raw units.
+ * `slippageBps` maps to LiFi's fractional slippage. Throws LifiQuoteError with
+ * an honest message on no-route/failure — callers surface it, never guess.
+ */
+export async function fetchLifiQuote(args: LifiQuoteArgs): Promise<LifiQuote> {
+  const fromChainId = args.fromChainId ?? args.chainId
+  const q = buildLifiQuoteQuery(args)
   let res: Response
   try {
     res = await fetch(`${LIFI_API}?${q}`, { headers: { Accept: 'application/json' }, signal: args.signal })
@@ -193,14 +263,67 @@ export function parseLifiQuote(
   if (toAmountMin <= 0n || toAmount <= 0n) throw new LifiQuoteError('Route quoted zero output.')
 
   const value = BigInt(String(tx.value ?? '0x0'))
-  // Native pay: the transaction may carry exactly the ETH we offered, never more.
+  // ── the value check reconciles against the route's OWN fee accounting ──
+  // (owner 2026-08-16, live: the RH leg's ETH→USDG conversion died here.
+  // Cross-chain tools may charge a native MESSAGING fee ON TOP of fromAmount,
+  // disclosed in estimate.feeCosts with included:false — the old strict
+  // equality rejected every such honest route, for token pays too, where the
+  // fee makes value nonzero. The law is unchanged in spirit: the number the
+  // response DISCLOSES must be the number the transaction ASKS FOR, byte-
+  // exact. An undisclosed wei of value still rejects.)
+  const feeCosts = Array.isArray(est.feeCosts) ? (est.feeCosts as Record<string, unknown>[]) : []
+  let nativeFeeRaw = 0n
+  for (const f of feeCosts) {
+    if (f?.included !== false) continue // included fees already live inside fromAmount
+    const tok = f?.token as Record<string, unknown> | undefined
+    const addr = String(tok?.address ?? '').toLowerCase()
+    if (addr !== LIFI_NATIVE && addr !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee') continue
+    // a destination-side fee entry never rides THIS transaction's value
+    const feeChain = tok?.chainId != null ? Number(tok.chainId) : signingChain
+    if (feeChain !== signingChain) continue
+    let amt: bigint
+    try {
+      amt = BigInt(String(f?.amount ?? ''))
+    } catch {
+      throw new LifiQuoteError('Malformed route response (fee costs).')
+    }
+    if (amt < 0n) throw new LifiQuoteError('Malformed route response (fee costs).')
+    nativeFeeRaw += amt
+  }
   const isNative = asked.fromToken.toLowerCase() === LIFI_NATIVE
-  if (isNative ? value !== asked.fromAmount : value !== 0n)
+  // A native "fee" exceeding the principal is not a fee — no honest route
+  // charges more to carry the money than the money.
+  if (isNative && nativeFeeRaw > asked.fromAmount)
+    throw new LifiQuoteError('Route response rejected: its native fee exceeds the amount being sent.')
+  const expectedValue = (isNative ? asked.fromAmount : 0n) + nativeFeeRaw
+  if (value !== expectedValue)
     throw new LifiQuoteError('Route response rejected: unexpected transaction value.')
 
   const gasRaw = tx.gasLimit != null ? BigInt(String(tx.gasLimit)) : null
   const data = String(tx.data ?? '')
   if (!data.startsWith('0x') || data.length < 10) throw new LifiQuoteError('Malformed route response (calldata).')
+
+  // Gas in USD as LiFi reports it — whole-or-null (see the interface note).
+  // Display/comparison data, not an execution guard: a bad value degrades to
+  // null, never throws a route away.
+  const gasCosts = Array.isArray(est.gasCosts) ? (est.gasCosts as Record<string, unknown>[]) : null
+  let gasCostUsd: number | null = null
+  if (gasCosts && gasCosts.length > 0) {
+    let sum = 0
+    for (const g of gasCosts) {
+      const raw = g?.amountUSD
+      // Number('') is 0 — an empty string would read as FREE gas, so only a
+      // non-empty string or a plain number counts as readable at all.
+      const v =
+        typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : typeof raw === 'number' ? raw : NaN
+      if (!Number.isFinite(v) || v < 0) {
+        sum = NaN
+        break
+      }
+      sum += v
+    }
+    gasCostUsd = Number.isFinite(sum) ? sum : null
+  }
 
   return {
     tool: String(body.tool ?? 'LiFi'),
@@ -208,9 +331,15 @@ export function parseLifiQuote(
     toAmountMin,
     approvalAddress: approvalAddress as Address,
     tx: { to: to as Address, data: data as Hex, value, gasLimit: gasRaw },
+    nativeFeeRaw,
+    gasCostUsd,
     // A cross-chain route does NOT settle in the signed transaction — the caller
     // must poll fetchLifiStatus before spending the proceeds.
     crossChain: askedFromChain !== asked.chainId,
+    etaSec: (() => {
+      const d = (est as { executionDuration?: unknown }).executionDuration
+      return typeof d === 'number' && Number.isFinite(d) && d > 0 ? Math.round(d) : null
+    })(),
   }
 }
 

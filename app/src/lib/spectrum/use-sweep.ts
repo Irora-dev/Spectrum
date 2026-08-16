@@ -3,7 +3,7 @@ import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { encodeFunctionData, formatUnits, parseEventLogs, type Address, type Hex } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
 import { chainCfg } from '../chain/chains'
-import { deploymentFor } from '../chain/deployments'
+import { deploymentFor, settlementDecimalsFor } from '../chain/deployments'
 import { clientFor } from '../chain/rpc'
 import { SWAP_ENABLED, TRADING_ENABLED } from '../config/features'
 import { getBasketData } from './basket-data'
@@ -14,6 +14,7 @@ import { approvalPlan } from './migrate-math'
 import { gasWithHeadroom } from './gas'
 import { buildSwapQuote } from './swap-quote'
 import { encodeMintHookData, clampSlippageBps } from './hook-data'
+import { fundingSplitBpsOf, lensFactoryFor, resolveMintFunding } from './mint-funding'
 import { getStoredRef } from './referral'
 import { friendlyRevert } from './decode-revert'
 
@@ -305,6 +306,23 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
       const ix = await getBasketData(basket, chainId)
       const feeFrac = Number.isFinite(feeBps) ? feeBps / 10_000 : 0.01
       const usdcFloat = Number(formatUnits(sweptUsdc, 6))
+      // Compounding IS a buy, so it needs the same funding split as the /swap path: a
+      // payload with no split acquires nothing on a D-R1 basket (mint-funding.ts).
+      // The basket's OWN lineage factory owns the lens for it (mint-funding.ts).
+      const lensFactory = await lensFactoryFor(chainId, basket as Address)
+      if (!lensFactory) {
+        throw new Error('Could not tell which contracts this basket belongs to. Refresh and try again.')
+      }
+      const funding = await resolveMintFunding(client, {
+        chainId,
+        factory: lensFactory,
+        basket: basket as Address,
+        amountIn: sweptUsdc,
+        legCount: ix.holdings.length,
+        firstMint: (ix.effectiveSupply ?? 1) === 0,
+      })
+      if (!funding.ok) throw new Error(funding.reason)
+      const compoundSplit = fundingSplitBpsOf(funding.funding)
       // Aggregate floor must haircut the REALISED mint, not usdcNet/NAV. The per-leg
       // realism below is gated on a V3 quoter, which some chains (Robinhood) do not
       // deploy — this simulate needs only the router, so it works everywhere and also
@@ -319,6 +337,7 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
             legCount: ix.holdings.length,
             holder: address,
             allowanceCovers: false,
+            fundingSplitBps: compoundSplit,
           })) ?? undefined)
         : undefined
       const bq = buildSwapQuote({
@@ -329,7 +348,9 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
         feeFrac,
         slippageBps: clampSlippageBps(Number(SWEEP_SLIPPAGE_BPS)),
         holdings: ix.holdings,
+        settlementDecimals: settlementDecimalsFor(chainId),
         basketDecimals: ix.decimals,
+        fundingSplitBps: compoundSplit,
       })
       if (!bq) throw new Error('Leftover is too small to compound into shares — cash out instead.')
       await approve('approve-usdc', usdc, spectrumRouter, sweptUsdc)
@@ -346,7 +367,8 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
           weth,
           ix.holdings.map((h, i) => ({
             asset: h.asset as Address,
-            weightPct: h.targetWeightPct,
+            // The share the mint will really fund this leg with (bps → percent).
+            weightPct: compoundSplit ? compoundSplit[i] / 100 : h.targetWeightPct,
             isUsdc: h.asset.toLowerCase() === usdc.toLowerCase(),
             spotAmount: bq.quotedLegAmounts[i],
           })),
@@ -360,7 +382,12 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
       // acquisition cost, not consumed by it (same fix as the buy path's SlippageExceeded).
       let minShares = bq.minOutRaw
       try {
-        const probe = encodeMintHookData({ quotedLegAmounts: legAmounts, slippageBps: slip, minOut: 1n })
+        const probe = encodeMintHookData({
+          quotedLegAmounts: legAmounts,
+          slippageBps: slip,
+          minOut: 1n,
+          funding: funding.funding,
+        })
         const sim = await publicClient.simulateContract({
           account: holder,
           address: spectrumRouter,
@@ -378,6 +405,7 @@ export function useSweep({ residue, basket, chainId, feeBps, open }: UseSweepArg
         slippageBps: slip,
         minOut: minShares,
         interfaceTag: getStoredRef(address), // referral (owner 2026-07-07)
+        funding: funding.funding,
       })
       const compoundArgs = {
         account: holder,

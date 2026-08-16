@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
 import { formatUnits, parseUnits, type Address } from 'viem'
-import { useAccount, useSendTransaction, useSwitchChain, useWriteContract } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { deploymentFor } from '../lib/chain/deployments'
 import { clientFor } from '../lib/chain/rpc'
-import { erc20ApproveAbi, erc20BalanceAbi } from '../lib/spectrum/abis-v2'
+import { erc20BalanceAbi } from '../lib/spectrum/abis-v2'
 import { fetchLifiQuote, LIFI_NATIVE, type LifiQuote } from '../lib/spectrum/lifi'
 import {
-  addBridge,
   bridgeRows,
   dismissBridge,
   pollBridge,
@@ -16,10 +16,11 @@ import {
   type PendingBridge,
 } from '../lib/spectrum/bridge-pending'
 import { DEFAULT_SLIPPAGE_BPS } from '../lib/spectrum/hook-data'
-import { approvalPlan } from '../lib/spectrum/migrate-math'
 import { hubPay, type PayToken } from '../lib/spectrum/pay-token'
+import { useBridgeLeg } from '../lib/spectrum/use-bridge-leg'
 import { AssetLogo } from './AssetLogo'
 import { PayTokenPicker } from './PayTokenPicker'
+import { useNetworkSwitch, WrongNetworkNotice } from './WrongNetwork'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cross-chain funding, phase 1 (owner 2026-07-29): move funds from another
@@ -51,10 +52,7 @@ function sourceToken(pay: PayToken, srcChainId: number): { address: Address; sym
 export function BridgeFund({ destChainId, onClose }: { destChainId: number; onClose: () => void }) {
   const dest = chainCfg(destChainId)
   const destUsdc = deploymentFor(destChainId).usdc
-  const { address: holder, chainId: walletChainId, isConnected } = useAccount()
-  const { switchChain, isPending: switching } = useSwitchChain()
-  const { sendTransactionAsync } = useSendTransaction()
-  const { writeContractAsync } = useWriteContract()
+  const { address: holder, isConnected } = useAccount()
 
   const sources = SUPPORTED_CHAIN_IDS.filter((id) => id !== destChainId && chainCfg(id).hasLifi)
   const [srcChainId, setSrcChainId] = useState<number>(sources[0])
@@ -65,30 +63,55 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
   const [quoting, setQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
   const [balance, setBalance] = useState<bigint | null>(null)
-  const [phase, setPhase] = useState<'idle' | 'approving' | 'signing' | 'sent'>('idle')
-  // closing the modal mid-flow must not surface a contextless SECOND wallet
-  // popup after the approve confirms (audit, suspected) — checked between steps
-  const closedRef = useRef(false)
-  useEffect(() => () => { closedRef.current = true }, [])
+  // The money path lives in useBridgeLeg (BridgeFund's extracted executor —
+  // fresh quote, exact approval, verbatim send, pending row, and the unmount
+  // latch that stops the transfer if this modal closes between the approval
+  // and the signature; leaving mid-flow is what costs money, audit 2026-08-07).
+  // This surface always showed ONE label across quote+approve, so the hook's
+  // 'quoting' renders as 'approving' — every state below is unchanged.
+  const legRun = useBridgeLeg()
+  const phase = legRun.phase === 'quoting' ? 'approving' : legRun.phase
+  // Everything between the first wallet popup and the signed transfer. Both
+  // dismissal paths consult this.
+  const inFlight = phase === 'approving' || phase === 'signing'
   const [error, setError] = useState<string | null>(null)
+  // Armed by the first mid-flight exit attempt. A wallet that never answers
+  // leaves `phase` stuck forever and this modal has no ✕ of its own, so the way
+  // out must survive the guard — it is made deliberate, never taken away.
+  const [confirmExit, setConfirmExit] = useState(false)
   const seq = useRef(0)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      if (!inFlight || confirmExit) onClose()
+      else setConfirmExit(true) // first press only arms the notice by the CTA
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, inFlight, confirmExit])
 
   // A source-chain switch invalidates an erc20 pick (addresses are per-chain).
+  // ONLY that reset clears the amount — it was typed against a token we just
+  // took away. A bare network switch (people flip chains to compare routes)
+  // keeps what was typed; wiping it unconditionally read as the input eating
+  // keystrokes (audit 2026-08-07). `pay` is deliberately not a dep: this fires
+  // on a source switch, and the effect sees the current pick either way.
   useEffect(() => {
-    setPay((p) => (p.kind === 'erc20' && p.chainId !== srcChainId ? hubPay('ETH') : p))
+    if (pay.kind === 'erc20' && pay.chainId !== srcChainId) {
+      setPay(hubPay('ETH'))
+      setAmount('')
+    }
     setQuote(null)
-    setAmount('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcChainId])
 
   const src = chainCfg(srcChainId)
+  // The network this modal needs is the SOURCE chain, not the destination: the
+  // transfer is signed where the funds leave from. One switch mutation for the
+  // whole modal — the CTA below performs it, the notice speaks for it (the
+  // 2026-08-05 wrong-network consolidation; see WrongNetwork.tsx).
+  const netSwitch = useNetworkSwitch(srcChainId)
   const token = sourceToken(pay, srcChainId)
   const amountRaw = useMemo(() => {
     if (!token) return 0n
@@ -150,70 +173,23 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
     return () => window.clearTimeout(t)
   }, [holder, token?.address, srcChainId, destChainId, destUsdc, amountRaw])
 
-  const wrongChain = isConnected && walletChainId !== srcChainId
+  const wrongChain = netSwitch.mismatch
   const insufficient = balance != null && amountRaw > 0n && amountRaw > balance
 
   async function send() {
-    if (!holder || !token || !destUsdc || amountRaw <= 0n || phase !== 'idle') return
+    if (!holder || !token || !destUsdc || amountRaw <= 0n || legRun.phase !== 'idle') return
     setError(null)
-    try {
-      // Fresh quote at signing time (routes go stale in minutes).
-      setPhase('approving')
-      const q = await fetchLifiQuote({
-        chainId: destChainId,
-        fromChainId: srcChainId,
-        fromToken: token.address,
-        toToken: destUsdc as Address,
-        fromAmount: amountRaw,
-        fromAddress: holder,
-        slippageBps: DEFAULT_SLIPPAGE_BPS,
-      })
-      if (token.address !== LIFI_NATIVE) {
-        const client = clientFor(srcChainId)
-        const allowance = await client.readContract({
-          address: token.address,
-          abi: erc20ApproveAbi,
-          functionName: 'allowance',
-          args: [holder, q.approvalAddress],
-        })
-        const mode = approvalPlan(allowance, amountRaw)
-        const values: bigint[] = mode === 'none' ? [] : mode === 'zero-first' ? [0n, amountRaw] : [amountRaw]
-        for (const value of values) {
-          const h = await writeContractAsync({
-            address: token.address,
-            abi: erc20ApproveAbi,
-            functionName: 'approve',
-            args: [q.approvalAddress, value],
-            chainId: srcChainId,
-          })
-          await clientFor(srcChainId).waitForTransactionReceipt({ hash: h })
-        }
-      }
-      if (closedRef.current) return
-      setPhase('signing')
-      const h = await sendTransactionAsync({
-        to: q.tx.to,
-        data: q.tx.data,
-        value: q.tx.value,
-        gas: q.tx.gasLimit ?? undefined,
-        chainId: srcChainId,
-      })
-      addBridge({
-        txHash: h,
-        fromChainId: srcChainId,
-        toChainId: destChainId,
-        holder,
-        fromSymbol: token.symbol,
-        fromAmountRaw: amountRaw,
-        fromDecimals: token.decimals,
-        quotedToAmountRaw: q.toAmount,
-        startedAt: Date.now(),
-      })
-      setPhase('sent')
-    } catch (e) {
-      setPhase('idle')
-      setError(e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e))
-    }
+    setConfirmExit(false) // a retry after a failure starts from an unarmed exit
+    // The executor owns the sequence (fresh quote → exact approval → verbatim
+    // send → pending row) and settles back to idle on failure.
+    const r = await legRun.quoteAndSendToken({
+      fromChainId: srcChainId,
+      toChainId: destChainId,
+      fromToken: token,
+      amountRaw,
+      holder,
+    })
+    if ('error' in r) setError(r.error)
   }
 
   // ── CTA state ──────────────────────────────────────────────────────────────
@@ -222,9 +198,9 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
   else if (!destUsdc) cta = { label: `No settlement asset configured on ${dest.name}`, disabled: true }
   else if (wrongChain)
     cta = {
-      label: switching ? 'Confirm in wallet…' : `Switch wallet to ${src.name}`,
-      onClick: () => switchChain({ chainId: srcChainId }),
-      disabled: switching,
+      label: netSwitch.switching ? 'Confirm in wallet…' : `Switch wallet to ${src.name}`,
+      onClick: netSwitch.switchNow,
+      disabled: netSwitch.switching,
     }
   else if (amountRaw === 0n) cta = { label: 'Enter an amount', disabled: true }
   else if (insufficient) cta = { label: `Insufficient ${token?.symbol ?? ''} on ${src.name}`, disabled: true }
@@ -235,13 +211,25 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
   else cta = { label: `Move funds to ${dest.name}`, onClick: () => void send(), disabled: false }
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[10vh]" onClick={onClose}>
-      <div className="absolute inset-0 bg-void/85 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[10vh]">
+      {/* THE DISMISSAL LIVES ON THE SCRIM, not on the container around it. The
+          pay-token picker is a React CHILD of this modal but PORTALS out of it
+          in the DOM, and React bubbles synthetic events along the REACT tree —
+          so with the handler on the container, closing the PICKER by its own
+          backdrop bubbled up and took the whole funding modal with it, typed
+          amount and all, for someone who only meant to back out of a token
+          list. The scrim is not an ancestor of the picker in either tree, so
+          only a real click on the dark area reaches it. It still covers the
+          full container (inset-0), so every outside-the-dialog click lands
+          here exactly as before. Inert while the wallet holds a transaction. */}
+      <div
+        className="absolute inset-0 bg-void/85 backdrop-blur-sm"
+        onClick={inFlight ? undefined : onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Fund this wallet on ${dest.name}`}
-        onClick={(e) => e.stopPropagation()}
         className="search-pop relative w-full max-w-md overflow-hidden rounded-3xl card-surface backdrop-blur-md"
       >
         <div aria-hidden className="h-1 w-full" style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }} />
@@ -323,7 +311,7 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
                     ) : (
                       <span className="font-display text-sm font-bold text-ink">{token?.symbol ?? 'ETH'}</span>
                     )}
-                    {pay.kind === 'erc20' && <span className="font-display text-sm font-bold text-ink">{pay.symbol}</span>}
+                    {pay.kind === 'erc20' && <span className="font-display text-sm font-bold text-ink">{showSymbol(pay.symbol)}</span>}
                     <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-ink-faint" aria-hidden>
                       <path d="M6 9l6 6 6-6" />
                     </svg>
@@ -346,7 +334,7 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
                   Arrives on {dest.name} (est.)
                 </div>
                 <div className="mt-1.5 flex items-baseline justify-between gap-3">
-                  <span className="font-display text-sm font-bold text-ink">{dest.usdcSymbol}</span>
+                  <span className="font-display text-sm font-bold text-ink">{showSymbol(dest.usdcSymbol)}</span>
                   <span className={`font-num text-2xl font-light tabular-nums ${quote ? 'text-ink' : 'text-ink-faint'}`}>
                     {quoting ? <span className="animate-pulse">…</span> : quote ? fmt(quote.toAmount, 6) : '—'}
                   </span>
@@ -369,6 +357,15 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
                 </p>
               )}
 
+              {/* wrong network, stated before the signature. No button of its own:
+                  the CTA right below IS the switch in this state (unchanged). */}
+              <WrongNetworkNotice
+                sw={netSwitch}
+                requiredChainId={srcChainId}
+                action="This transfer starts"
+                enabled={!!destUsdc}
+              />
+
               <button
                 type="button"
                 disabled={cta.disabled}
@@ -380,6 +377,27 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
               >
                 {cta.label}
               </button>
+
+              {/* The way out while the wallet has the transaction. The backdrop
+                  no longer closes and the first Escape only arms this, but a
+                  wallet that never answers must not trap anyone here — and on
+                  touch there is no Escape at all, so the hatch has to be a
+                  control you can see and press twice. */}
+              {inFlight && (
+                <div className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2.5">
+                  <p className="font-mono text-[10px] leading-relaxed text-ink-dim">
+                    Your wallet has the transaction. Keep this open — leaving between the approval and the
+                    transfer means you paid for the approval and nothing moved.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => (confirmExit ? onClose() : setConfirmExit(true))}
+                    className="press mt-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint underline underline-offset-2 hover:text-ink"
+                  >
+                    {confirmExit ? 'Close anyway — press again' : 'Wallet never answered? Close anyway'}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -410,6 +428,93 @@ export function useBridgesFor(chainId: number, holder: string | undefined): Pend
         ? all.filter((r) => r.toChainId === chainId && r.holder.toLowerCase() === holder.toLowerCase())
         : [],
     [all, chainId, holder],
+  )
+}
+
+/** Two-or-more finished arrivals as ONE line: total, count, one Use-it that
+ *  spends the sum and dismisses the rows it spent, and a details toggle that
+ *  keeps every per-transfer fact reachable. */
+function ArrivalsSummary({
+  rows,
+  chainId,
+  onUse,
+}: {
+  rows: PendingBridge[]
+  chainId: number
+  onUse?: (arrivedRaw: bigint) => void
+}) {
+  const [detail, setDetail] = useState(false)
+  const cfgOf = (id: number) => chainCfg(id)
+  const total = rows.reduce((s, r) => s + (r.resolved?.state === 'done' ? r.resolved.toAmount : 0n), 0n)
+  const symbol = cfgOf(chainId).usdcSymbol
+  return (
+    <div className="rounded-xl border border-teal/30 bg-teal/[0.06] px-3.5 py-2.5 font-mono text-[11px] text-ink-dim">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="min-w-0 flex-1">
+          <span className="text-teal">
+            {fmt(total, 6)} {symbol} arrived
+          </span>{' '}
+          across {rows.length} transfers, in your wallet now.
+        </span>
+        {onUse && (
+          <button
+            type="button"
+            onClick={() => {
+              onUse(total)
+              for (const r of rows) dismissBridge(r.txHash)
+            }}
+            className="press shrink-0 rounded-lg bg-teal px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-black"
+          >
+            Use it
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setDetail((v) => !v)}
+          className="press shrink-0 text-cyan hover:underline"
+        >
+          {detail ? 'hide' : 'details'}
+        </button>
+        <button
+          type="button"
+          aria-label="Dismiss all arrivals"
+          onClick={() => {
+            for (const r of rows) dismissBridge(r.txHash)
+          }}
+          className="press shrink-0 text-ink-faint hover:text-ink"
+        >
+          ✕
+        </button>
+      </div>
+      {detail && (
+        <div className="mt-2 space-y-1 border-t border-teal/15 pt-2">
+          {rows.map((r) => (
+            <div key={r.txHash} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="min-w-0 flex-1 tabular-nums">
+                {r.resolved?.state === 'done' ? fmt(r.resolved.toAmount, 6) : ''} {symbol} from{' '}
+                {cfgOf(r.fromChainId).name}
+              </span>
+              <a
+                href={`${cfgOf(r.fromChainId).explorer}/tx/${r.txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 text-cyan hover:underline"
+              >
+                tx ↗
+              </a>
+              <button
+                type="button"
+                aria-label="Dismiss this arrival"
+                onClick={() => dismissBridge(r.txHash)}
+                className="press shrink-0 text-ink-faint hover:text-ink"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -444,9 +549,23 @@ export function BridgeBanner({
   if (rows.length === 0) return null
   const cfgOf = (id: number) => chainCfg(id)
 
+  // TWO OR MORE FINISHED ARRIVALS COLLAPSE INTO ONE LINE (owner 2026-08-16,
+  // on four stacked banners over the swap console: "shouldnt show up like
+  // this"). The sum is lawful — every row here bridged INTO this chain's own
+  // settlement token, so the amounts share one unit and one wallet. Use-it
+  // hands the console the TOTAL and dismisses the rows it spent; the details
+  // toggle keeps every per-transfer fact (source chain, amount, tx link)
+  // reachable. In-flight, refunded and failed transfers never collapse:
+  // each of those is its own distinct fact.
+  const done = rows.filter((r) => r.resolved?.state === 'done')
+  const rest = rows.filter((r) => r.resolved?.state !== 'done')
+  const collapse = done.length >= 2
+  const shown = collapse ? rest : rows
+
   return (
     <div className="space-y-2">
-      {rows.map((r) => {
+      {collapse && <ArrivalsSummary rows={done} chainId={chainId} onUse={onUse} />}
+      {shown.map((r) => {
         const state = r.resolved?.state ?? 'pending'
         const age = Math.max(0, nowSec() - Math.floor(r.startedAt / 1000))
         const ageLabel = age < 90 ? `${age}s` : `${Math.floor(age / 60)}m`

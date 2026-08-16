@@ -132,11 +132,32 @@ export function InfoDot({ children }: { children: ReactNode }) {
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         aria-describedby={open ? panelId : undefined}
-        className={`press grid h-4 w-4 place-items-center rounded-full border font-mono text-[9px] font-bold transition-colors ${
-          open ? 'border-cyan/60 bg-cyan/15 text-cyan' : 'border-white/25 bg-white/[0.07] text-ink-dim hover:border-cyan/50 hover:text-cyan'
-        }`}
+        /* THE TARGET AND THE CIRCLE ARE TWO THINGS (owner 2026-08-06: the
+           info circles were "way way too big"). The mobile audit's 32px
+           minimum lives on THIS button — unpainted, so the tap area is
+           generous while nothing shows — and the drawn circle is the small
+           inner span below. The -m-2 keeps the 32px box from moving the
+           line it sits in, exactly as the audit's union left it. */
+        className="press group/idot -m-2 grid min-h-[32px] min-w-[32px] place-items-center"
       >
-        i
+        {/* 14 → 15.5px (the owner 2026-08-06 12:49, "about ten percent bigger"):
+            the 12:02 cut to 14 overshot slightly. The tap target above is
+            untouched at 32px. */}
+        <span
+          className={`grid h-[15.5px] w-[15.5px] place-items-center rounded-full border font-mono text-[8px] font-bold leading-none transition-colors ${
+            open
+              ? 'border-cyan/60 bg-cyan/15 text-cyan'
+              : 'border-white/25 bg-white/[0.07] text-ink-dim group-hover/idot:border-cyan/50 group-hover/idot:text-cyan'
+          }`}
+        >
+          {/* owner 2026-08-05 21:06 + 08-06 ("a little bit to the left"):
+              the grid centers the glyph's EM BOX, but the mono 'i' inks left
+              of its own advance width — the half-pixel X nudge centers the
+              INK, which is what the eye judges */}
+          <span className="block leading-none" style={{ transform: 'translate(0.5px, -0.5px)' }}>
+            i
+          </span>
+        </span>
       </button>
       {open &&
         style &&

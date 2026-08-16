@@ -12,10 +12,17 @@ const KEY = 'spectrum-mini:setup-draft:v1'
 // deliberately orphaned rather than migrated.
 const DEPLOY_KEY = 'spectrum-mini:deploy-draft:v2'
 
-export function loadDraft(): BrandConfig | null {
+export function loadDraft(committed?: BrandConfig): BrandConfig | null {
   try {
     const raw = localStorage.getItem(KEY)
-    return raw ? (JSON.parse(raw) as BrandConfig) : null
+    if (!raw) return null
+    const draft = JSON.parse(raw) as BrandConfig
+    // Merge OVER the committed brand (same failure class loadDeployDraft
+    // already documents): a draft persisted before a key existed — or before
+    // the operator HAND-ADDED one (extensionStoreUrl's documented post-publish
+    // flow) — otherwise resurrects the old config on the next Apply and
+    // silently deletes the hand-added value from brand.config.ts.
+    return committed ? { ...structuredClone(committed), ...draft } : draft
   } catch {
     return null
   }

@@ -1,4 +1,5 @@
 import { formatUnits, isAddress, parseAbi, type Address } from 'viem'
+import { isDevPreview } from './dev-preview'
 import { clientFor, hasPrivateRpc, publicWideLogsRisky } from '../chain/rpc'
 import { ZERO_ADDRESS } from '../chain/constants'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
@@ -208,6 +209,31 @@ async function fetchDexPrices(
   return out
 }
 
+/** One independent SPOT read per asset — the narrow export the portfolio
+ *  run-wiring needs (PlanLegInput's priceUsd/liquidityUsd law: independent of
+ *  any 0x quote). Rides fetchDexPrices' own cache and retry, never a second
+ *  fetch path. A chain DexScreener does not index (no slug — Robinhood)
+ *  returns an empty map, and the caller's legs go honestly unpriced/optional
+ *  rather than borrowing a number from somewhere braver. `atMs` is the read's
+ *  own clock, so priceAgeMs stays honest against the staleness law. */
+export async function spotReadsFor(
+  addresses: string[],
+  chainId: number,
+): Promise<Map<string, { priceUsd: number; liquidityUsd: number | null; atMs: number }>> {
+  const out = new Map<string, { priceUsd: number; liquidityUsd: number | null; atMs: number }>()
+  const slug = chainCfg(chainId).dexscreenerSlug
+  if (!slug) return out
+  const pairs = await fetchDexPrices(addresses.map((a) => a.toLowerCase()), slug)
+  const atMs = Date.now()
+  for (const [addr, pair] of pairs) {
+    const price = Number.parseFloat(pair.priceUsd ?? '')
+    if (!Number.isFinite(price) || price <= 0) continue // unpriceable stays absent, never zero
+    const liq = pair.liquidity?.usd
+    out.set(addr, { priceUsd: price, liquidityUsd: Number.isFinite(liq) && (liq as number) > 0 ? (liq as number) : null, atMs })
+  }
+  return out
+}
+
 function priceAt(now: number, ch1: number, ch6: number, ch24: number, hoursAgo: number): number {
   const anchors: [number, number][] = [
     [24, 1 / (1 + (ch24 || 0) / 100)],
@@ -384,6 +410,18 @@ const inceptionCache = new Map<string, number>()
 export function seedInception(token: string, chainId: number, ts: number): void {
   inceptionCache.set(`${chainId}:${token.toLowerCase()}`, ts)
 }
+
+/** Build (or top up) the chain's launch index and report whether it exists.
+ *  For surfaces that need launch TIMES for a whole set at once (the creator
+ *  timeline) rather than one basket's inception: the index used to be built
+ *  only as a side effect of per-basket asks, so a fresh browser's creator
+ *  page had no dates to draw from. Resolves false where the index is
+ *  unavailable (keyless chain whose public RPC rejects wide filtered logs) —
+ *  the caller's fallback owns that face. Writes land in the same
+ *  persist-cache `launchTimeLookup` reads. */
+export async function ensureLaunchIndex(chainId: number): Promise<boolean> {
+  return (await loadLaunchIndex(chainId)) != null
+}
 async function getInceptionTs(token: Address, chainId: number): Promise<number | null> {
   const key = `${chainId}:${token.toLowerCase()}`
   const cached = inceptionCache.get(key)
@@ -458,11 +496,18 @@ export async function getDeployer(token: Address, chainId: number): Promise<stri
   // The basket's OWN lineage registry answers (current or legacy) — the new
   // factory knows nothing about superseded baskets, which would have wiped
   // creator attribution for every kept-listed legacy basket.
+  //
+  // ⛔ ONLY A REAL ANSWER IS MEMOIZED. This used to cache null on a THROWN
+  // read too, which turned one RPC blip into "this basket has no deployer"
+  // for the whole session — the basket then silently vanished from its
+  // creator's page, and the page asserted "no baskets published" for a
+  // creator with four live ones (found demoing 2026-08-06). A discovered
+  // basket came FROM a registry, so a null lineage here is almost always a
+  // failed read, not an unregistered basket: don't memoize that either —
+  // the next call retries. The factory answering ZERO_ADDRESS is the one
+  // genuine "no deployer" and stays cached.
   const lin = await lineageFor(chainId, token)
-  if (!lin) {
-    deployerCache.set(key, null)
-    return null
-  }
+  if (!lin) return null
   try {
     const client = clientFor(chainId)
     const deployer = await client.readContract({
@@ -476,7 +521,6 @@ export async function getDeployer(token: Address, chainId: number): Promise<stri
     if (out) cacheSet(`deployer:v1:${key}`, out, 0)
     return out
   } catch {
-    deployerCache.set(key, null)
     return null
   }
 }
@@ -486,7 +530,9 @@ function weightedChange(holdings: Holding[], aumUsd: number): number | null {
   let acc = 0
   let priced = 0
   for (const h of holdings) {
-    if (h.change24hPct == null || !h.priced) continue
+    // NaN passes `== null` and poisons the whole accumulator into NaN text
+    // (the ??-for-numbers class, four-reviewer audit 2026-08-07)
+    if (h.change24hPct == null || !Number.isFinite(h.change24hPct) || !h.priced) continue
     acc += (h.valueUsd / aumUsd) * h.change24hPct
     priced += h.valueUsd
   }
@@ -562,6 +608,59 @@ export function seedImmutableMeta(address: string, chainId: number, meta: Immuta
   const key = `${chainId}:${address.toLowerCase()}`
   immutableCache.set(key, meta)
   cacheSet(`imm:v3:${key}`, meta, 0)
+}
+
+/** The routing slice of a basket's immutable meta — which pool each leg trades
+ *  through (venue + V3 fee tier + V4 PoolKey). CACHE-ONLY by design: every
+ *  caller (the mint-health pre-flight) runs on a page that has already fetched
+ *  the basket, so the meta is warm; when it isn't (snapshot-seeded meta omits
+ *  routing), null = "can't judge", never a second read storm. Display-grade. */
+export function legRoutingOf(
+  basket: string,
+  chainId: number,
+): Pick<ImmutableMeta, 'assets' | 'assetSymbols' | 'legVenues' | 'v3Fees' | 'ethPools'> | null {
+  const cached = getCachedMeta(`${chainId}:${basket.toLowerCase()}`)
+  if (!cached || !cached.legVenues?.length) return null
+  const { assets, assetSymbols, legVenues, v3Fees, ethPools } = cached
+  return { assets, assetSymbols, legVenues, v3Fees, ethPools }
+}
+
+/**
+ * The basket's OWN design weights, raw from the chain: `basket(i).weight`, the
+ * uint16 the constructor pinned (SpectrumBasket rejects a zero weight and requires
+ * the set to total 10000). Basis points, basket order, never a percentage.
+ *
+ * ⛔ WHY A SEPARATE ACCESSOR. The only public weight this layer exposes is
+ * `holdings[].targetWeightPct` (= targetBps / 100), a DISPLAY number: 3333 bps
+ * arrives as 33.33 and multiplying it back is a float round-trip. The one caller
+ * that may not round — the first-mint funding split (first-mint-split.ts) — needs
+ * the integer the chain holds, so it reads it here instead. Nothing else should
+ * call this; a split derived from weights is exploitable everywhere except that
+ * one moment (mint-funding.ts).
+ *
+ * Cache-first (immutable by construction, same meta getBasketData persists), then
+ * a narrow live read of the same field. `null` = could not read, never a guess.
+ */
+export async function legWeightsBpsOf(basket: Address, chainId: number): Promise<number[] | null> {
+  const key = `${chainId}:${basket.toLowerCase()}`
+  const cached = getCachedMeta(key)
+  if (cached) return [...cached.targetBps]
+  try {
+    const client = clientFor(chainId)
+    const lenRaw = await client.readContract({ address: basket, abi: basketAbi, functionName: 'basketLength' })
+    const n = Number(lenRaw)
+    // Same bound getBasketData applies: a hostile contract at a pasted address can
+    // answer 1e9 here and the Array.from below allocates a billion promises.
+    if (!Number.isInteger(n) || n <= 0 || n > 64) return null
+    const entries = await Promise.all(
+      Array.from({ length: n }, (_, i) =>
+        client.readContract({ address: basket, abi: basketAbi, functionName: 'basket', args: [BigInt(i)] }),
+      ),
+    )
+    return entries.map((e) => Number(e[5]))
+  } catch {
+    return null
+  }
 }
 
 // `inception` defaults off: list views don't need the lifetime-clamped chart
@@ -841,6 +940,34 @@ const HIDDEN_BASKETS: ReadonlySet<string> = new Set([
 // read only the current factory. Filled by discovery; direct token-page loads
 // (address in hand, no list pass) resolve lazily via the factories' `tokens`
 // registries — current first, then each legacy — and memoize.
+/**
+ * Is this basket on a RETIRED lineage? Its own router is the tell: every basket
+ * trades through the router of the factory that deployed it, so one that does
+ * not match the chain's current router came from a superseded factory.
+ *
+ * Why a caller would want to know, per SpectrumContracts 2026-08-02: a retired
+ * lineage's PRISM burner is a COMPILE-TIME CONSTANT in the basket's bytecode and
+ * there is no admin anywhere in the system by design, so its burn leg can never
+ * be repointed. On Base's legacy factory that means ~10% of every fee — the burn
+ * slice — accumulates at an address nobody can spend from, forever, instead of
+ * buying and burning PRISM.
+ *
+ * BOUNDED, and the bound is what makes keeping them listed the right call: NAV,
+ * redemption, holder fees and creator fees all work normally. A holder is not
+ * harmed; the burn simply does not happen. Delisting would punish a real holder
+ * for the kit's own stale config, so the kit says so instead of hiding it.
+ */
+export function isLegacyLineage(chainId: number, router: string | null | undefined): boolean {
+  if (!router) return false
+  const cfg = chainCfg(chainId)
+  const legacy = (cfg.legacy ?? []).map((l) => String(l.swapRouter ?? '').toLowerCase())
+  if (!legacy.length) return false
+  const r = router.toLowerCase()
+  // Only a POSITIVE match against a known retired router counts. An unknown
+  // router must never be badged — a failed read is not a verdict.
+  return legacy.includes(r) && r !== String(cfg.swapRouter ?? '').toLowerCase()
+}
+
 export interface BasketLineage {
   factory: Address
   router: Address | null
@@ -884,6 +1011,29 @@ export async function lineageFor(chainId: number, basket: string): Promise<Baske
 // Enumerate every basket from each lineage's append-only array (keyless-first;
 // current factory then legacy). Falls back to a bounded Launched-log scan of
 // the CURRENT factory if enumeration is unavailable.
+/** FACTORY MEMBERSHIP, memoized (the tax law's structural half, 2026-08-15:
+ *  the owner live — "we need to ensure v4 hooks can be bought"). The factory
+ *  deploys ONLY its own bytecode, and SpectrumBasket's ERC-20 carries no
+ *  transfer tax by construction (fees charge at pool mint/redeem, never on
+ *  transfer) — so enumeration membership is provenance-sound vetting. One
+ *  enumeration per chain per TTL; a failed read answers false NOW and does
+ *  not poison the cache (absent ≠ vetted, and unknown stays refusable). */
+const basketSetCache = new Map<number, { at: number; set: Set<string> }>()
+const BASKET_SET_TTL_MS = 5 * 60_000
+export async function isFactoryBasket(chainId: number, address: string): Promise<boolean> {
+  const a = address.toLowerCase()
+  const hit = basketSetCache.get(chainId)
+  if (hit && Date.now() - hit.at < BASKET_SET_TTL_MS) return hit.set.has(a)
+  try {
+    const discovered = await discoverBaskets(chainId)
+    const set = new Set(discovered.map((x) => x.toLowerCase()))
+    basketSetCache.set(chainId, { at: Date.now(), set })
+    return set.has(a)
+  } catch {
+    return false
+  }
+}
+
 async function discoverBaskets(chainId: number): Promise<Address[]> {
   const cfg = chainCfg(chainId)
   if (!cfg.factory) return [] // shipped default: no deployment configured → honestly empty
@@ -1030,12 +1180,34 @@ function summariesFromSnapshot(chainId: number, snap: SpectrumSnapshot): BasketS
 }
 
 export async function listBasketsForChain(chainId: number): Promise<BasketSummary[]> {
-  // DEV-only mock fixture (see getBasketData).
+  // ⚠⚠ DEV FIXTURES AUGMENT, THEY NO LONGER REPLACE (the owner, 2026-08-16: "it
+  // didnt detect ive created a basket cant claim a creator url").
+  //
+  // The early return meant that in dev this function answered with fixtures
+  // ALONE and never reached live discovery. Anything derived from the basket
+  // list therefore saw a world containing only mock deployers — including the
+  // handle registry's "has this wallet shipped?" gate, which is why a creator
+  // with real baskets on three chains was told to go launch one. The fixture
+  // exists so a reviewer sees a populated UI, and that purpose is fully served
+  // by ADDING to the real list rather than standing in for it.
+  //
+  // Live discovery is best-effort here: if it fails, the fixtures still render,
+  // which is exactly the old behaviour and never worse than it.
   if (import.meta.env.DEV) {
     const { devBasketSummaries } = await import('./dev-fixture')
     const mock = devBasketSummaries(chainId)
-    if (mock) return tagLineage(mock)
+    if (mock) {
+      const live = await listBasketsLive(chainId).catch(() => [] as BasketSummary[])
+      const seen = new Set(mock.map((b) => b.address.toLowerCase()))
+      return tagLineage([...mock, ...live.filter((b) => !seen.has(b.address.toLowerCase()))])
+    }
   }
+  return listBasketsLive(chainId)
+}
+
+/** The real, on-chain listing. Split out so the dev branch above can add the
+ *  fixtures to it instead of replacing it. */
+async function listBasketsLive(chainId: number): Promise<BasketSummary[]> {
 
   // Snapshot-first (optional; ships OFF): a fresh operator snapshot serves the
   // whole list with zero visitor RPC. Stale/absent → live discovery below.
@@ -1103,21 +1275,54 @@ export async function listBaskets(): Promise<BasketSummary[]> {
 // Per-wallet basket balances (powers the portfolio). Reads balanceOf + decimals
 // per basket, grouped by chain so each chain's reads batch into one Multicall3
 // call. Returns token-unit balances keyed by lowercased address; failures → 0.
+export interface UserHoldings {
+  /** basket address (lowercase) → balance in token units. Readable rows only. */
+  balances: Map<string, number>
+  /** Baskets whose balance could NOT be read this pass — the read failed, which
+   *  is not the same fact as "holds none of it". Callers surface the count;
+   *  they must never fold it into a total (audit 2026-08-11). */
+  unreadable: Set<string>
+}
+
 export async function getUserHoldings(
   account: Address,
   baskets: { address: string; chainId: number }[],
-): Promise<Map<string, number>> {
+): Promise<UserHoldings> {
   // DEV-only mock holdings so the Portfolio renders populated while the shipped
-  // chain config is empty (mirrors getBasketData / listBaskets). Never in prod.
-  if (import.meta.env.DEV) {
+  // chain config is empty (mirrors getBasketData / listBaskets). Never in prod —
+  // and never for a REAL account: the mock answers ONLY for the dev preview
+  // identity, or a connected wallet reads fixture balances as its own (exactly
+  // the 2026-08-03 report: real wallet, still "the default" holdings).
+  if (import.meta.env.DEV && isDevPreview(account)) {
     const { devUserHoldings } = await import('./dev-fixture')
     const mock = devUserHoldings(baskets)
-    if (mock) return mock
+    if (mock) return { balances: mock, unreadable: new Set<string>() }
+  }
+
+  // A REAL account never reads the synthetic catalogue (owner report
+  // 2026-08-12, "the whole portfolio system is bugged"): in fixture mode the
+  // directory lists mock baskets — addresses with no contract on ANY chain —
+  // so every balanceOf against them reverts, and each landed in `unreadable`.
+  // The connected hero then wore an amber "37 holdings couldn't be read —
+  // this total leaves them out" for holdings that cannot exist. A synthetic
+  // basket is not a chain fact for a real wallet at all — not readable, not
+  // unreadable — so those rows leave the read set. (The dev preview identity
+  // answered above; the import stays dynamic behind DEV, so production
+  // bundles are untouched — and a prod list can't contain fixture rows anyway.)
+  let readSet = baskets
+  if (import.meta.env.DEV && !isDevPreview(account)) {
+    try {
+      const { isFixtureBasketAddress } = await import('./dev-fixture')
+      readSet = baskets.filter((b) => !isFixtureBasketAddress(b.address))
+    } catch {
+      /* fixture module absent — read everything, exactly as before */
+    }
   }
 
   const out = new Map<string, number>()
+  const unreadable = new Set<string>()
   const byChain = new Map<number, string[]>()
-  for (const b of baskets) {
+  for (const b of readSet) {
     const arr = byChain.get(b.chainId) ?? []
     arr.push(b.address)
     byChain.set(b.chainId, arr)
@@ -1135,11 +1340,16 @@ export async function getUserHoldings(
             ])
             out.set(addr.toLowerCase(), Number(formatUnits(bal, Number(dec))))
           } catch {
-            out.set(addr.toLowerCase(), 0)
+            // ⚠ COULD-NOT-CHECK IS NOT ZERO (audit 2026-08-11). This used to
+            // write 0, so a rate-limited RPC made a real position vanish from
+            // the book — the page said "you hold nothing" with the same
+            // confidence it says it when you genuinely hold nothing. The row
+            // is recorded as unreadable instead and the page says so.
+            unreadable.add(addr.toLowerCase())
           }
         }),
       )
     }),
   )
-  return out
+  return { balances: out, unreadable }
 }

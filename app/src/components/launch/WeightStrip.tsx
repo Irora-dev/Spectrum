@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
 import { AssetLogo } from '../AssetLogo'
 import { tokenVisual, readableInk } from '../../lib/spectrum/token-meta'
 
@@ -22,7 +23,7 @@ export function CompositionBar({
   return (
     <div
       role="img"
-      aria-label={`Current basket: ${assets.map((a, i) => `${a.symbol} ${Math.round(weights[i] ?? 0)}%`).join(', ')}`}
+      aria-label={`Current basket: ${assets.map((a, i) => `${showSymbol(a.symbol)} ${Math.round(weights[i] ?? 0)}%`).join(', ')}`}
       className={`flex h-10 w-full select-none overflow-hidden rounded-lg shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] ${className}`}
     >
       {assets.map((a, i) => {
@@ -167,7 +168,7 @@ export function WeightStrip({
               <div
                 role="separator"
                 aria-orientation="vertical"
-                aria-label={`Reweight ${a.symbol} and ${assets[i + 1].symbol}`}
+                aria-label={`Reweight ${showSymbol(a.symbol)} and ${showSymbol(assets[i + 1].symbol)}`}
                 onPointerDown={onDown(i)}
                 className="group absolute -right-2 top-0 z-10 flex h-full w-4 cursor-ew-resize touch-none items-center justify-center"
               >

@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { useNavigate } from 'react-router'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { tokenVisual } from '../lib/spectrum/token-meta'
 
@@ -514,7 +515,7 @@ export function PostDeployTest() {
               </svg>
             </div>
             <h2 className="mb-3 font-display text-4xl font-bold tracking-tight text-white md:text-5xl">Basket Deployed</h2>
-            <p className="text-sm uppercase tracking-widest text-emerald-200/80">${target.symbol} is live · opening your basket…</p>
+            <p className="text-sm uppercase tracking-widest text-emerald-200/80">${showSymbol(target.symbol)} is live · opening your basket…</p>
           </div>
         </div>
       </div>

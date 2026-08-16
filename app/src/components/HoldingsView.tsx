@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { BasketBento } from './BasketBento'
 import { AssetLogo } from './AssetLogo'
 import type { Holding } from '../lib/spectrum/basket-data'
@@ -20,7 +21,14 @@ function ToggleBtn({ active, onClick, children }: { active: boolean; onClick: ()
   )
 }
 
-function Row({ h, chainId }: { h: Holding; chainId: number }) {
+/** ONE holdings row — the app's canonical one, and now a shared component.
+ *  Exported because the homepage showcase renders THIS row rather than a
+ *  lookalike (owner 2026-08-02 17:57: "just take the thing we have, don't
+ *  recreate it"), so the logo disc, the ticker, the price, the 24h, the weight
+ *  bar, the value and the DexScreener click-through have exactly one home and
+ *  cannot drift apart again. It stays a pure function of `h` plus the chain that
+ *  holding lives on: anything changed here changes both surfaces. */
+export function HoldingRow({ h, chainId }: { h: Holding; chainId: number }) {
   const vis = tokenVisual(h.symbol, h.asset)
   const weight = h.priced && h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct
   const drift = h.priced && h.liveWeightPct > 0 ? h.liveWeightPct - h.targetWeightPct : 0
@@ -49,7 +57,7 @@ function Row({ h, chainId }: { h: Holding; chainId: number }) {
             discColor={`color-mix(in srgb, ${vis.color} 55%, #000)`}
           />
           <div className="min-w-0">
-            <div className="font-display text-sm font-semibold leading-none text-ink">{h.symbol}</div>
+            <div className="font-display text-sm font-semibold leading-none text-ink">{showSymbol(h.symbol)}</div>
             {h.name && <div className="mt-0.5 hidden truncate text-[11px] text-ink-faint sm:block">{h.name}</div>}
           </div>
         </div>
@@ -138,7 +146,7 @@ export function HoldingsView({ holdings, chainId }: { holdings: Holding[]; chain
             </thead>
             <tbody>
               {sorted.map((h) => (
-                <Row key={h.asset} h={h} chainId={chainId} />
+                <HoldingRow key={h.asset} h={h} chainId={chainId} />
               ))}
             </tbody>
           </table>

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { formatUnits, type Address } from 'viem'
 import { useSweep, type ResidueToken, type SweepTxState } from '../lib/spectrum/use-sweep'
 import { AssetLogo } from './AssetLogo'
@@ -142,7 +143,7 @@ export function SweepPanel({
       <div className="mt-4">
         <CompleteBanner
           title="Swept clean"
-          amount={r.mode === 'compound' && r.shares != null ? `+${fmtAmt(r.shares, 18)} $${toSymbol}` : `${fmtUsd(r.usdc)} USDC`}
+          amount={r.mode === 'compound' && r.shares != null ? `+${fmtAmt(r.shares, 18)} $${showSymbol(toSymbol)}` : `${fmtUsd(r.usdc)} USDC`}
           subtitle={`${r.mode === 'compound' ? 'Compounded into your position.' : 'Cashed out to your wallet.'} Wallet leftover: 0.`}
           tone="teal"
           txHref={r.hash && r.hash !== '0x' ? `${explorer}/tx/${r.hash}` : undefined}
@@ -173,7 +174,7 @@ export function SweepPanel({
           </span>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">
             {scope === 'migration' ? 'What this upgrade left behind.' : 'All wallet balances of the involved assets.'}{' '}
-            <span className="text-ink">Compound</span> them into ${toSymbol}, or <span className="text-ink">cash out</span> to USDC.
+            <span className="text-ink">Compound</span> them into ${showSymbol(toSymbol)}, or <span className="text-ink">cash out</span> to USDC.
           </p>
 
           <div className="mt-3 max-h-44 space-y-1.5 overflow-y-auto pr-0.5">
@@ -184,7 +185,7 @@ export function SweepPanel({
               >
                 <AssetLogo address={r.token.address} symbol={r.token.symbol} chainId={chainId} size={24} />
                 <div className="min-w-0">
-                  <div className="font-mono text-[12px] text-ink">{r.token.symbol}</div>
+                  <div className="font-mono text-[12px] text-ink">{showSymbol(r.token.symbol)}</div>
                   {r.skip && (
                     <div className="font-mono text-[10px] text-ink-faint">{r.skip === 'dust' ? 'skip · below gas cost' : 'skip · no route'}</div>
                   )}
@@ -222,7 +223,7 @@ export function SweepPanel({
                   }`}
                 >
                   <span className="font-display text-[15px] font-semibold">{mo === 'compound' ? 'Compound' : 'Cash out'}</span>
-                  <span className="font-mono text-[10px] tracking-[0.06em] text-ink-dim">{mo === 'compound' ? `more $${toSymbol}` : 'to USDC'}</span>
+                  <span className="font-mono text-[10px] tracking-[0.06em] text-ink-dim">{mo === 'compound' ? `more $${showSymbol(toSymbol)}` : 'to USDC'}</span>
                 </button>
               )
             })}
@@ -232,11 +233,11 @@ export function SweepPanel({
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">You&rsquo;ll receive</div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="font-num text-2xl font-medium text-ink">{fmtUsd(quote.totalUsdc)}</span>
-              <span className="font-display text-sm text-ink-dim">{mode === 'compound' ? `into $${toSymbol}` : 'USDC'}</span>
+              <span className="font-display text-sm text-ink-dim">{mode === 'compound' ? `into $${showSymbol(toSymbol)}` : 'USDC'}</span>
             </div>
             <div className="mt-1.5 hidden font-mono text-[11px] leading-relaxed text-ink-faint sm:block">
               {mode === 'compound'
-                ? `Buys more $${toSymbol} at the live quote, floored by a min-received you approve before signing.`
+                ? `Buys more $${showSymbol(toSymbol)} at the live quote, floored by a min-received you approve before signing.`
                 : `Left in your wallet as USDC. Min ${fmtUsd(minReceived === 0n ? quote.totalUsdc : (minReceived * 99n) / 100n)} after 1% slippage.`}
             </div>
           </div>
@@ -244,13 +245,20 @@ export function SweepPanel({
           {(busy || phase === 'error') && (
             <div className="mt-3 space-y-1.5 rounded-xl border border-white/10 bg-white/[0.02] p-3 font-mono text-[11px]">
               <StepRow label="Swap leftover → USDC" tx={s.txOf('swap')} explorer={explorer} />
-              {mode === 'compound' && <StepRow label={`Compound into $${toSymbol}`} tx={s.txOf('compound')} explorer={explorer} />}
+              {mode === 'compound' && <StepRow label={`Compound into $${showSymbol(toSymbol)}`} tx={s.txOf('compound')} explorer={explorer} />}
             </div>
           )}
 
           {s.error && (
             <p className="mt-3 rounded-xl border border-magenta/30 bg-magenta/[0.06] p-3 font-mono text-[11px] leading-relaxed text-ink-dim">
               {s.error}
+              {phase === 'error' && s.txOf('swap').status === 'success' && (
+                <span className="mt-1.5 block text-ink-dim">
+                  The swap itself landed: your leftover is now USDC in your wallet. Only the compound
+                  failed, and re-running this sweep would re-sell tokens you no longer hold, so buy $
+                  {showSymbol(toSymbol)} from its page with the USDC instead.
+                </span>
+              )}
             </p>
           )}
 
@@ -262,7 +270,7 @@ export function SweepPanel({
 
           <button
             type="button"
-            disabled={busy || !s.walletReady}
+            disabled={busy || !s.walletReady || (phase === 'error' && s.txOf('swap').status === 'success')}
             onClick={() => void s.execute()}
             className={
               marginal
@@ -271,7 +279,15 @@ export function SweepPanel({
             }
             style={marginal ? undefined : { background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }}
           >
-            {busy ? 'Sweeping…' : phase === 'error' ? 'Retry sweep' : mode === 'compound' ? `Compound into $${toSymbol}` : 'Cash out to USDC'}
+            {busy
+              ? 'Sweeping…'
+              : phase === 'error'
+                ? s.txOf('swap').status === 'success'
+                  ? 'Swept to USDC (compound failed)'
+                  : 'Retry sweep'
+                : mode === 'compound'
+                  ? `Compound into $${showSymbol(toSymbol)}`
+                  : 'Cash out to USDC'}
           </button>
           <p className="mt-2 hidden text-center font-mono text-[10px] leading-relaxed text-ink-faint sm:block">
             Swaps batch into one transaction. Always opt-in.

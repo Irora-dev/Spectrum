@@ -1,10 +1,14 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
+import { DEV_PREVIEW_ADDRESS } from '../lib/spectrum/dev-preview'
 import brand from '../brand.config'
 import { pageEnabled } from '../theme/brand'
 
 // The teaching walkthrough — a fresh wallet's empty portfolio is a natural
-// "what even is this" moment (Colby 2026-07-29: every good surface). Lazy.
+// "what even is this" moment (the owner 2026-07-29: every good surface). Lazy.
 import { BundleShelf } from '../components/BundleShelf'
+import { ThesisDoorCard } from '../components/ThesisCard'
+import { groupIntoTheses } from '../lib/spectrum/thesis'
 import { basketHref } from '../lib/spectrum/short-url'
 import { useActiveChainId } from '../lib/chain/active-chain'
 const LearnWalkthrough = lazy(() =>
@@ -20,9 +24,9 @@ import { ShareEarnNudge } from '../components/ShareEarnNudge'
 import { BasketBento } from '../components/BasketBento'
 import { BasketWash } from '../components/BasketWash'
 import { PortfolioPnlSummary, PositionPnl } from '../components/PositionPnl'
-import { Link, Navigate } from 'react-router-dom'
+import { Link, Navigate } from 'react-router'
 import { useAccount, useEnsName } from 'wagmi'
-import { DEPLOY_ENABLED, TRADING_ENABLED, WALLET_ENABLED } from '../lib/config/features'
+import { TRADING_ENABLED, WALLET_ENABLED } from '../lib/config/features'
 import { usePortfolio, useLiveExposure, type Portfolio as PortfolioData, type PortfolioHolding } from '../lib/spectrum/hooks'
 import { BasketCard } from '../components/BasketCard'
 import { PortfolioExposure } from '../components/PortfolioExposure'
@@ -32,7 +36,10 @@ import { WalletButton } from '../components/WalletButton'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { chainCfg } from '../lib/chain/chains'
 import { computeExposure, type WeightBasis } from '../lib/spectrum/exposure'
+import { combineExposure } from '../lib/spectrum/raw-holdings'
+import { useRawHoldings } from '../lib/spectrum/use-raw-holdings'
 import { basketSignatureColor } from '../lib/spectrum/signature'
+import { VersionButton } from '../components/VersionButton'
 import { formatGrouped, formatPct, formatUsdCompact, shortAddr } from '../lib/spectrum/format'
 import portfolioHeroArt from '../assets/portfolio-hero.jpg'
 import portfolioHeroArt1280 from '../assets/portfolio-hero.1280.jpg'
@@ -352,15 +359,15 @@ function HoldingCard({ h, share }: { h: PortfolioHolding; share?: { url: string;
 
       <Link
         to={basketHref(ix)}
-        aria-label={`View $${ix.symbol}`}
+        aria-label={`View $${showSymbol(ix.symbol)}`}
         className="relative z-10 flex flex-col gap-4 p-5 sm:p-6"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <BasketAvatar address={ix.address} symbol={ix.symbol} size={44} />
             <div className="min-w-0">
-              <div className="truncate font-display text-lg font-semibold leading-tight text-ink">${ix.symbol}</div>
-              <div className="mt-0.5 truncate text-xs text-ink-dim">{ix.name?.trim() || '—'}</div>
+              <div className="truncate font-display text-lg font-semibold leading-tight text-ink">${showSymbol(ix.symbol)}</div>
+              <div className="mt-0.5 truncate text-xs text-ink-dim">{ix.name?.trim() ? showName(ix.name) : '—'}</div>
             </div>
           </div>
           <span className="shrink-0"><ChainBadge chainId={ix.chainId} /></span>
@@ -369,17 +376,26 @@ function HoldingCard({ h, share }: { h: PortfolioHolding; share?: { url: string;
         {/* the composition, right on the card */}
         <div className="relative overflow-hidden rounded-xl border border-white/10 bg-black/25 p-2.5">
           <BasketWash ix={ix} side="full" opacity={0.3} />
-          <BasketBento
-            items={ix.top.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct, chainId: ix.chainId }))}
-            aspect={2.6}
-          />
+          {ix.top.length > 0 ? (
+            <BasketBento
+              items={ix.top.map((t) => ({ symbol: t.symbol, address: t.address, weightPct: t.weightPct, chainId: ix.chainId }))}
+              aspect={2.6}
+            />
+          ) : (
+            /* legs unreadable just now (an on-chain basket always HAS legs, so
+               an empty top is a failed read, not a fact): words, never a blank
+               panel that reads as broken */
+            <div className="grid min-h-[96px] place-items-center font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+              composition unreadable just now
+            </div>
+          )}
         </div>
 
         <div className="flex items-end justify-between gap-3">
           <div className="min-w-0">
             <div className="font-num text-2xl font-light leading-none tabular-nums text-ink">{formatUsdCompact(h.valueUsd)}</div>
             <div className="mt-1.5 truncate font-mono text-[10px] uppercase tracking-wide text-ink-faint">
-              {formatGrouped(h.balance, h.balance < 1 ? 4 : 0)} ${ix.symbol}
+              {formatGrouped(h.balance, h.balance < 1 ? 4 : 0)} ${showSymbol(ix.symbol)}
             </div>
           </div>
           {change != null && (
@@ -428,17 +444,7 @@ function HoldingCard({ h, share }: { h: PortfolioHolding; share?: { url: string;
 // size. The footer container is pointer-events-none (so empty space still follows
 // the card's whole-surface link); each control opts back into pointer events.
 function BasketAdminBar({ ix }: { ix: BasketSummary }) {
-  const [copied, setCopied] = useState(false)
   const explorer = chainCfg(ix.chainId).explorer
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(ix.address)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
   const iconBtn =
     'pointer-events-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/12 text-ink-dim transition-colors hover:border-white/30 hover:text-ink'
   return (
@@ -447,14 +453,17 @@ function BasketAdminBar({ ix }: { ix: BasketSummary }) {
     // buttons drop to a second row instead
     <div className="flex flex-wrap items-center gap-2">
       <AddToWalletButton address={ix.address} symbol={ix.symbol} chainId={ix.chainId} variant="icon" />
-      {DEPLOY_ENABLED && (
-        <Link
-          to={`/launch?from=${ix.address}&chain=${ix.chainId}`}
-          className="pointer-events-auto flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-cyan/40 bg-cyan/[0.08] px-3 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan transition-colors hover:border-cyan hover:bg-cyan/15"
-        >
-          <span aria-hidden className="text-[13px] leading-none">↻</span> New version
-        </Link>
-      )}
+      {/* the REAL VersionButton, recipe in hand, so this door takes the main
+          create flow like every other (owner 2026-08-16: "we should never use
+          the old create flow") — it records the supersedes intent itself */}
+      <VersionButton
+        basket={ix.address}
+        deployer={ix.deployer}
+        chainId={ix.chainId}
+        holdings={(ix.top ?? []).map((t) => ({ chainId: ix.chainId, address: t.address, symbol: t.symbol, weightPct: t.weightPct }))}
+        prominent
+        className="pointer-events-auto min-w-0 flex-1 whitespace-nowrap"
+      />
       {TRADING_ENABLED && (
         <Link
           to={`/flush?basket=${ix.address}&chain=${ix.chainId}`}
@@ -477,18 +486,10 @@ function BasketAdminBar({ ix }: { ix: BasketSummary }) {
           <path d="M19 13v5a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h5" />
         </svg>
       </a>
-      <button type="button" onClick={copy} title="Copy address" aria-label="Copy address" className={iconBtn}>
-        {copied ? (
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-cyan" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M20 6L9 17l-5-5" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <rect x="9" y="9" width="11" height="11" rx="2" />
-            <path d="M5 15V5a2 2 0 012-2h8" />
-          </svg>
-        )}
-      </button>
+      {/* THE COPY BUTTON IS GONE, deliberately (2026-08-05 consolidation): the
+          card's identity block now carries the shared CopyAddress chip, which
+          copies this same address AND shows it. Two copy controls on one card
+          was a regression introduced when the chip landed, not a feature. */}
     </div>
   )
 }
@@ -505,6 +506,14 @@ function ConnectGate() {
         <div className="mt-6 flex justify-center">
           <WalletButton />
         </div>
+        {/* Yours is one of three primary destinations, and the one a curious
+            person taps to find out what this does for them. Without these the
+            page is a wall whose only exit is the back button. */}
+        <p className="mt-6 text-[13px] leading-relaxed text-ink-faint">
+          Nothing to connect yet?{' '}
+          <Link to="/explore" className="text-cyan hover:underline">Explore baskets</Link> or{' '}
+          <Link to="/learn" className="text-cyan hover:underline">see how it works</Link>.
+        </p>
       </div>
     </div>
   )
@@ -534,7 +543,6 @@ function PortfolioSkeleton() {
 // (the shipped wallet holds nothing on the mock baskets). Mirrors the basket
 // fixtures' philosophy and is stripped from production builds. The mock-deployer
 // address also lights up the "Created" section.
-const DEV_PREVIEW_ADDRESS = '0x000000000000000000000000000000000000d0e0'
 
 export function Portfolio() {
   const { address, isConnected } = useAccount()
@@ -542,7 +550,11 @@ export function Portfolio() {
   // only `npm run dev` substitutes the preview viewer.
   const effectiveAddress =
     isConnected && address ? address : import.meta.env.DEV ? DEV_PREVIEW_ADDRESS : undefined
-  const { data: p, isLoading, isError, chainsFailed } = usePortfolio(effectiveAddress)
+  const { data: p, isLoading, isError, chainsFailed, refetch: refetchPortfolio } = usePortfolio(effectiveAddress)
+  // the failure state's own pending flag — the portfolio queries stay in `error`
+  // while a retry is in flight (isLoading only covers a first read), so nothing
+  // else on that screen can say "working on it" (Yours.tsx's exact idiom)
+  const [retrying, setRetrying] = useState(false)
 
   // Read-only holdings view — needs a connected wallet but no trading. Gated on
   // WALLET_ENABLED so it's available in deploy-only mode; direct URLs redirect home
@@ -550,7 +562,32 @@ export function Portfolio() {
   if (!WALLET_ENABLED) return <Navigate to="/" replace />
 
   if (!effectiveAddress) return <ConnectGate />
-  if (isError) return <div className="py-10"><Notice>Couldn’t load your portfolio, the public RPC may be rate-limiting. With your own RPC (a key or your provider’s URL) it’s reliable.</Notice></div>
+  if (isError)
+    return (
+      <div className="py-10">
+        <Notice>
+          <p className="mx-auto max-w-md leading-relaxed">
+            Couldn’t load your portfolio, the public RPC may be rate-limiting. With your own RPC (a key or your
+            provider’s URL) it’s reliable.
+          </p>
+          {/* the apology used to BE the page — an RPC blip left no way out but a
+              browser reload, the exact fault Yours.tsx fixed 2026-08-07. Same
+              try-again idiom, and the button carries its own in-flight label: a
+              retry that looks dead is the fault we are here to fix, not repeat. */}
+          <button
+            type="button"
+            disabled={retrying}
+            onClick={() => {
+              setRetrying(true)
+              void refetchPortfolio().finally(() => setRetrying(false))
+            }}
+            className="press mt-6 rounded-lg border border-cyan/50 px-5 py-2.5 font-mono text-xs uppercase tracking-[0.18em] text-cyan hover:enabled:bg-cyan/10 disabled:opacity-60"
+          >
+            {retrying ? 'Trying…' : 'Try again'}
+          </button>
+        </Notice>
+      </div>
+    )
   if (isLoading || !p) return <PortfolioSkeleton />
 
   return <PortfolioView p={p} chainsFailed={chainsFailed} />
@@ -566,6 +603,15 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
   const exposure = useMemo(
     () => computeExposure(p.holdings, basis === 'live' ? { basis: 'live', liveData: live.legsByKey } : {}),
     [p.holdings, basis, live.legsByKey],
+  )
+  // MANAGE WHAT YOU HOLD (the owner 2026-08-02 00:49): raw wallet assets join the
+  // look-through — the weightings of EVERYTHING held, before anything is
+  // minted. Unpriced holdings and failed reads surface as facts, never as
+  // zeros. Allocator lane (specallocator); PortfolioExposure untouched.
+  const raw = useRawHoldings(p.address)
+  const combinedExposure = useMemo(
+    () => combineExposure(exposure, raw.data?.holdings ?? []),
+    [exposure, raw.data],
   )
   const empty = p.heldCount === 0 && p.createdCount === 0
   const activeChainId = useActiveChainId()
@@ -597,7 +643,7 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
   const shareFor = (ix: BasketSummary): { url: string; xHref: string } | null => {
     if (ix.deployer && viewer.toLowerCase() === ix.deployer.toLowerCase()) return null
     const url = `${window.location.origin}/token?addr=${ix.address}&chain=${ix.chainId}&ref=${viewer}`
-    const text = `$${ix.symbol}, ${ix.name}: ${ix.basketLength} assets in one onchain basket token.`
+    const text = `$${showSymbol(ix.symbol)}, ${ix.name}: ${ix.basketLength} assets in one onchain basket token.`
     const xHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`
     return { url, xHref }
   }
@@ -615,8 +661,8 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
           {empty && (
             <Notice>
               No positions yet.{' '}
-              <Link to="/" className="text-cyan hover:underline">Explore baskets</Link>,{' '}
-              <Link to="/launch" className="text-cyan hover:underline">launch your own</Link>, or{' '}
+              <Link to="/explore" className="text-cyan hover:underline">Explore baskets</Link>,{' '}
+              <Link to="/create" className="text-cyan hover:underline">launch your own</Link>, or{' '}
               <button type="button" onClick={() => setLearnOpen(true)} className="text-cyan hover:underline">
                 learn how Spectrum works
               </button>.
@@ -647,9 +693,32 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
             ) : (
               <Notice>
                 You don’t hold any baskets yet.{' '}
-                <Link to="/" className="text-cyan hover:underline">Explore baskets</Link>.
+                <Link to="/explore" className="text-cyan hover:underline">Explore baskets</Link>.
               </Notice>
             ))}
+
+          {/* YOUR PUBLISHED BUNDLES (2026-08-11, the Explore gate-split's
+              sibling): cross-chain bundles this wallet shipped, recognised by
+              the grouper over its created baskets — the creator page's strip,
+              here so the portfolio's Created tab tells the whole story. The
+              creator page stays the manage surface (Edit doors live there);
+              these cards are doors. Ungated: the published-bundle system is
+              not behind pages.bundle (that flag scopes to the OLD hand-picked
+              product below). */}
+          {!empty && view === 'created' && (() => {
+            const mine = groupIntoTheses(p.created.filter((b) => !b.supersededBy)).sort((a, b) => b.totalAumUsd - a.totalAumUsd)
+            if (mine.length === 0) return null
+            return (
+              <section className="space-y-5">
+                <SectionHeader title="Your bundles" right={`${mine.length} published`} />
+                <div className="grid gap-5 sm:grid-cols-2">
+                  {mine.map((t) => (
+                    <ThesisDoorCard key={`${t.deployer}::${t.name}`} thesis={t} size="md" className="min-w-0" />
+                  ))}
+                </div>
+              </section>
+            )
+          })()}
 
           {!empty && view === 'created' &&
             (p.createdCount > 0 ? (
@@ -666,7 +735,7 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
             ) : (
               <Notice>
                 You haven’t launched any baskets yet.{' '}
-                <Link to="/launch" className="text-cyan hover:underline">Launch one</Link>.
+                <Link to="/create" className="text-cyan hover:underline">Launch one</Link>.
               </Notice>
             ))}
 
@@ -693,7 +762,20 @@ function PortfolioView({ p, chainsFailed = 0 }: { p: PortfolioData; chainsFailed
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-cyan transition-transform duration-200 group-open:rotate-180"><path d="M6 9l6 6 6-6" /></svg>
           </summary>
           <div className="px-5 pb-5">
-            <PortfolioExposure exposure={exposure} basis={basis} setBasis={setBasis} liveLoading={live.isLoading} />
+            <PortfolioExposure exposure={combinedExposure} basis={basis} setBasis={setBasis} liveLoading={live.isLoading} />
+            {raw.data && raw.data.holdings.length > 0 && (
+              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+                includes what you hold directly
+                {raw.data.unpriced > 0 && ` · ${raw.data.unpriced} unpriced holding${raw.data.unpriced === 1 ? '' : 's'} not weighted`}
+              </p>
+            )}
+            {/* the basket half counts too (audit 2026-08-11) — a refused
+                balance read used to become a silent 0 */}
+            {((raw.data && (raw.data.chainsFailed > 0 || raw.data.unreadable > 0)) || p.unreadableCount > 0) && (
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-amber-300/85">
+                part of your balance can't be read right now — retry shortly
+              </p>
+            )}
           </div>
         </details>
       )}

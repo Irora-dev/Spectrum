@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState , type ReactNode } from 'react'
 import { useAccount } from 'wagmi'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
 import { BasketBento, type BentoItem } from './BasketBento'
+
+/** Escape a value going into an HTML ATTRIBUTE inside a string we hand to
+ *  someone else's page. The og edge function already does this for its own
+ *  rewrite (lib/og/meta.ts); the embed snippet below is the only other place
+ *  this app emits raw markup instead of letting React render it. */
+function attrEscape(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 import { squarify } from '../lib/treemap'
 import type { Holding, NavPoint } from '../lib/spectrum/basket-data'
 import { useNavHistory } from '../lib/spectrum/hooks'
@@ -85,6 +94,9 @@ function drawShareImage(
     priceUsd: number
     sincePct: number | null
     holdings: Holding[]
+    /** The deployer's claimed creator name — drawn into the footer so the
+     *  shared IMAGE carries who made it (≤30 chars by claim law). */
+    by?: string | null
   },
 ): void {
   const W = 1200
@@ -124,7 +136,7 @@ function drawShareImage(
 
   // ticker pill
   ctx.font = `700 26px ${MONO}`
-  const tick = `$${o.symbol}`
+  const tick = `$${showSymbol(o.symbol)}`
   const tw = ctx.measureText(tick).width
   ctx.fillStyle = 'rgba(255,255,255,0.1)'
   ctx.beginPath()
@@ -235,13 +247,56 @@ function drawShareImage(
     ctx.restore()
   }
 
-  // footer
+  // footer — the creator's NAME rides the shared image when one exists (the
+  // address stays: provenance and identity are different facts)
   ctx.fillStyle = 'rgba(244,240,244,0.45)'
   ctx.font = `600 20px ${MONO}`
   ctx.fillText('SPECTRUM · ONCHAIN BASKETS', 64, H - 34)
   ctx.textAlign = 'right'
-  ctx.fillText(shortAddr(o.addr), W - 64, H - 34)
+  if (o.by) {
+    ctx.fillStyle = '#35e0ff'
+    ctx.fillText(`/creator/${o.by}`, W - 64, H - 34)
+    ctx.fillStyle = 'rgba(244,240,244,0.45)'
+    ctx.fillText(shortAddr(o.addr), W - 64, H - 64)
+  } else {
+    ctx.fillText(shortAddr(o.addr), W - 64, H - 34)
+  }
   ctx.textAlign = 'left'
+}
+
+/** One icon share chip — 44px circle, named by title/aria, answers with a ✓.
+ *  The one-row law (owner 2026-08-15): utilities are icons, only the act
+ *  (Share on X) keeps its words. */
+function ShareChip({
+  label,
+  done,
+  onClick,
+  children,
+}: {
+  label: string
+  done: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="press grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/15 text-ink-dim hover:border-cyan/50 hover:text-cyan"
+    >
+      {done ? (
+        <svg viewBox="0 0 24 24" className="h-4 w-4 text-teal" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M20 6L9 17l-5-5" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          {children}
+        </svg>
+      )}
+    </button>
+  )
 }
 
 /** Share popup for ANY viewer (Token page's Share button): the launch card's
@@ -260,6 +315,7 @@ export function ShareModal({
   navPerToken,
   ageHours,
   navSeries,
+  by = null,
 }: {
   open: boolean
   onClose: () => void
@@ -273,6 +329,8 @@ export function ShareModal({
   navPerToken: number
   ageHours: number | null
   navSeries: NavPoint[]
+  /** Deployer's claimed creator name — rides the drawn share image's footer. */
+  by?: string | null
 }) {
   useEffect(() => {
     if (!open) return
@@ -302,6 +360,16 @@ export function ShareModal({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [copiedImg, setCopiedImg] = useState(false)
   const [copiedEmbed, setCopiedEmbed] = useState(false)
+  const [copiedUrl, setCopiedUrl] = useState(false)
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopiedUrl(true)
+      setTimeout(() => setCopiedUrl(false), 1600)
+    } catch {
+      /* clipboard refused — nothing broke */
+    }
+  }
   useEffect(() => {
     if (!open) return
     let stale = false
@@ -312,23 +380,45 @@ export function ShareModal({
         /* draw with fallback fonts */
       }
       if (stale || !canvasRef.current) return
-      drawShareImage(canvasRef.current, { symbol, name, addr, sig, priceUsd: navPerToken, sincePct, holdings })
+      drawShareImage(canvasRef.current, { symbol, name, addr, sig, priceUsd: navPerToken, sincePct, holdings, by })
     })()
     return () => {
       stale = true
     }
-  }, [open, symbol, name, addr, sig, navPerToken, sincePct, holdings])
-
-  if (!open) return null
+  }, [open, symbol, name, addr, sig, navPerToken, sincePct, holdings, by])
 
   // Share & earn (owner 2026-07-07): a connected sharer's link carries their ?ref,
   // so sharing a basket you like earns you the interface slice on buys through it.
+  // Read ABOVE the `open` gate: this modal is always mounted with `open` as a
+  // prop, so a hook below the gate is skipped on every closed render and then
+  // added the moment someone clicks Share — which React throws on. That threw
+  // away the whole token page on the click that opens this.
   const { address: viewer } = useAccount()
+
+  if (!open) return null
+
   const shareUrl = `${window.location.origin}/token?addr=${addr}&chain=${chainId}${viewer ? `&ref=${viewer}` : ''}`
-  const text = `$${symbol}, ${name}: ${holdings.length} assets in one onchain basket token.`
+  // THE TWEET READS LIKE A HUMAN WROTE IT (owner 2026-08-15: "way nicer
+  // formatted text" — the old line printed ticker, comma, name, colon, count).
+  // Multi-line intent text: the name leads, the top holdings say what's
+  // inside, the one-liner says what it is. The URL rides X's own url param so
+  // the card unfurls under it.
+  const topSyms = holdings
+    .slice(0, 4)
+    .map((h) => `$${showSymbol(h.symbol)}`)
+    .join(' · ')
+  const text = `${showName(name)} ($${showSymbol(symbol)})\n${topSyms}${holdings.length > 4 ? ` +${holdings.length - 4} more` : ''}\n\n${holdings.length} assets, one onchain basket — fees flow to holders.`
   const xHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`
   // the iframe-able card (pages/Embed.tsx) — creators paste this on their own sites
-  const embedCode = `<iframe src="${window.location.origin}/embed?addr=${addr}&chain=${chainId}${viewer ? `&ref=${viewer}` : ''}" width="420" height="560" style="border:0;border-radius:16px" title="$${symbol} on Spectrum"></iframe>`
+  //
+  // ⚠ THIS IS RAW HTML LEAVING OUR APP, so React's escaping does not apply, and
+  // the ticker is whatever its deployer typed at the factory. Unescaped, a
+  // symbol containing `">` closes the attribute and then the tag, and the
+  // creator who pastes this snippet ships the attacker's markup on THEIR OWN
+  // site — an XSS handed to a third party by way of our clipboard button. The
+  // attribute is escaped and the label goes through the same showSymbol every
+  // other surface uses (audit 2026-08-07).
+  const embedCode = `<iframe src="${window.location.origin}/embed?addr=${addr}&chain=${chainId}${viewer ? `&ref=${viewer}` : ''}" width="420" height="560" style="border:0;border-radius:16px" title="${attrEscape(`$${showSymbol(symbol)} on Spectrum`)}"></iframe>`
   const copyEmbed = async () => {
     try {
       await navigator.clipboard.writeText(embedCode)
@@ -351,7 +441,7 @@ export function ShareModal({
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${symbol}-spectrum.png`
+    a.download = `${showSymbol(symbol)}-spectrum.png`
     a.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 2000)
   }
@@ -376,7 +466,7 @@ export function ShareModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Share $${symbol}`}
+        aria-label={`Share $${showSymbol(symbol)}`}
         onClick={(e) => e.stopPropagation()}
         className="search-pop relative m-auto w-full max-w-2xl overflow-hidden rounded-2xl border p-6 sm:p-8"
         style={{ borderColor: `${sig}55`, background: `linear-gradient(135deg, ${sig}1f, #0c0a14 55%)` }}
@@ -402,7 +492,7 @@ export function ShareModal({
             Share this basket
           </div>
           <h2 className="mt-2 font-display text-3xl font-bold uppercase leading-tight tracking-tight text-ink [text-shadow:0_1px_10px_rgba(0,0,0,0.7)]">
-            ${symbol}
+            ${showSymbol(symbol)}
           </h2>
           <p className="mt-1 max-w-lg text-sm leading-relaxed text-ink [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
             {name} · {holdings.length} assets in one onchain basket token.
@@ -413,47 +503,61 @@ export function ShareModal({
             className="mt-5 w-full rounded-xl border border-white/10 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.8)]"
             style={{ aspectRatio: '1200 / 630' }}
           />
-          <div className="mt-6 flex flex-wrap items-center gap-2.5">
-            <ShareActions xHref={xHref} shareUrl={shareUrl} sig={sig} buyInk={buyInk} />
-            <button
-              type="button"
-              onClick={() => void copyImage()}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2.5 font-mono text-xs uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan"
+          {/* ONE ROW (owner 2026-08-15: "less text and on one row"): X keeps
+              the words — it is the act — and the four utilities become icon
+              chips, each named by title/aria and answering a tap with a ✓. */}
+          <div className="mt-6 flex flex-nowrap items-center gap-2">
+            <a
+              href={xHref}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full px-5 font-display text-sm font-bold uppercase tracking-wide transition-transform hover:scale-[1.02] active:scale-[0.96]"
+              style={{ background: sig, color: buyInk }}
             >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="11" height="11" rx="2" />
-                <path d="M5 15V5a2 2 0 012-2h8" />
+              Share on X
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7 17L17 7M7 7h10v10" />
               </svg>
-              {copiedImg ? 'Image copied' : 'Copy image'}
-            </button>
-            <button
-              type="button"
-              onClick={() => void downloadImage()}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2.5 font-mono text-xs uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan"
-            >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                <path d="M7 10l5 5 5-5" />
-                <path d="M12 15V3" />
-              </svg>
-              Download image
-            </button>
-            <button
-              type="button"
-              onClick={() => void copyEmbed()}
-              className="press inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2.5 font-mono text-xs uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan"
-            >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 18l6-6-6-6" />
-                <path d="M8 6l-6 6 6 6" />
-              </svg>
-              {copiedEmbed ? 'Embed copied' : 'Copy embed'}
-            </button>
+            </a>
+            <ShareChip label="Copy link" done={copiedUrl} onClick={() => void copyUrl()}>
+              <path d="M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07l-1.5 1.5" />
+              <path d="M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07l1.5-1.5" />
+            </ShareChip>
+            <ShareChip label="Copy image" done={copiedImg} onClick={() => void copyImage()}>
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15V5a2 2 0 012-2h8" />
+            </ShareChip>
+            <ShareChip label="Download image" done={false} onClick={() => void downloadImage()}>
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <path d="M7 10l5 5 5-5" />
+              <path d="M12 15V3" />
+            </ShareChip>
+            <ShareChip label="Copy embed" done={copiedEmbed} onClick={() => void copyEmbed()}>
+              <path d="M16 18l6-6-6-6" />
+              <path d="M8 6l-6 6 6 6" />
+            </ShareChip>
           </div>
+          {/* THE REFERRAL FACT AS AN OBJECT (owner: "way more beautiful/visual"):
+              a percent coin + the number said in num font + the door. */}
           {viewer && (
-            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-teal">
-              Your link earns you ~5% of the fee on buys through it · <a href="/earn" className="underline underline-offset-2 hover:text-cyan">refer &amp; earn</a>
-            </p>
+            <a
+              href="/earn"
+              className="press mt-4 flex items-center gap-3 rounded-2xl border border-teal/25 bg-teal/[0.05] px-4 py-3 hover:border-teal/50"
+            >
+              <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-teal/15 font-display text-[13px] font-bold text-teal">
+                %
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-display text-sm font-bold uppercase tracking-wide text-ink">
+                  your link pays you
+                </span>
+                <span className="block font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim">
+                  ≈<span className="font-num text-[12px] font-semibold text-teal">5%</span> of the fee on every buy
+                  through it
+                </span>
+              </span>
+              <span aria-hidden className="shrink-0 font-display text-lg text-teal">→</span>
+            </a>
           )}
         </div>
       </div>
@@ -492,7 +596,11 @@ export function LaunchBanner({
     typeof window !== 'undefined'
       ? `${window.location.origin}/token?addr=${addr}&chain=${chainId}${ref}`
       : `/token?addr=${addr}&chain=${chainId}${ref}`
-  const text = `I launched $${symbol}: ${holdings.length} tokens, one onchain basket.`
+  const launchTop = holdings
+    .slice(0, 4)
+    .map((h) => `$${showSymbol(h.symbol)}`)
+    .join(' · ')
+  const text = `I just launched ${showName(name)} ($${showSymbol(symbol)})\n${launchTop}${holdings.length > 4 ? ` +${holdings.length - 4} more` : ''}\n\n${holdings.length} assets, one onchain basket — buy it in one tap.`
   const xHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`
   const bentoItems: BentoItem[] = holdings.map((h) => ({
     symbol: h.symbol,
@@ -508,7 +616,7 @@ export function LaunchBanner({
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute -top-20 left-1/2 h-44 w-[130%] -translate-x-1/2 opacity-45 blur-3xl"
+        className="-m-1 grid min-h-[36px] min-w-[36px] place-items-center pointer-events-none absolute -top-20 left-1/2 h-44 w-[130%] -translate-x-1/2 opacity-45 blur-3xl"
         style={{ background: sig }}
       />
       <button
@@ -529,7 +637,7 @@ export function LaunchBanner({
             Deployed · live
           </div>
           <h2 className="mt-3 font-display text-2xl font-bold uppercase leading-tight tracking-tight text-ink sm:text-3xl">
-            ${symbol} is live
+            ${showSymbol(symbol)} is live
           </h2>
           <p className="mt-1.5 max-w-md text-sm leading-relaxed text-ink-dim">
             {name} · {holdings.length} assets in one onchain basket token.

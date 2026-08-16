@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { AssetLogo } from './AssetLogo'
 import { useAssetHistory } from '../lib/spectrum/hooks'
 import { honest24hPct } from '../lib/spectrum/history'
@@ -13,11 +14,15 @@ export function AssetHoverCard({
   address,
   symbol,
   weightPct,
+  shareLabel = 'of basket',
 }: {
   chainId: number
   address: string
   symbol: string
   weightPct: number
+  /** What the share is OF — 'of basket' on basket pages, 'of portfolio' on
+   *  the portfolio's picture (2026-08-06: the card went portfolio-wide). */
+  shareLabel?: string
 }) {
   const { data, isLoading } = useAssetHistory(chainId, address, '7D')
   const series = data ?? []
@@ -65,9 +70,9 @@ export function AssetHoverCard({
           discColor={`color-mix(in srgb, ${vis.color} 55%, #000)`}
         />
         <div className="min-w-0">
-          <div className="font-display text-sm font-bold uppercase leading-none tracking-wide text-ink">{symbol}</div>
+          <div className="font-display text-sm font-bold uppercase leading-none tracking-wide text-ink">{showSymbol(symbol)}</div>
           <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-dim">
-            {weightPct.toFixed(1)}% of basket
+            {weightPct.toFixed(1)}% {shareLabel}
           </div>
         </div>
       </div>

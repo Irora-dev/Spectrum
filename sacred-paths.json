@@ -2,7 +2,7 @@
   "$comment": "The sacred-systems registry. These are the code paths that move or could strand user money: the basket LAUNCH system and the basket SWAP/trading system. Any release whose diff touches a path here is a SACRED release: it must name the touched system(s) in its CHANGELOG section (a 'Sacred:' line), declare them in version.json's 'sacred' field, carry an impact of at least 'config' (never 'safe'), and pass the live sacred smoke (npm run smoke:sacred) before it ships. CI re-checks this on every release commit (scripts/sacred-diff.mjs). Editing THIS file is itself a changelog-visible change.",
   "systems": {
     "launch": {
-      "why": "Basket creation. A regression here bricks deploys for every visitor of every site built from this kit (failure class: a bad leg route sails through salt-mining, then every deploy reverts on-chain with CREATE2Failed).",
+      "why": "Basket creation. A regression here bricks deploys for every visitor of every site built from this kit (failure class: a bad leg route sails through salt-mining, then every deploy reverts on-chain with CREATE2Failed). Since 2026-08-06 launching also MAKES THE FIRST DEPOSIT: a launch that deploys without depositing leaves the basket first-mintable by anyone, and whoever gets there chooses the funding split (contracts measured a 57% loss on the next honest buyer), so the launch batch and its funding case are launch-sacred too.",
       "paths": [
         "app/src/pages/Launch.tsx",
         "app/src/pages/Composer.tsx",
@@ -10,6 +10,7 @@
         "app/src/lib/spectrum/use-deploy.ts",
         "app/src/lib/spectrum/deploy.ts",
         "app/src/lib/spectrum/salt-mining.ts",
+        "app/src/lib/spectrum/launch-batch.ts",
         "app/src/lib/pools/**"
       ]
     },
@@ -26,12 +27,17 @@
         "app/src/lib/spectrum/swap-quote.ts",
         "app/src/lib/spectrum/delta-trade.ts",
         "app/src/lib/spectrum/lifi.ts",
-        "app/src/lib/spectrum/referral.ts"
+        "app/src/lib/spectrum/referral.ts",
+        "app/src/lib/spectrum/use-sweep.ts",
+        "app/src/lib/spectrum/use-swap-sim.ts"
       ]
     },
     "shared": {
-      "why": "Sacred to BOTH systems: hook-data encoding + slippage defaults, contract ABIs, the canonical address book, per-chain routing config, fee math, and the build-time config that ARMS the money paths.",
-      "flags": ["launch", "swap"],
+      "why": "Sacred to BOTH systems: hook-data encoding + slippage defaults, contract ABIs, the canonical address book, per-chain routing config, fee math, and the build-time config that ARMS the money paths. Added 2026-08-06 after the zero-split incident: the FUNDING SPLIT decides how a buyer's money is divided across legs, so the modules that read, carry or probe it are sacred by definition - a wrong split is a mis-sent payment, not a display bug. They were unregistered while shipping the very bug that proved it.",
+      "flags": [
+        "launch",
+        "swap"
+      ],
       "paths": [
         "app/src/lib/spectrum/hook-data.ts",
         "app/src/lib/spectrum/abis-v2.ts",
@@ -41,12 +47,30 @@
         "app/src/lib/spectrum/gas.ts",
         "app/src/lib/spectrum/fee-model.ts",
         "app/src/lib/config/features.ts",
-        "app/scripts/check-config.mjs"
+        "app/scripts/check-config.mjs",
+        "app/src/lib/spectrum/mint-funding.ts",
+        "app/src/lib/spectrum/use-mint-funding.ts",
+        "app/src/lib/spectrum/contract-split.ts",
+        "app/src/lib/spectrum/swap-sim.ts",
+        "app/src/lib/spectrum/first-mint-split.ts",
+        "app/src/lib/spectrum/launch-first-mint.ts",
+        "app/src/lib/spectrum/batch-calls.ts"
+      ]
+    },
+    "executor": {
+      "why": "THE LIVE-MONEY SWITCHES AND THE REVIEW RECORD THAT GATES THEM (added 2026-08-07 after an independent review found them absent while a feature toggle was present \u2014 F9). allocation.ts's SIMULATED and portfolio-batcher.ts's ZEROEX_COMPOSE_ENABLED are the two constants that decide whether the executor moves real money; review-ledger.json is what gate A10 reads to decide whether the flip is allowed. A one-line edit to any of the three changes what the whole harness permits, so each belongs in a SACRED release with its system named.",
+      "paths": [
+        "app/src/lib/spectrum/allocation.ts",
+        "app/src/lib/spectrum/portfolio-batcher.ts",
+        "app/src/lib/spectrum/review-ledger.json",
+        "app/src/lib/spectrum/go-live-interlock.test.ts"
       ]
     }
   },
   "dependencyReminder": {
-    "paths": ["app/package.json"],
+    "paths": [
+      "app/package.json"
+    ],
     "note": "Dependency changes ship as their own releases, never mixed with sacred code changes. A bump of the money-path libraries (viem, wagmi) is treated as sacred even with zero first-party diff: run the sacred smoke and declare it."
   }
 }

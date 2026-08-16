@@ -56,15 +56,31 @@ export function CopyButton({ text }: { text: string }) {
 }
 
 // ── copyable chip (addresses, short values) ──────────────────────────────────
-export function CopyChip({ text, label, pill = false }: { text: string; label?: string; pill?: boolean }) {
+export function CopyChip({
+  text,
+  label,
+  pill = false,
+  size = 'sm',
+}: {
+  text: string
+  label?: string
+  pill?: boolean
+  /** md = the Token hero's standardized 32px/13px pill row (owner 2026-08-03:
+   *  "these pills can be standardised"); sm = everywhere else, unchanged. */
+  size?: 'sm' | 'md'
+}) {
   const { copied, copy } = useCopy()
   return (
     <button
       type="button"
       onClick={() => copy(text)}
       title={text}
-      className={`press inline-flex max-w-full items-center gap-1.5 border border-white/10 bg-white/[0.04] font-mono text-[11px] text-ink-dim hover:border-cyan/50 hover:text-ink ${
-        pill ? 'h-6 rounded-full px-2.5' : 'rounded-md px-2 py-1' // pill: matches the badge-row chips (Token eyebrow)
+      className={`press inline-flex max-w-full items-center gap-1.5 border border-white/10 bg-white/[0.04] font-mono text-ink-dim hover:border-cyan/50 hover:text-ink ${
+        pill
+          ? size === 'md'
+            ? 'h-8 rounded-full px-3 text-[13px]'
+            : 'h-6 rounded-full px-2.5 text-[11px]'
+          : 'rounded-md px-2 py-1 text-[11px]' // pill: matches the badge-row chips (Token eyebrow)
       }`}
     >
       <span className="truncate">{label ?? text}</span>
@@ -252,8 +268,21 @@ export function Checklist({ items }: { items: ReactNode[] }) {
 }
 
 // ── on-this-page TOC with scrollspy ──────────────────────────────────────────
-export function Toc({ items }: { items: { id: string; label: string }[] }) {
+const NO_HIDDEN: ReadonlySet<string> = new Set()
+
+export function Toc({
+  items,
+  hiddenIds = NO_HIDDEN,
+}: {
+  items: { id: string; label: string }[]
+  /** ids the caller has display:none'd (the docs search filter). */
+  hiddenIds?: ReadonlySet<string>
+}) {
   const [active, setActive] = useState(items[0]?.id ?? '')
+  // Deliberately observes every section, filtered-out ones included: a
+  // display:none section just stops intersecting and starts again when the
+  // search clears, so re-registering the observer per keystroke would buy
+  // nothing and risk dropping sections mid-filter.
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -271,20 +300,40 @@ export function Toc({ items }: { items: { id: string; label: string }[] }) {
     return () => observer.disconnect()
   }, [items])
 
+  // Filtered-out rows are DROPPED, not dimmed: their section is display:none,
+  // so the anchor scrolled nowhere and every click on one was silently dead.
+  // Omitting costs no orientation here because each label carries its own
+  // chapter number, so a short list still says where those chapters sit.
+  const shown = items.filter((it) => !hiddenIds.has(it.id))
+  // The observer only ever lights a section it has watched intersect, and a
+  // hidden one never does — so `active` could stay pinned to a chapter that is
+  // both invisible and no longer listed. Fall back to the first reachable one,
+  // exactly as the unfiltered first render does.
+  const current = shown.some((it) => it.id === active) ? active : shown[0]?.id
+  // Nothing matched: the article already says so, a hollow nav card would only
+  // repeat it. The grid column is fixed, so the article does not shift.
+  if (!shown.length) return null
+
   return (
     <nav className="hidden lg:block">
       {/* the nav gets its own card (owner 16:48) */}
       <div className="sticky top-24 rounded-2xl border border-white/10 bg-black/25 p-4">
-        <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
-          On this page
+        <div className="mb-3 flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
+          <span>On this page</span>
+          {/* a shrunken list must read as a search RESULT, not a short page */}
+          {shown.length < items.length && (
+            <span className="text-cyan/70">
+              {shown.length}/{items.length}
+            </span>
+          )}
         </div>
         <ul className="border-l border-white/10">
-          {items.map((it) => (
+          {shown.map((it) => (
             <li key={it.id}>
               <a
                 href={`#${it.id}`}
                 className={`-ml-px block border-l py-1 pl-3 text-[12px] transition-colors ${
-                  active === it.id
+                  current === it.id
                     ? 'border-cyan text-cyan'
                     : 'border-transparent text-ink-faint hover:text-ink-dim'
                 }`}

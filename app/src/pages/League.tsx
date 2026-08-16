@@ -1,9 +1,11 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import type { Address } from 'viem'
 import { useActiveChain } from '../lib/chain/active-chain'
+import { settlementDecimalsFor } from '../lib/chain/deployments'
 import { clientFor } from '../lib/chain/rpc'
 import { buildStandings, CROWN_CLAIM_RULE, fetchLeagueSnapshot, fetchOwed, leaguePoolAbi, type LeagueSnapshot } from '../lib/spectrum/league'
 import { useAllBaskets, useCreatorIdentity } from '../lib/spectrum/hooks'
@@ -60,16 +62,16 @@ const LearnWalkthrough = lazy(() =>
 // only where a leaguePool is configured for the viewing chain.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SETTLEMENT_DECIMALS = 6
-
 function seasonLabel(epochEndsAt: number): string {
   // 30-day epochs are not calendar months; the midpoint names the season the
   // window overwhelmingly sits in ("July 2026").
   return new Date((epochEndsAt - 15 * 86_400) * 1000).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-function usd(raw: bigint): string {
-  return formatUsdCompact(Number(raw) / 10 ** SETTLEMENT_DECIMALS)
+/** Fees are denominated in the league chain's settlement token — decimals
+ *  from the deployment book, never a local constant (cold-review INFO-1). */
+function usd(raw: bigint, chainId: number): string {
+  return formatUsdCompact(Number(raw) / 10 ** settlementDecimalsFor(chainId))
 }
 
 function Countdown({ endsAt }: { endsAt: number }) {
@@ -102,7 +104,10 @@ function StandingRow({
   isMe,
   baskets,
   devName,
+  chainId,
 }: {
+  /** The league's own chain — names the settlement decimals its fees read in. */
+  chainId: number
   rank: number
   /** The contract's `champion` — taking the stream right now. */
   leader: boolean
@@ -184,7 +189,7 @@ function StandingRow({
               ))}
             </div>
             <div className="text-right">
-              <div className="font-mono text-xs font-semibold text-ink">${best.symbol}</div>
+              <div className="font-mono text-xs font-semibold text-ink">${showSymbol(best.symbol)}</div>
               <div className="mt-0.5 flex items-baseline justify-end gap-1.5">
                 {bestPerf != null ? (
                   <span className={`font-num text-sm font-semibold tabular-nums ${pnlColor(bestPerf)}`}>
@@ -209,7 +214,7 @@ function StandingRow({
         <div className="flex items-center gap-6 border-l border-white/10 pl-5">
           <div className="text-right">
             <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint">fees this season</div>
-            <div className="font-num text-sm tabular-nums text-ink-dim">{usd(credited)}</div>
+            <div className="font-num text-sm tabular-nums text-ink-dim">{usd(credited, chainId)}</div>
           </div>
           <div className="text-right">
             {/* the crown-holder is being paid NOW; everyone else gets the gap
@@ -219,7 +224,7 @@ function StandingRow({
               {leader ? 'taking the stream' : 'to take the crown'}
             </div>
             <div className={`font-num text-base font-semibold tabular-nums ${leader ? 'text-teal' : 'text-ink-dim'}`}>
-              {leader ? 'live' : toBeat > 0n ? `+${usd(toBeat)}` : 'next credit'}
+              {leader ? 'live' : toBeat > 0n ? `+${usd(toBeat, chainId)}` : 'next credit'}
             </div>
           </div>
         </div>
@@ -447,7 +452,7 @@ export function League() {
                   Score to beat
                 </div>
                 <div className="mt-1 font-num text-5xl font-light tabular-nums text-teal sm:text-6xl">
-                  {live ? usd(live.scoreToBeat) : '…'}
+                  {live ? usd(live.scoreToBeat, chainId) : '…'}
                 </div>
                 <div className="mt-1 font-mono text-[10px] tracking-[0.08em] text-ink-faint">
                   pass it and every league fee starts streaming to you instead
@@ -469,7 +474,7 @@ export function League() {
       {learnOpen && (
         <Suspense fallback={null}>
           <LearnWalkthrough
-            poolUsd={live ? usd(live.scoreToBeat) : undefined}
+            poolUsd={live ? usd(live.scoreToBeat, chainId) : undefined}
             closeLabel="Back to the league"
             onClose={() => setLearnOpen(false)}
           />
@@ -483,7 +488,7 @@ export function League() {
           {myRow && (
             <p className="mt-2 text-sm text-ink-dim">
               This season your baskets have generated{' '}
-              <span className="font-num text-ink">{usd(myRow.credited)}</span> in fees, putting you{' '}
+              <span className="font-num text-ink">{usd(myRow.credited, chainId)}</span> in fees, putting you{' '}
               <span className="font-num text-ink">#{myRow.rank + 1}</span>
               <InfoDot>
                 Creators are ranked on the fees their baskets generate this season, counted straight (no curve).
@@ -497,7 +502,7 @@ export function League() {
                 </>
               ) : myRow.toBeat > 0n ? (
                 <>
-                  . Generate <span className="font-num text-ink">{usd(myRow.toBeat)}</span> more in fees to take the
+                  . Generate <span className="font-num text-ink">{usd(myRow.toBeat, chainId)}</span> more in fees to take the
                   crown, and the stream switches to you.
                 </>
               ) : (
@@ -508,7 +513,7 @@ export function League() {
           {myOwed != null && myOwed > 0n && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-3">
               <span className="font-mono text-xs text-ink-dim">
-                <span className="font-num font-semibold text-teal">{usd(myOwed)}</span> yours to withdraw
+                <span className="font-num font-semibold text-teal">{usd(myOwed, chainId)}</span> yours to withdraw
                 <InfoDot>{CROWN_CLAIM_RULE}</InfoDot>
               </span>
               {/* TRADING_ENABLED-gated: this broadcasts a tx, and an info-only
@@ -566,6 +571,7 @@ export function League() {
           <div className="space-y-2">
             {live.standings.map((s, i) => (
               <StandingRow
+                chainId={chainId}
                 key={s.creator}
                 rank={i + 1}
                 leader={s.leader}
@@ -588,13 +594,13 @@ export function League() {
             ) : live && live.total === 0n ? (
               <>
                 No league fees have been credited this season yet.{' '}
-                <Link to="/launch" className="text-cyan hover:underline">Launch a basket</Link> — baskets of
+                <Link to="/create" className="text-cyan hover:underline">Create a basket</Link> — baskets of
                 this lineage skim a league slice off each fee and crank it here as they trade.
               </>
             ) : (
               <>
                 No fees credited yet this season. The first basket trade opens the race,{' '}
-                <Link to="/launch" className="text-cyan hover:underline">launch yours</Link>.
+                <Link to="/create" className="text-cyan hover:underline">launch yours</Link>.
               </>
             )}
           </div>

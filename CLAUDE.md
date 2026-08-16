@@ -29,6 +29,20 @@ validate, build, and drive the hosting hookup.
   that plainly when handing a finished site over.
 - Keep the **"powered by Spectrum Mini"** footer attribution intact on generated sites.
 
+## The browser extension (extension/)
+
+A read-only portfolio lens the SITE distributes (white-label — it wears the operator's
+wordmark). The one machine interface is `node extension/scripts/status.mjs --json`
+(append-only keys; its `next` array names the exact command to run at each step).
+Packaging: `npm run package -- --into-site` (from `extension/`) → artifacts land in
+`app/public/extension/` (committed — CI deploys ship only what is committed) and the site's
+`/extension` page renders from the descriptor. Invariants an agent must hold: the extension
+NOTICES, the site EXECUTES (no wallet, no signing, no seed phrases, permissions stay
+alarms+storage+notifications); `app/src/lib/spectrum/*` is CONSUMED, never modified from
+extension code; theme tokens are pinned to `app/src/index.css` by a parity test — fix by
+re-copying values, never by editing the test. Full agent contract:
+`extension/README.md` § For agents.
+
 ## Orientation
 
 - `app/` — the site (Vite + React; self-contained, no database). Verify changes with

@@ -1,12 +1,97 @@
 {
   "rewrites": [
-    { "source": "/creator/assets/(.*)", "destination": "/assets/$1" },
-    { "source": "/docs/assets/(.*)", "destination": "/assets/$1" },
-    { "source": "/bundle/(.*)/assets/(.*)", "destination": "/assets/$2" },
-    { "source": "/bundle/assets/(.*)", "destination": "/assets/$1" },
-    { "source": "/t/(.*)/assets/(.*)", "destination": "/assets/$2" },
-    { "source": "/c/assets/(.*)", "destination": "/assets/$1" },
-    { "source": "/b/(.*)/assets/(.*)", "destination": "/assets/$2" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/creator/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/docs/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/portfolio/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/bundle/(.*)/assets/(.*)",
+      "destination": "/assets/$2"
+    },
+    {
+      "source": "/bundle/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/t/(.*)/assets/(.*)",
+      "destination": "/assets/$2"
+    },
+    {
+      "source": "/c/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/b/(.*)/assets/(.*)",
+      "destination": "/assets/$2"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://tokens.uniswap.org https://tokens.coingecko.com https://coin-images.coingecko.com https://assets.coingecko.com https://raw.githubusercontent.com https://ipfs.io https://t3.gstatic.com https://dd.dexscreener.com https://cdn.dexscreener.com; connect-src 'self' https://*.g.alchemy.com https://base-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://api.basescan.org https://api.etherscan.io https://api.dexscreener.com https://coins.llama.fi https://li.quest https://api.cow.fi https://tokens.uniswap.org https://tokens.coingecko.com https://api.coingecko.com wss://*.walletconnect.org https://*.walletconnect.org wss://*.walletconnect.com https://*.walletconnect.com https://fonts.googleapis.com https://fonts.gstatic.com; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=()"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
+      ]
+    },
+    {
+      "source": "/embed",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://tokens.uniswap.org https://tokens.coingecko.com https://coin-images.coingecko.com https://assets.coingecko.com https://raw.githubusercontent.com https://ipfs.io https://t3.gstatic.com https://dd.dexscreener.com https://cdn.dexscreener.com; connect-src 'self' https://*.g.alchemy.com https://base-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://api.basescan.org https://api.etherscan.io https://api.dexscreener.com https://coins.llama.fi https://li.quest https://api.cow.fi https://tokens.uniswap.org https://tokens.coingecko.com https://api.coingecko.com wss://*.walletconnect.org https://*.walletconnect.org wss://*.walletconnect.com https://*.walletconnect.com https://fonts.googleapis.com https://fonts.gstatic.com; frame-ancestors *; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=()"
+        }
+      ]
+    },
+    {
+      "source": "/extension/(.*\\.xpi)",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/x-xpinstall"
+        }
+      ]
+    }
   ]
 }

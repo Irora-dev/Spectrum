@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { NavLink, useLocation } from 'react-router-dom'
-import { links as navLinks, moreLinks, fullNavAt } from './Nav'
+import { NavLink, useLocation } from 'react-router'
+import { links as navLinks, useMoreLinks, fullNavAt } from './Nav'
 import { useReferralEarned } from './ReferralCard'
 
 // The mobile-first navigation (owner 2026-07-30): a fixed bottom tab bar —
@@ -16,7 +16,21 @@ import { useReferralEarned } from './ReferralCard'
 // otherwise become the containing block for a fixed child (the WalletButton
 // lesson) and trap it in the bar's stacking context.
 
-const TAB_ROUTES = ['/explore', '/swap', '/portfolio']
+// Mirrors the primary desktop bar exactly (owner 2026-08-01): Explore · Create
+// · Yours. /swap left the primary nav — its console is embedded on every basket
+// page — so it must leave the tab bar too, or the two disagree about what the
+// site's three main places are. Everything not listed here falls into the More
+// sheet automatically.
+// Mirrors the primary bar exactly (owner 2026-08-02): portfolio leads, Learn
+// takes Create's old slot. If these drift from Nav's list, phones silently lose
+// a destination — the failure mode the /launch repoint caused once already.
+// SWAP REJOINS (owner 2026-08-05: Swap returned to the desktop primary bar the
+// same day — "a one-to-one swap is not a bad thing"). This list must mirror that
+// bar or phones silently lose a destination, which is the exact failure the
+// /launch repoint caused once already. Four core places + More; HOME left the
+// bar because the wordmark in the header already goes home and a phone bar with
+// six cells gives every one of them a 60px target.
+const TAB_ROUTES = ['/portfolio', '/explore', '/swap', '/learn']
 
 function icon(to: string): ReactNode {
   const p = {
@@ -59,10 +73,17 @@ function icon(to: string): ReactNode {
           <path d="M15 13h3" />
         </svg>
       )
-    case '/launch':
+    case '/create':
       return (
         <svg viewBox="0 0 24 24" {...p}>
           <path d="M12 2.5l9 9.5-9 9.5-9-9.5z" />
+        </svg>
+      )
+    case '/learn':
+      return (
+        <svg viewBox="0 0 24 24" {...p}>
+          <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H5.5A1.5 1.5 0 0 1 4 15.5z" />
+          <path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H14a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h4.5a1.5 1.5 0 0 0 1.5-1.5z" />
         </svg>
       )
     case '/league':
@@ -101,13 +122,21 @@ export function MobileTabBar() {
   const { claimableTotal: refClaimable } = useReferralEarned()
   const claimBadge = refClaimable
 
-  const tabs = [
-    { to: '/', label: 'Home', end: true },
-    ...navLinks.filter((l) => TAB_ROUTES.includes(l.to)).slice(0, 3),
-  ]
+  // Ordered by TAB_ROUTES, not by navLinks' order, so the bar reads the same
+  // left-to-right on every operator build regardless of which pages are on.
+  const tabs = TAB_ROUTES.map((to) => navLinks.find((l) => l.to === to)).filter(
+    (l): l is (typeof navLinks)[number] => !!l,
+  )
+  // The SAME viewer-aware set the desktop dropdown shows. Hardcoding moreLinks
+  // here would have meant phones offering five creator surfaces that desktop
+  // hides — the two navs disagreeing about what the site contains.
+  const moreForViewer = useMoreLinks()
   const sheetLinks = [
+    // Home leads the sheet: it left the bar for target size, so it must still
+    // be one tap away rather than only reachable through the wordmark.
+    { to: '/', label: 'Home' },
     ...navLinks.filter((l) => !TAB_ROUTES.includes(l.to)),
-    ...moreLinks,
+    ...moreForViewer,
   ]
 
   // Close the sheet whenever the route changes (tapping a link navigates).
@@ -296,25 +325,38 @@ export function MobileTabBar() {
               >
                 <div aria-hidden className="mx-auto h-1 w-10 rounded-full bg-white/15" />
               </div>
-              {sheetLinks.map((l) => (
-                <NavLink
-                  key={l.to}
-                  to={l.to}
-                  className={({ isActive }) =>
-                    `press flex items-center gap-3 rounded-xl px-3 py-3 font-mono text-sm uppercase tracking-[0.16em] ${
-                      isActive ? 'text-cyan' : 'text-ink-dim hover:bg-white/5 hover:text-ink'
-                    }`
-                  }
-                >
-                  <span className="text-ink-faint">{icon(l.to)}</span>
-                  <span className="flex-1">{l.label}</span>
-                  {l.to === '/earn' && claimBadge > 0 && (
-                    <span className="rounded-full bg-cyan/15 px-2 py-0.5 font-mono text-[10px] normal-case tracking-normal tabular-nums text-cyan">
-                      ${refClaimable.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  )}
-                </NavLink>
-              ))}
+              {/* BIG BUTTONS (owner 2026-08-05 mobile sweep: "a more with nice
+                  big buttons for other pages — look at the prism mothership
+                  mobile menu for inspo"). The mothership's rows are the
+                  reference: rounded-xl, real sentence-case weight at 15px, the
+                  icon inline at gap-2.5, and the ACTIVE row filled rather than
+                  merely tinted. The old rows were 10px mono uppercase — a
+                  desktop menu's typography shrunk onto a phone, which is both
+                  hard to read and hard to hit. Two columns so the whole set is
+                  thumb-reachable without scrolling the sheet. */}
+              <div className="grid grid-cols-2 gap-2">
+                {sheetLinks.map((l) => (
+                  <NavLink
+                    key={l.to}
+                    to={l.to}
+                    className={({ isActive }) =>
+                      `press flex min-h-[56px] items-center gap-2.5 rounded-xl border px-3.5 py-3 text-[15px] font-semibold tracking-tight transition-colors ${
+                        isActive
+                          ? 'border-cyan/50 bg-cyan/12 text-cyan'
+                          : 'border-white/10 bg-white/[0.04] text-ink hover:border-white/25'
+                      }`
+                    }
+                  >
+                    <span className="shrink-0 text-ink-faint">{icon(l.to)}</span>
+                    <span className="min-w-0 flex-1 truncate">{l.label}</span>
+                    {l.to === '/earn' && claimBadge > 0 && (
+                      <span className="shrink-0 rounded-full bg-cyan/15 px-2 py-0.5 font-mono text-[10px] tabular-nums text-cyan">
+                        ${refClaimable.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
             </div>
           </div>,
           document.body,

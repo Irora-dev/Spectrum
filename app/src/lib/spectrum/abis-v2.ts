@@ -10,7 +10,7 @@ import { parseAbi, parseAbiItem } from 'viem'
 //   • Fee config is per-basket and immutable: the creator picks `basketFeeBps`
 //     (bounded by [MIN,MAX]_BASKET_FEE_BPS) + a single capped, removable
 //     `creatorShareBps` (≤ MAX_CREATOR_SHARE_BPS = 30% of the remainder) paid to
-//     `creatorPayout`. The PRISM burn (10%), interface (≈5%) and launcher (≈5%)
+//     `creatorPayout`. The PRISM burn (25%, D-R3), interface (≈5%) and launcher (≈5%)
 //     shares are FIXED protocol constants, identical on every basket — see
 //     fee-model.ts. The `launcher` is a per-basket origination recipient injected
 //     by whoever deploys the kit (operator config), never a creator dial. Holders
@@ -27,8 +27,11 @@ import { parseAbi, parseAbiItem } from 'viem'
 //     minOuts.
 //   • The factory enumerates baskets (allBaskets/allBasketsLength),
 //     so a keyless public-RPC build can list everything without log scans.
-//   • Deploys are priced by a Dutch auction; there is NO
-//     deployEnabled() view in V2 — do not re-add one.
+//   • Deploys cost a FLAT launch fee (currentDeployPrice() returns the factory's
+//     LAUNCH_FEE_WEI constant — measured 0.001 ETH on all three deployed
+//     factories, 2026-08-13). The Dutch-auction generation that preceded them is
+//     gone; its ABI is unchanged, so the getter's NAME is the only thing left of
+//     it. There is NO deployEnabled() view — do not re-add one.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Hook permission bits the mined token address must carry: BEFORE_SWAP (0x80) |
@@ -42,8 +45,12 @@ export const HOOK_FLAGS_MASK = 0x3fffn
 // the deployed v1 factory minus the dstable-era assumptions; the V2 contracts
 // deliverable owns the final tuple. There is exactly ONE target factory — no
 // live-v1 / fork hedging.
-const BASKET_ENTRY =
-  '(address asset, uint8 venue, (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) ethPool, uint24 v3Fee, address v2Pair, uint16 weight, uint8 decimals)'
+// Exported because the local salt miner re-encodes this EXACT tuple to rebuild
+// the init code the factory CREATE2s from (salt-init-code.ts) — one spelling of
+// the shape, not two that can drift apart.
+export const POOL_KEY = '(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)'
+export const BASKET_ENTRY =
+  `(address asset, uint8 venue, ${POOL_KEY} ethPool, uint24 v3Fee, address v2Pair, uint16 weight, uint8 decimals)`
 
 // The immutable fee config committed at deploy. CREATE2-committed: it is a
 // salt-mining input and part of predictTokenAddress, so its FIELD ORDER must
@@ -52,7 +59,7 @@ const BASKET_ENTRY =
 // launcher shares are fixed protocol constants (fee-model.ts); the tuple carries
 // only the rate, the capped creator share, the creator payout, and the per-basket
 // launcher (the old creator-set `routes[]` is gone).
-const FEE_CONFIG =
+export const FEE_CONFIG =
   '(uint16 basketFeeBps, uint16 creatorShareBps, address creatorPayout, address launcher)'
 
 export interface FeeConfigInput {
@@ -188,11 +195,12 @@ export const poolManagerAbi = parseAbi([
 //   tokenIn = USDC   → buy  (mint-via-swap):  amountIn USDC   → ≥ minOut shares
 //   tokenIn = basket → sell (redeem-via-swap): amountIn shares → ≥ minOut USDC
 // The router pulls tokenIn via transferFrom (caller approves the router first).
-// `minOut` is the AGGREGATE out floor. On a BUY, per-leg protection rides in
-// hookData.legMins (non-zero — encodeMintHookData refuses a zero payload, so each
-// leg's swap is bounded end-to-end); on a SELL the binding protection IS minOut
-// (the basket reverts SlippageExceeded below it) and legMins are length-correct
-// zeros (encodeRedeemHookData). `to` is the recipient of tokenOut.
+// `minOut` is the AGGREGATE out floor. On a BUY, each hookData.legMins word carries
+// TWO fields: the funding split in bits [255:240] (from `factory.bareLegMins`, never
+// derived here) and the per-leg floor in [239:0] — non-zero on every leg the split
+// funds, so each leg's swap is bounded end-to-end (hook-data.ts). On a SELL the
+// binding protection IS minOut (the basket reverts SlippageExceeded below it) and
+// legMins are length-correct zeros (encodeRedeemHookData). `to` receives tokenOut.
 export const swapRouterAbi = parseAbi([
   'function swapExactIn(address basket, address tokenIn, uint256 amountIn, uint256 minOut, bytes hookData, address to) returns (uint256 amountOut)',
   'event Swapped(address indexed basket, address indexed trader, address tokenIn, uint256 amountIn, uint256 amountOut, address frontend)',
@@ -210,9 +218,9 @@ export const factoryAbi = parseAbi([
   // INTERFACE_SHARE_BPS, CRANK_BOUNTY_BPS) are NOT factory getters — they are
   // fixed protocol constants the FE mirrors from verified bytecode (fee-model.ts).
   // Do not re-add them here.
-  // ── Launch price — currentDeployPrice() (V2 auctions it, the new lineage's
-  // flat fee is ABI-identical; both revert SlotNotOpen for 10 blocks after a
-  // launch). lastDeployBlock is public and feeds the slot-reopen countdown. ──
+  // ── Launch price — currentDeployPrice() returns a flat fee and reverts
+  // SlotNotOpen() for 10 blocks after a launch, and for NO other reason.
+  // lastDeployBlock is public and feeds the reopen countdown. ──
   'function currentDeployPrice() view returns (uint256)',
   'function lastDeployBlock() view returns (uint256)',
 ])
@@ -230,6 +238,21 @@ export const factoryDeployAbi = parseAbi([
   `function deployBasket(bytes32 salt, string name, string symbol, ${BASKET_ENTRY}[] basket, uint160 startSqrtPriceX96, uint256 maxCost, ${FEE_CONFIG} feeConfig) payable returns (address token)`,
   `function predictTokenAddress(bytes32 salt, ${BASKET_ENTRY}[] basket, address deployer, ${FEE_CONFIG} feeConfig) view returns (address)`,
   'function currentDeployPrice() view returns (uint256)',
+])
+
+// The four public reads that let the FE rebuild the basket's init code locally
+// and mine the 0x88 salt without a network round-trip per candidate. Every one
+// of them is a public getter of a factory immutable / constructor-set value:
+//   initCode = code(TOKEN_CODE_PROVIDER_0) ++ code(TOKEN_CODE_PROVIDER_1)
+//              ++ abi.encode(POOL_MANAGER, deployer, basket, canonEthUsdcKey, feeConfig)
+// (SpectrumFactory._buildInitCode). The derived hash is NEVER trusted on its own
+// — salt-init-code.ts proves it against predictTokenAddress before it is used,
+// and the winning salt is confirmed by the same oracle before any deploy.
+export const factoryInitCodeAbi = parseAbi([
+  'function POOL_MANAGER() view returns (address)',
+  'function TOKEN_CODE_PROVIDER_0() view returns (address)',
+  'function TOKEN_CODE_PROVIDER_1() view returns (address)',
+  'function canonEthUsdcKey() view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)',
 ])
 
 // Launch event — kept for enrichment (inception timestamps) and tx

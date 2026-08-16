@@ -1,0 +1,106 @@
+# Branch gate — the maintainer's local gate, run automatically on every branch
+# that is NOT main.
+#
+# WHY THIS IS SEPARATE FROM release-proof. That workflow means one thing —
+# "every commit on main is a release, and here is the proof" — and it runs the
+# release-shaped jobs (wizard simulation, sacred-diff against the release base).
+# Widening its trigger would blur what a green release-proof means. This is the
+# other question: is the work IN FLIGHT sound? Different question, own workflow.
+#
+# WHY IT EXISTS AT ALL. Until 2026-08-07 nothing automated ever saw a working
+# branch: release-proof triggers on main, and the lanes sit hundreds of commits
+# away from it, so the only gate on day-to-day work was whichever commands a
+# worker remembered to run by hand. Every lane gets the same floor now.
+#
+# It runs the four local gates PLUS the console smoke — the check that renders
+# the app and reads the browser console, which is the only one of the five that
+# can see a UI regression at all (the unit suite runs in node and mounts nothing).
+name: branch-gate
+
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+# A branch that is pushed three times in a minute only needs the last answer.
+concurrency:
+  group: branch-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not the release matrix's 20+22: the console smoke needs node's
+          # built-in WebSocket. Cross-version proof stays release-proof's job.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install (exact locked tree)
+        working-directory: app
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: app
+        # `npm run typecheck` (tsc -b), never a bare `tsc --noEmit`: the root
+        # tsconfig is a project-references stub with "files": [], so the bare
+        # form typechecks NOTHING and passes.
+        run: npm run typecheck
+
+      - name: Unit tests
+        working-directory: app
+        run: npx vitest run
+
+      - name: Lint
+        working-directory: app
+        run: npx eslint src --max-warnings=0
+
+      - name: Production build
+        working-directory: app
+        run: VITE_SITE_URL=https://example.com npm run build
+
+      - name: Bundle budget
+        working-directory: app
+        # Reuses the build above. Fails only when shipped JS grows past a
+        # ceiling with headroom over today's size — a regression tripwire for
+        # a dependency that quietly doubles first load (WalletConnect added
+        # ~1MB unnoticed until it was measured by hand).
+        run: npm run budget
+
+      - name: Dependency audit
+        working-directory: app
+        # Fails ONLY on a CRITICAL advisory (zero today). High/moderate are
+        # reported but do not break the build: every current high is in a
+        # transitive tree we cannot fix without a major wagmi/react-router
+        # upgrade (its own project — see docs/GO-LIVE.md), and a gate that is
+        # red for un-actionable reasons is a gate people learn to ignore. A NEW
+        # critical, or a high in a dep we can actually bump, still stands out
+        # in the log.
+        run: |
+          npm audit --audit-level=critical || exit 1
+          echo "— high/moderate advisories (reported, not gated):"
+          npm audit --audit-level=high || true
+
+      - name: Console smoke (every route, real browser)
+        working-directory: app
+        # VITE_DEV_FIXTURE=1 so the routes have a populated book to render —
+        # against an empty catalogue most pages are honest empty states and the
+        # smoke would prove very little.
+        env:
+          VITE_DEV_FIXTURE: '1'
+          BROWSER_PATH: /usr/bin/google-chrome
+        # A shared runner paints slower than a laptop, so it gets a longer
+        # settle. The script retries a failing route once and lists anything
+        # that only passed the second time, so slowness stays visible instead
+        # of turning into a gate nobody trusts.
+        run: |
+          npm run build
+          npm run smoke:console -- --settle 10000

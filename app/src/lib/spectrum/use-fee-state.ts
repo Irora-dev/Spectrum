@@ -4,7 +4,7 @@ import { DEFAULT_CHAIN_ID } from '../chain/chains'
 import { clientFor } from '../chain/rpc'
 import { INTERFACE_TAG_ADDRESS } from '../config/operator'
 import { basketAbi } from './abis-v2'
-import { USDC_DECIMALS } from './deploy'
+import { settlementDecimalsFor } from '../chain/deployments'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIVE (mutable) fee state for the /flush creator console. Distinct from
@@ -49,7 +49,8 @@ export interface FeeState {
 }
 
 const isZero = (a?: string | null) => !a || a.toLowerCase() === zeroAddress
-const toUsdc = (v: bigint) => Number(formatUnits(v, USDC_DECIMALS))
+// Settlement decimals come from the deployment book per chain (INFO-1).
+const toUsdcAt = (decimals: number) => (v: bigint) => Number(formatUnits(v, decimals))
 
 export async function fetchFeeState(
   address: Address,
@@ -64,6 +65,7 @@ export async function fetchFeeState(
 
   const client = clientFor(chainId)
   const base = { address, abi: basketAbi } as const
+  const toUsdc = toUsdcAt(settlementDecimalsFor(chainId))
 
   // The two basket-level figures are required (a basket missing them isn't a V2
   // basket); the recipient lookups are best-effort.
@@ -162,5 +164,5 @@ export async function readPendingFrontendFees(
     functionName: 'pendingFrontendFees',
     args: [fe],
   })) as bigint
-  return toUsdc(v)
+  return toUsdcAt(settlementDecimalsFor(chainId))(v)
 }

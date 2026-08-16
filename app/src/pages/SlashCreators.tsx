@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { useActiveChainId } from '../lib/chain/active-chain'
 import { deploymentFor } from '../lib/chain/deployments'
@@ -208,7 +209,7 @@ function ExampleBasket() {
             <div className="flex items-center gap-4">
               <BasketAvatar address={EXAMPLE.address} symbol={EXAMPLE.symbol} size={76} />
               <div className="min-w-0">
-                <div className="font-display text-4xl font-bold leading-none text-ink">${EXAMPLE.symbol}</div>
+                <div className="font-display text-4xl font-bold leading-none text-ink">${showSymbol(EXAMPLE.symbol)}</div>
                 <div className="mt-2 text-lg text-ink-dim">{EXAMPLE.name}</div>
               </div>
             </div>
@@ -295,7 +296,7 @@ export function NarrativeConverge() {
               <div className="flex items-center gap-3">
                 <HuedSquareLogo size={52} />
                 <div className="min-w-0">
-                  <div className="font-display text-2xl font-bold leading-none text-ink">${EXAMPLE.symbol}</div>
+                  <div className="font-display text-2xl font-bold leading-none text-ink">${showSymbol(EXAMPLE.symbol)}</div>
                   <div className="mt-1 text-sm text-ink-dim">{EXAMPLE.name}</div>
                 </div>
               </div>
@@ -366,7 +367,7 @@ export function VersionUpdateCard() {
               <div className="flex items-center gap-3">
                 <AssetLogo address={c.address} symbol={c.symbol} chainId={c.chainId} size={28} />
                 <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <span className="font-display text-base font-bold text-ink">{c.symbol}</span>
+                  <span className="font-display text-base font-bold text-ink">{showSymbol(c.symbol)}</span>
                   <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide" style={{ color: m.color, background: `${m.color}24` }}>{m.label}</span>
                 </div>
                 <div className="shrink-0 font-num text-base tabular-nums">
@@ -524,7 +525,12 @@ export function SlashCreators() {
         </div>
       </section>
 
-      <div className="-mt-[8svh]">
+      {/* THE PULL IS DESKTOP-ONLY (mobile sweep 2026-08-06): at 390w the hero
+          is taller relative to its copy, so -8svh dragged this plate up OVER
+          the subhead — "and earn on every trade" was sliced mid-glyph and
+          permanently occluded at every scroll. The overlap is a wide-screen
+          composition; phones flow. */}
+      <div className="sm:-mt-[8svh]">
         <ExampleBasket />
       </div>
 
@@ -688,11 +694,14 @@ export function SlashCreators() {
               </div>
               <p className="mt-1 max-w-xl text-sm leading-relaxed text-ink-dim">
                 Launch your first basket and your page is live at your address, with your baskets,
-                theses and performance. Connect your wallet on it to add your name, avatar and picks.
+                theses and performance. Launching also unlocks your name:{' '}
+                <span className="font-mono text-ink">/creator/you</span>, claimed in one click right
+                after your first deploy — first come, first named. Connect your wallet on your page
+                to add your avatar and picks.
               </p>
             </div>
             <Link
-              to="/launch"
+              to="/create"
               className="press rounded-lg bg-cyan px-5 py-2.5 font-mono text-xs font-bold uppercase tracking-[0.14em] text-black hover:opacity-90"
             >
               Launch your first →
@@ -713,7 +722,7 @@ export function SlashCreators() {
             <p className="mt-4 max-w-2xl text-pretty text-base leading-relaxed text-ink-dim">
               Pick your tokens, weight them, set your fee, name it, deploy. It takes about a minute. The same flow lives
               on its own page at{' '}
-              <Link to="/launch" className="text-ink underline decoration-white/25 underline-offset-2 hover:text-cyan">/launch</Link>.
+              <Link to="/create" className="text-ink underline decoration-white/25 underline-offset-2 hover:text-cyan">/create</Link>.
             </p>
           </div>
           <div className="mt-8">

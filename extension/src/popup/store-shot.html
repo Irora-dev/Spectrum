@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Store screenshot frame</title>
+    <script type="module">
+      // Dev-tool page (never shipped): frames the popup preview at the Chrome
+      // Web Store's 1280×800 screenshot size. Fonts ride the same bundled
+      // faces as the popup; the caption comes from ?caption=…, the framed
+      // state from ?state=… (forwarded to preview.html).
+      import '@fontsource/chakra-petch/600.css'
+      import '@fontsource/jetbrains-mono/400.css'
+      const q = new URLSearchParams(location.search)
+      document.getElementById('caption').textContent = q.get('caption') ?? ''
+      document.getElementById('frame').src = `./preview.html?state=${q.get('state') ?? 'full'}`
+    </script>
+    <style>
+      /* Store-collateral ground — mirrors the popup's void + grid (dev tool:
+         values inlined, not part of the shipped UI's token system). */
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+        background-color: #07070b;
+        background-image:
+          radial-gradient(120% 80% at 50% -10%, rgba(123, 92, 255, 0.1), transparent 60%),
+          linear-gradient(rgba(28, 28, 40, 0.45) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(28, 28, 40, 0.45) 1px, transparent 1px);
+        background-size: 100% 100%, 72px 72px, 72px 72px;
+        display: grid;
+        grid-template-columns: 1fr 380px 1fr;
+        align-items: center;
+      }
+      #caption {
+        justify-self: end;
+        max-width: 360px;
+        margin-right: 72px;
+        font-family: 'Chakra Petch', ui-sans-serif, system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 34px;
+        line-height: 1.25;
+        color: #e8e8f0;
+        text-wrap: balance;
+      }
+      #frame {
+        width: 380px;
+        height: 600px;
+        border: 0;
+        border-radius: 14px;
+        outline: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+      }
+      #spectrum-strip {
+        justify-self: start;
+        margin-left: 72px;
+        width: 160px;
+        height: 4px;
+        border-radius: 2px;
+        background: linear-gradient(90deg, #35e0ff, #7b5cff, #ff4db8);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="caption"></div>
+    <iframe id="frame" title="popup"></iframe>
+    <div id="spectrum-strip" aria-hidden="true"></div>
+  </body>
+</html>

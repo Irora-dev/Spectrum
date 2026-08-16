@@ -147,7 +147,10 @@ export function buildReferCard() {
   }
 }
 
-export function buildCard({ symbol, name, address }) {
+// `brand` is a PARAMETER, never the literal 'Spectrum'. Every operator's shared
+// card must carry THEIR name — the same name-neutrality rule that the static
+// og.png was rebuilt for. Defaulted so existing callers keep working.
+export function buildCard({ symbol, name, address, brand = 'Spectrum' }) {
   const accent = PALETTE[Math.floor(hashUnit(address.toLowerCase(), 3) * PALETTE.length)]
   return {
     type: 'div',
@@ -181,7 +184,7 @@ export function buildCard({ symbol, name, address }) {
                       type: 'div',
                       props: {
                         style: { fontSize: 30, letterSpacing: 10, color: '#8b8ca3', textTransform: 'uppercase' },
-                        children: 'Spectrum',
+                        children: brand,
                       },
                     },
                     {

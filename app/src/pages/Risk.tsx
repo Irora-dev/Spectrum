@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { LegalDoc, LegalSection } from '../components/LegalDoc'
 
 // Copy reflects Spectrum's actual model (onchain, self-custodial, creator-issued,
@@ -73,7 +73,7 @@ export function Risk() {
           are not a manipulation-resistant oracle. This app cross-checks them against public market
           data, which can be delayed, incomplete, or wrong; historical charts are reconstructed
           off-chain. Displayed values are estimates, not a guaranteed exit price. (See the{' '}
-          <Link to="/docs/valuation" className="text-cyan hover:underline">valuation method</Link>.)
+          <Link to="/docs#nav" className="text-cyan hover:underline">valuation method</Link>.)
         </p>
       </LegalSection>
 

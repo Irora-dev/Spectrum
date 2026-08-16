@@ -11,7 +11,7 @@ import { shortAddr } from '../lib/spectrum/format'
 // derived from the protocol constants. Framed as protocol mechanics only — never
 // as a reason to buy.
 //
-// The fee splits down a fixed waterfall: PRISM burn 10% off the top; of the
+// The fee splits down a fixed waterfall: PRISM burn 25% off the top (D-R3); of the
 // post-burn remainder a fixed interface slice (≈5%, per-tx, only when a tagging
 // interface routes the trade) and a fixed launcher slice (≈5%, per-basket, only
 // when the basket named a launcher); then the creator takes their chosen share

@@ -1,11 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { Link } from 'react-router-dom'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import { basketHref } from '../lib/spectrum/short-url'
 import { useCountUp } from '../lib/motion'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { buildCreatorLeaderboard, listable, perfMeasurable, rankBaskets, versionChain } from '../lib/spectrum/leaderboard'
 import { formatNav, formatUsdCompact } from '../lib/spectrum/format'
-import { BasketListRow } from '../components/BasketListRow'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { BasketSpark } from '../components/BasketSpark'
 import { BasketBento } from '../components/BasketBento'
@@ -22,6 +22,7 @@ import { useActiveChainId } from '../lib/chain/active-chain'
 import { ROBINHOOD_CHAIN_ID } from '../lib/chain/constants'
 import { stocksEnabled } from '../theme/brand'
 import brand from '../brand.config'
+import { WALLET_ENABLED } from '../lib/config/features'
 import { pageEnabled } from '../theme/brand'
 import homeHeroArt from '../assets/home-hero-v2.jpg'
 // 1280w variant: a phone decodes ~10× fewer pixels (systems audit) — srcSet
@@ -44,23 +45,18 @@ const SIDE_TAPER =
 // into the page instead of ending on a line. Deliberately not the old 72% fade
 // that stacked on the picture's own falloff and banded.
 const FOOT_FADE = 'linear-gradient(180deg, black 0%, black 86%, transparent 100%)'
-const BasketBuilder = lazy(() =>
-  import('../components/launch/BasketBuilder').then((m) => ({ default: m.BasketBuilder })),
-)
-// Learn-more opens the teaching walkthrough IN PLACE (Colby 2026-07-29 —
-// replaces the jump to /creators); lazy so the hero pays nothing until asked.
-const LearnWalkthrough = lazy(() =>
-  import('../components/LearnWalkthrough').then((m) => ({ default: m.LearnWalkthrough })),
-)
 import { SpectrumWordmark } from '../components/SpectrumWordmark'
-import { CreatorLine, Disclaimer, TabBtn, ThesisCard } from './Explore'
+import { Disclaimer, ThesisCard } from './Explore'
 import { BlueprintBasket } from '../components/BlueprintBasket'
 import { PrismRule } from '../components/PrismRule'
-import { BundleGrid, useRankedBundles } from '../components/BundleGrid'
+import { useRankedBundles } from '../components/BundleGrid'
 import { BundleBento } from '../components/BundleBento'
 import { PoweredByPrism } from '../components/PoweredByPrism'
 import { TradePrism } from '../components/TradePrism'
 import { publishedBundleHref } from '../lib/spectrum/notes-social'
+
+// /create rides the launch page key (2026-08-12 cutover); CREATE_FLOW gates only /manager
+const CREATE_PAGE_ON = pageEnabled(brand.pages, 'launch')
 
 // The landing page: a cinematic full-bleed hero (the assets-converge-into-one
 // animation behind the wordmark) that explains the concept at a glance, then
@@ -116,10 +112,10 @@ function HomeSwap({ baskets }: { baskets: BasketSummary[] }) {
                 <BasketAvatar address={ix.address} symbol={ix.symbol} size={48} />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-display text-2xl font-bold leading-none text-ink">${ix.symbol}</span>
+                    <span className="font-display text-2xl font-bold leading-none text-ink">${showSymbol(ix.symbol)}</span>
                     <ChainBadge chainId={ix.chainId} />
                   </div>
-                  <div className="mt-1 truncate font-display text-sm text-ink-dim">{ix.name?.trim() || ''}</div>
+                  <div className="mt-1 truncate font-display text-sm text-ink-dim">{ix.name?.trim() ? showName(ix.name) : ''}</div>
                 </div>
               </div>
 
@@ -261,10 +257,10 @@ function HeroShowcase({ baskets }: { baskets: BasketSummary[] }) {
             <BasketAvatar address={ix.address} symbol={ix.symbol} size={64} />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
-                <span className="font-display text-4xl font-bold leading-none tracking-tight text-ink">${ix.symbol}</span>
+                <span className="font-display text-4xl font-bold leading-none tracking-tight text-ink">${showSymbol(ix.symbol)}</span>
                 <ChainBadge chainId={ix.chainId} />
               </div>
-              <div className="mt-1.5 line-clamp-1 font-display text-lg text-ink-dim">{ix.name?.trim() || ''}</div>
+              <div className="mt-1.5 line-clamp-1 font-display text-lg text-ink-dim">{ix.name?.trim() ? showName(ix.name) : ''}</div>
               <div className="mt-1.5 flex items-center gap-1.5 font-mono text-xs text-ink-faint">
                 <span>by</span>
                 <CreatorChip deployer={ix.deployer} basket={ix.address} chainId={ix.chainId} size={18} className="font-mono text-xs" />
@@ -320,7 +316,7 @@ function HeroShowcase({ baskets }: { baskets: BasketSummary[] }) {
                     key={`${b.chainId}:${b.address}`}
                     type="button"
                     onClick={() => setIdx(i)}
-                    aria-label={`Show $${b.symbol}`}
+                    aria-label={`Show $${showSymbol(b.symbol)}`}
                     aria-current={i === idx}
                     className="press grid h-6 place-items-center px-0.5"
                   >
@@ -397,6 +393,35 @@ function StatsStrip({ creators, baskets, tvlUsd }: { creators: number; baskets: 
   )
 }
 
+// LAZY on purpose. With the flow gated off, an operator's homepage must not drag
+// the allocator chunk into its payload for a surface it will never render — and
+// a static import would, because bundlers cannot see through the runtime flag.
+const CreateSurface = lazy(() =>
+  import('../components/allocate/CreateSurface').then((m) => ({ default: m.CreateSurface })),
+)
+
+// ── CREATE, ON THE HOMEPAGE ───────────────────────────────────────────────────
+// the owner, 20:35: "in theory we could also just have this on the homepage too."
+// Approved as the third option I put to him: KEEP the hero, and put the LIVE
+// picker directly beneath it as the first thing below the fold.
+//
+// The reasoning against opening cold ON the picker: a shared link is how most
+// people meet Spectrum, and a visitor arriving from a post would get an asset
+// selector with no idea what a basket is or why an allocation would become a
+// token. The hero states the whole product in one breath; the tool is then
+// immediately there rather than a click away.
+//
+// This REPLACES the two explanatory fork panels that stood here. specallocator
+// owns the outcome moment inside the flow (their coordination answer, 19:49) —
+// two surfaces explaining the same choice would drift, which is the exact
+// duplication this rebuild exists to remove.
+//
+// It mounts <CreateSurface embedded /> rather than re-wiring PortfolioFlow here.
+// Manager owns ~50 lines of money-adjacent state — guest scope, draft adoption
+// across the connect, mid-run resume, the connect beat — and a second copy of
+// that in this file would drift from theirs the first time either moved. One
+// implementation, two mounts.
+
 export function Home() {
   const activeChainId = useActiveChainId()
   const { data, isLoading, isError } = useAllBaskets()
@@ -404,7 +429,21 @@ export function Home() {
   // come in first, THEN the hero text. When no intro plays (SPA nav, reduced
   // motion, already seen) everything starts visible — no re-animation.
   const [introDone, setIntroDone] = useState(() => !heroIntroWillPlay())
-  const [learnOpen, setLearnOpen] = useState(false)
+  // BELT AND BRACES: the hero's copy is invisible until this flips, and the only
+  // thing that flips it is HeroIntro calling onDone. That is one decorative
+  // component away from a permanently blank hero — if its shader stage never
+  // advances (a throw the boundary swallows, throttled timers in a background
+  // tab), the page keeps its own headline hidden forever. The same class of
+  // failure as the WebGL crash that blanked the whole app earlier today.
+  //
+  // So Home guarantees the reveal itself, independently, just past the intro's
+  // own 7s failsafe. Humans never see this fire; it exists for when the beat
+  // does not arrive.
+  useEffect(() => {
+    if (introDone) return
+    const t = window.setTimeout(() => setIntroDone(true), 7500)
+    return () => window.clearTimeout(t)
+  }, [introDone])
   // Discovery shows only the latest version of each lineage (superseded versions
   // stay reachable via the version strip on the basket page).
   const all = (data ?? []).filter((b) => !b.supersededBy)
@@ -412,16 +451,12 @@ export function Home() {
   // Exactly Explore's rules: spotlight = the measurable top three by performance
   // to date; the thesis grid follows the same perf order (objective, not curated).
   // Home has no search, so the listing floor (LISTING_TVL_FLOOR_USD) always applies (R+C)
-  const ranked = rankBaskets(data ?? [], { sort: 'perf' }).filter(listable)
+  const ranked = rankBaskets(data ?? [], { sort: 'perf' }).filter((x) => listable(x))
   const spotlight = ranked.filter(perfMeasurable).slice(0, 9) // trio window pool
   const theses = ranked.slice(0, 6)
-  // the Home preview tabs (owner 17:08) — the same three lenses as Explore
-  const [view, setView] = useState<'thesis' | 'baskets' | 'creators' | 'bundles'>('thesis')
-  const weighted = rankBaskets(data ?? [], { sort: 'weighted' }).filter(listable).slice(0, 8)
   // headline facts for the hero strip (owner 18:26: 'surface some stats')
   const creatorCount = buildCreatorLeaderboard(all).length
   const tvlTotal = all.reduce((s, b) => s + (b.aumUsd || 0), 0)
-  const creators = buildCreatorLeaderboard(all).slice(0, 6)
   const chainOf = (b: (typeof all)[number]) =>
     versionChain(b.address, (data ?? []).filter((x) => x.deployer && b.deployer && x.deployer.toLowerCase() === b.deployer!.toLowerCase()))
 
@@ -429,12 +464,6 @@ export function Home() {
     <div className="space-y-14">
       {/* the heatmap logo intro (hard loads only) — the hero staggers in on its fade */}
       <HeroIntro onDone={() => setIntroDone(true)} />
-
-      {learnOpen && (
-        <Suspense fallback={null}>
-          <LearnWalkthrough onClose={() => setLearnOpen(false)} />
-        </Suspense>
-      )}
 
       {/* the creator-league advert (owner 2026-07-29) — above the hero carousel;
           z-10 so the hero's orbiting logos pass BEHIND the solid card */}
@@ -495,30 +524,96 @@ export function Home() {
                 name, a single unbreakable word — at 72px any ≥9-char name
                 overflowed a 375px phone's column (mobile audit M) */}
             <SpectrumWordmark className="text-6xl leading-[0.9] tracking-tight sm:text-8xl lg:text-9xl" />
-            <p className="mt-6 text-base leading-snug text-ink-dim sm:text-lg lg:text-xl">
-              <span className="block sm:whitespace-nowrap">Introducing A New Asset Class: Basket Tokens</span>
-              <span className="mt-1 block sm:whitespace-nowrap">One Token Backed By The Price Of All Assets</span>
+            {/* REPOSITIONED (the owner 2026-08-01 19:38 + the hero rounds after it).
+                The old pair sold basket tokens, which is half the product now:
+                "the site's just still a bit in no man's land". The verb is his,
+                and it is the best line anyone wrote — verbing our own noun is
+                the one move a competitor can't copy, and it enforces the
+                basket-not-index rule every time someone repeats it.
+                "Or", never "&": publishing is a FORK most people never take,
+                and an ampersand would tell every visitor they're expected to
+                take it. Lowercase, because title case is most of what made the
+                old hero feel dated. */}
+            {/* Display-scale, on the owner's note that it "must be bigger text".
+                "&" not "or" — HIS call, 2026-08-02, made after I argued the
+                opposite (that an ampersand reads as a two-step process where
+                publishing is expected, when it is a fork most people never
+                take). Recorded, not re-litigated: it is his line and his
+                product. The spectral treatment stays on the second half so the
+                two halves still read as two things.
+                The mono sub-line ("Any assets, any chain, one flow.") is GONE on
+                the same note — the picker sits directly below and demonstrates
+                it better than a caption could.
+                clamp tops out at 44px: the wordmark above is the page's display
+                voice and a subhead that approaches it competes. */}
+            <p className="mt-8 max-w-[22ch] font-display font-semibold leading-[1.12] tracking-tight text-ink [text-wrap:balance] sm:max-w-[30ch]"
+               style={{ fontSize: 'clamp(1.5rem, 1.05rem + 2.2vw, 2.75rem)' }}>
+              Build a portfolio &amp; <span className="spectral-text">basket it for others</span>
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              {/* opens the walkthrough in place (Colby 2026-07-29) — the deep
-                  /creators pitch is the walkthrough's own final-slide link */}
-              <button
-                type="button"
-                onClick={() => setLearnOpen(true)}
-                className="press rounded-lg bg-cyan px-7 py-3 font-mono text-xs font-bold uppercase tracking-[0.18em] text-void transition-transform hover:scale-[1.03] active:scale-[0.96]"
-              >
-                Learn more
-              </button>
-              <Link
-                to="/launch"
-                className="press rounded-lg border border-white/25 bg-white/[0.03] px-7 py-3 font-mono text-xs font-bold uppercase tracking-[0.18em] text-ink backdrop-blur transition-colors hover:border-cyan hover:text-cyan"
-              >
-                Launch your own basket
-              </Link>
-            </div>
+            {/* NO CTAs WHEN THE FLOW IS BELOW (the owner 2026-08-02: "these can be
+                removed as the flow is literally right below it"). He is right —
+                two buttons pointing at Explore and the old launcher, directly
+                above a live picker that does the thing, competed with it.
+                But they are KEPT when the flow is gated off, because on an
+                operator build the picker is not there and these are the hero's
+                only action: deleting them outright would leave a headline with
+                no way out. */}
+            {!CREATE_PAGE_ON && (
+              /* THE TWO DOORS MATCH THE NAV (owner 2026-08-02, "connect it all
+                 together in a flow that makes sense"): manage what you hold,
+                 or look at what others published. The primary used to send
+                 "Build a portfolio" to /explore — a discovery page, which is
+                 not where you build anything — and the secondary advertised a
+                 second builder from the front page. Creation stays reachable
+                 from Explore and from More; it is an action you take once you
+                 have something to publish, not the way in. */
+              <div className="mt-8 flex flex-wrap items-center gap-3">
+                {WALLET_ENABLED && (
+                  <Link
+                    to="/portfolio"
+                    className="press rounded-lg bg-cyan px-7 py-3 font-mono text-xs font-bold uppercase tracking-[0.18em] text-void transition-transform hover:scale-[1.03] active:scale-[0.96]"
+                  >
+                    Open your portfolio
+                  </Link>
+                )}
+                <Link
+                  to="/explore"
+                  className="press rounded-lg border border-white/25 bg-white/[0.03] px-7 py-3 font-mono text-xs font-bold uppercase tracking-[0.18em] text-ink backdrop-blur transition-colors hover:border-cyan hover:text-cyan"
+                >
+                  Explore baskets
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </section>
+
+      {/* CREATE, live, directly under the hero — the first thing below the fold.
+          The hero sells it in one breath; this is the thing itself.
+          Gated: with the flow off, the hero simply runs into the showcase, which
+          is an honest homepage for a kit that does not have the flow yet. */}
+      {CREATE_PAGE_ON && (
+        <section className="relative -mt-24 pb-24 max-sm:[@media(max-height:540px)]:-mt-4 sm:-mt-[calc(30svh-142px)]">
+          {/* ANCHOR. The picker was a rounded rectangle floating in flat black
+              with no relationship to the hero above it — the page's main event
+              reading as a modal dropped on the page. This is the hero's own
+              light continuing down behind it: a wide, very low-opacity wash
+              breaking out of the column to the full viewport, so the card sits
+              ON something. Decorative and pointer-transparent; it carries no
+              meaning and costs no layout. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[min(720px,100%)] w-screen -translate-x-1/2"
+            style={{
+              background:
+                'radial-gradient(120% 60% at 50% 0%, color-mix(in oklab, var(--color-violet) 14%, transparent), transparent 72%)',
+            }}
+          />
+          <Suspense fallback={<div className="min-h-[60vh]" />}>
+            <CreateSurface embedded />
+          </Suspense>
+        </section>
+      )}
 
       {/* ── launched baskets: loading / error / content ─────────────────── */}
       {isLoading && (
@@ -564,7 +659,11 @@ export function Home() {
           {/* the sub-sm pull relaxes on very short viewports (scoped max-sm so
               it can never fight the sm: calc) — at svh ≲ 520 the opaque
               showcase card overlapped the second hero CTA's tail (audit L) */}
-          <div className="relative z-10 -mt-24 max-sm:[@media(max-height:540px)]:-mt-4 space-y-5 sm:-mt-[calc(30svh-142px)]">
+          {/* THE PULL MOVED TO THE FORK. It exists to close the gap under the
+              hero's centred copy, and the fork is what sits there now — leaving
+              it here made the showcase ride up OVER the fork and overlap it.
+              Normal flow from here down. */}
+          <div className="relative z-10 space-y-5">
             {/* the strip + spotlight break OUT of the main column onto the
                 hero's own max-w-6xl line, so their edges align vertically with
                 the hero buttons (owner 2026-07-30: "use more width… match the
@@ -575,7 +674,7 @@ export function Home() {
               <div className="mx-auto w-full max-w-6xl space-y-5 px-4 sm:px-6">
                 {activeChainId === ROBINHOOD_CHAIN_ID && stocksEnabled(brand) && (
                   <Link
-                    to="/launch"
+                    to="/create"
                     className="group flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-white/12 bg-panel px-5 py-3 press hover:border-cyan/40"
                   >
                     <span className="font-display text-sm font-bold uppercase tracking-[0.14em] text-ink">
@@ -624,42 +723,22 @@ export function Home() {
               so a visitor composes and launches a basket without leaving Home.
               Multi-step by construction (the builder's own steps carry the
               complexity); one money path, zero duplicated deploy code. */}
-          <PrismRule />
-          <div id="build" className="scroll-mt-20 pt-10">
-            <div className="mx-auto max-w-2xl text-center">
-              <h2 className="font-display text-4xl font-bold uppercase leading-[0.95] tracking-tight text-ink sm:text-5xl">
-                Build your <span className="spectral-text">own</span>
-              </h2>
-              <p className="mt-3 font-mono text-xs uppercase tracking-[0.18em] text-ink-faint">
-                Pick assets, set weights, name it, deploy. Live in about a minute.
-              </p>
-            </div>
-            <div className="mt-10">
-              <Suspense
-                fallback={
-                  <div className="grid min-h-[40vh] place-items-center rounded-2xl border border-white/10 bg-white/[0.02]" role="status" aria-label="Loading the builder">
-                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-cyan" />
-                  </div>
-                }
-              >
-                <BasketBuilder wizard />
-              </Suspense>
-            </div>
-          </div>
-
+          {/* The inline launch builder is GONE (the owner 2026-08-01, the homepage
+              rebuild). It was a whole other page embedded in the landing page:
+              it dragged the builder chunk into the initial payload, and its
+              "Build your own — pick assets, set weights, name it, deploy"
+              header now argues with the hero, which offers publishing as the
+              OPTION rather than the act. The fork's own panel and the hero's
+              secondary CTA both reach /launch, one tab away. */}
           {theses.length > 0 && (
             <div className="space-y-4">
               <div className="flex items-end justify-between border-b border-white/10 pb-3.5">
                 <div>
                   <h2 className="font-display text-xl font-bold uppercase tracking-tight text-ink sm:text-2xl">
-                    {view === 'thesis' ? 'Top performers' : view === 'baskets' ? 'The baskets' : 'The creators'}
+                    Top performers
                   </h2>
                   <p className="mt-1.5 font-mono text-xs uppercase tracking-[0.18em] text-ink-dim">
-                    {view === 'thesis'
-                      ? 'Every basket, in its creator\u2019s words'
-                      : view === 'baskets'
-                        ? 'The performance list'
-                        : 'The people behind the baskets'}
+                    Every basket, in its creator&rsquo;s words
                   </p>
                 </div>
                 <Link
@@ -670,40 +749,16 @@ export function Home() {
                 </Link>
               </div>
 
-              {/* the same three lenses as Explore (owner 17:08) */}
-              <div className="flex items-center gap-1">
-                <TabBtn active={view === 'thesis'} onClick={() => setView('thesis')}>Top performers</TabBtn>
-                <TabBtn active={view === 'baskets'} onClick={() => setView('baskets')}>Baskets</TabBtn>
-                <TabBtn active={view === 'creators'} onClick={() => setView('creators')}>Creators</TabBtn>
-                {pageEnabled(brand.pages, 'bundle') && (
-                  <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
-                )}
-              </div>
-
-              <div key={view}>
-                {view === 'thesis' ? (
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    {theses.map((b) => (
-                      <ThesisCard key={`${b.chainId}:${b.address}`} ix={b} chain={chainOf(b)} />
-                    ))}
-                  </div>
-                ) : view === 'baskets' ? (
-                  <div className="space-y-2">
-                    {weighted.map((b, i) => (
-                      <BasketListRow key={`${b.chainId}:${b.address}`} ix={b} rank={i + 1} stats chain={chainOf(b)} />
-                    ))}
-                  </div>
-                ) : view === 'bundles' ? (
-                  /* bundles as BENTOS in a grid (owner 2026-07-29), same visual
-                     language as a bundle's own page */
-                  <BundleGrid chainId={activeChainId} limit={6} />
-                ) : (
-                  <div className="space-y-2">
-                    {creators.map((c, i) => (
-                      <CreatorLine key={c.address} entry={c} rank={i + 1} />
-                    ))}
-                  </div>
-                )}
+              {/* ONE lens, not four (owner 2026-08-01). This was a tab
+                  switcher carrying "the same three lenses as Explore" — a
+                  second Explore on the landing page, which is precisely the
+                  "so many systems" problem. Home now leads with the strongest
+                  view and hands you to Explore for everything else; the tabs
+                  still exist there, where they belong. */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {theses.map((b) => (
+                  <ThesisCard key={`${b.chainId}:${b.address}`} ix={b} chain={chainOf(b)} />
+                ))}
               </div>
 
               {/* the disclaimer rides WITH the perf claims above, exactly as on

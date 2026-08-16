@@ -1,7 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Link as RouterLink, useNavigate } from 'react-router'
+import { useAccount, useReadContract } from 'wagmi'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { writeRunLanded } from '../lib/spectrum/run-landed'
+import { useBasketData } from '../lib/spectrum/hooks'
+import { basketPnl, usePnlIndexes } from '../lib/spectrum/pnl'
+import { erc20BalanceAbi } from '../lib/spectrum/abis-v2'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { formatUnits } from 'viem'
+import { settlementDecimalsFor } from '../lib/chain/deployments'
 import type { DexStep, DexTxState } from '../lib/spectrum/use-dex-swap'
 import { AddToWalletButton } from './AddToWalletButton'
 import { AssetLogo } from './AssetLogo'
@@ -27,7 +35,10 @@ function stepState(tx: DexTxState): 'pending' | 'active' | 'done' | 'error' {
 
 // ── the animation: the basket's own identity (or a refracting prism when we
 //    have no basket) inside spinning spectral rings ────────────────────────────
-function PrismAnim({ celebrate, logo }: { celebrate?: boolean; logo?: ReactNode }) {
+// Exported (the owner 2026-08-13: the create flow's add wants "that little pop up
+// card we have in the system … asset and a rainbow loading circle") — the
+// Composer mounts THIS, never a lookalike; one ring, every wait.
+export function PrismAnim({ celebrate, logo }: { celebrate?: boolean; logo?: ReactNode }) {
   return (
     <div className="relative mx-auto h-36 w-36">
       {/* soft spectral bloom */}
@@ -200,7 +211,7 @@ function BuySuccessCard({
         ✓ {seeding ? 'Seeded, first buy in' : 'Purchase confirmed'}
       </div>
       <h3 className="mt-2 font-display text-3xl font-bold tracking-tight text-ink">
-        {seeding ? `$${symbol} is live` : `You now hold $${symbol}`}
+        {seeding ? `$${showSymbol(symbol)} is live` : `You now hold $${showSymbol(symbol)}`}
       </h3>
       <p className="mt-2 font-mono text-sm leading-relaxed text-ink-dim">
         {usd != null
@@ -212,6 +223,15 @@ function BuySuccessCard({
       <div className="mt-5 overflow-hidden rounded-xl border border-white/10 bg-black/25 p-3">
         <BasketBento items={bentoItems} aspect={2.1} reveal={{ delayMs: 120, stepMs: 90 }} />
       </div>
+
+      {/* YOUR POSITION, not just the receipt (owner 2026-08-16: after a buy
+          "it should just show your holdings of the asset, how much it was
+          valued at purchase, how much its worth now and pnl %") — the
+          basket-holder math the portfolio already trusts (basketPnl over the
+          cached flow index). Absent facts leave no gap: rows render only
+          when their read answers. */}
+      <PositionStrip token={token} decimals={decimals} justPaidRaw={usdRaw ?? null} />
+
 
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         <AddToWalletButton
@@ -258,15 +278,106 @@ function BuySuccessCard({
       >
         view final tx ↗
       </a>
+      {/* THE PRIMARY LANDS ON THE PORTFOLIO (owner 2026-08-16: after a buy,
+          Done "should auto default to see your asset in your portfolio…
+          which then takes you to your portfolio page") — the bought basket's
+          key rides run-landed so its tile glows on arrival, and /portfolio's
+          own onboarding gate covers a first-timer. A quiet stay-here escape
+          keeps the old close for whoever wants this page. */}
+      <SeePortfolioButton token={token} onClose={onClose} />
       <button
         type="button"
         onClick={onClose}
-        className="press mt-3 w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black"
-        style={{ background: 'linear-gradient(90deg,var(--color-teal),var(--color-cyan))' }}
+        className="press mt-2 w-full py-2 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink"
       >
-        Done
+        stay on this page
       </button>
     </div>
+  )
+}
+
+function PositionStrip({
+  token,
+  decimals,
+  justPaidRaw = null,
+}: {
+  token: { address: string; chainId: number }
+  decimals?: number
+  /** What THIS buy just paid (settlement raw) — the fallback basis while the
+   *  cached PnL index (60s stale, history-derived) cannot yet contain the buy
+   *  that landed seconds ago (audit 2026-08-16: a first-time buyer read
+   *  "at purchase —" and "pnl —" on the exact numbers the app already knew). */
+  justPaidRaw?: bigint | null
+}) {
+  const { address: wallet } = useAccount()
+  const { data: ix } = useBasketData(token.address, token.chainId)
+  const { data: balRaw } = useReadContract({
+    address: token.address as `0x${string}`,
+    abi: erc20BalanceAbi,
+    functionName: 'balanceOf',
+    args: [wallet ?? '0x0000000000000000000000000000000000000000'],
+    chainId: token.chainId,
+    query: { enabled: !!wallet },
+  })
+  const pnlIdx = usePnlIndexes(wallet)
+  if (!wallet || balRaw == null || ix == null) return null
+  const balance = Number(formatUnits(balRaw as bigint, decimals ?? 18))
+  if (!(balance > 0)) return null
+  const pnl = basketPnl(pnlIdx[token.chainId] ?? null, token.address, ix.navPerToken, balance)
+  const nowUsd = Number.isFinite(ix.navPerToken) && ix.navPerToken > 0 ? balance * ix.navPerToken : null
+  // the just-paid fallback: THIS purchase's own cost, marked "this buy" so it
+  // never claims to be the whole position's basis
+  const paidUsd =
+    justPaidRaw != null && justPaidRaw > 0n ? Number(formatUnits(justPaidRaw, settlementDecimalsFor(token.chainId))) : null
+  const investedUsd = pnl ? pnl.investedUsd : paidUsd
+  const investedLabel = pnl ? 'at purchase' : 'this buy'
+  const pnlPct =
+    pnl != null ? pnl.netPct * 100 : paidUsd != null && paidUsd > 0 && nowUsd != null ? ((nowUsd - paidUsd) / paidUsd) * 100 : null
+  const money = (v: number) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left sm:grid-cols-4">
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint">you hold</div>
+        <div className="mt-1 font-num text-base tabular-nums text-ink">
+          {balance.toLocaleString('en-US', { maximumFractionDigits: balance >= 1 ? 2 : 5 })}
+        </div>
+      </div>
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint">{investedLabel}</div>
+        <div className="mt-1 font-num text-base tabular-nums text-ink">{investedUsd != null ? money(investedUsd) : '—'}</div>
+      </div>
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint">worth now</div>
+        <div className="mt-1 font-num text-base tabular-nums text-ink">{nowUsd != null ? money(nowUsd) : '—'}</div>
+      </div>
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint">pnl</div>
+        <div
+          className="mt-1 font-num text-base font-semibold tabular-nums"
+          style={{ color: pnlPct == null ? undefined : pnlPct >= 0 ? 'var(--color-teal)' : 'var(--color-magenta)' }}
+        >
+          {pnlPct != null ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : '—'}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SeePortfolioButton({ token, onClose }: { token: { address: string; chainId: number }; onClose: () => void }) {
+  const navigate = useNavigate()
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        writeRunLanded([`${token.chainId}:${token.address.toLowerCase()}`])
+        onClose()
+        navigate('/portfolio')
+      }}
+      className="press mt-3 w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black"
+      style={{ background: 'linear-gradient(90deg,var(--color-teal),var(--color-cyan))' }}
+    >
+      See it in your portfolio →
+    </button>
   )
 }
 
@@ -289,6 +400,7 @@ export function SwapPendingOverlay({
   decimals,
   usdRaw,
   previewWallet,
+  onRetry,
 }: {
   open: boolean
   dir: 'buy' | 'sell'
@@ -300,6 +412,10 @@ export function SwapPendingOverlay({
   error: string | null
   explorer: string
   onClose: () => void
+  /** Re-fires the swap from the host (its own runSwap). When present, the
+   *  error face's primary button IS the retry the copy promises (audit
+   *  2026-08-16: "you can close and retry" rendered beside only a Close). */
+  onRetry?: () => void
   /** The basket being traded — its identity is the overlay's centerpiece, and
    *  the done state offers "Add to wallet". */
   token?: { address: string; chainId: number }
@@ -321,6 +437,21 @@ export function SwapPendingOverlay({
   /** DEV preview page only: show wallet actions without a connected wallet. */
   previewWallet?: boolean
 }) {
+  // Escape, on exactly the backdrop's terms below (`running ? undefined :
+  // onClose`) — a running swap is not dismissible by either. Every sibling
+  // dialog here closes on Escape (PayTokenPicker, BridgeFund, DexSwapCard's
+  // basket picker) and this one, the dialog that stays up longest, had no key
+  // handler at all. Registered above the `open` early return: hooks can't sit
+  // behind it.
+  useEffect(() => {
+    if (!open || running) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, running, onClose])
+
   if (!open) return null
   const active = steps.find((s) => stepState(txOf(s.key)) === 'active')
   const doneCount = steps.filter((s) => stepState(txOf(s.key)) === 'done').length
@@ -331,18 +462,18 @@ export function SwapPendingOverlay({
   const heading = done
     ? dir === 'buy'
       ? seeding
-        ? `$${symbol} is seeded`
-        : `Congratulations — you now hold $${symbol}`
+        ? `$${showSymbol(symbol)} is seeded`
+        : `Congratulations — you now hold $${showSymbol(symbol)}`
       : 'Swap complete'
     : error
       ? dir === 'buy'
-        ? `Couldn’t buy $${symbol}`
+        ? `Couldn’t buy $${showSymbol(symbol)}`
         : 'Swap needs another try'
       : dir === 'buy'
         ? seeding
-          ? `Seeding $${symbol}`
-          : `Assembling $${symbol}`
-        : `Selling $${symbol}`
+          ? `Seeding $${showSymbol(symbol)}`
+          : `Assembling $${showSymbol(symbol)}`
+        : `Selling $${showSymbol(symbol)}`
 
   return createPortal(
     // Scrollable overlay + m-auto card (mobile audit H): flex-centering a card
@@ -492,6 +623,28 @@ export function SwapPendingOverlay({
                 share is null (the basket's own deployer). */}
             {done && dir === 'buy' && (
               <ShareEarnNudge share={share} center className="mt-1 border-t border-white/[0.08] pt-3" />
+            )}
+            {/* a completed SELL changed the book too (audit 2026-08-16: every
+                post-action door was buy-gated; a sale ended at a bare Done) */}
+            {done && dir === 'sell' && (
+              <RouterLink
+                to="/portfolio"
+                className="press w-full rounded-xl border border-white/15 py-3 text-center font-display text-sm font-bold uppercase tracking-[0.15em] text-ink-dim hover:border-cyan/50 hover:text-ink"
+              >
+                See it in your portfolio →
+              </RouterLink>
+            )}
+            {error && onRetry && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose()
+                  onRetry()
+                }}
+                className="spectral-btn press w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-void"
+              >
+                Try again →
+              </button>
             )}
             <button
               type="button"

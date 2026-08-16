@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
 import { isAddress } from 'viem'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { setActiveChainId } from '../../lib/chain/active-chain'
@@ -291,7 +292,7 @@ export function AssetSearch({
                     <AssetLogo address={t.address} symbol={t.symbol} chainId={t.chainId} size={38} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline gap-2">
-                        <span className="font-display text-base font-bold uppercase tracking-wide text-ink">{t.symbol}</span>
+                        <span className="font-display text-base font-bold uppercase tracking-wide text-ink">{showSymbol(t.symbol)}</span>
                         <span className="truncate font-mono text-xs text-ink-dim">{t.name}</span>
                       </span>
                       <span className="mt-0.5 block font-mono text-[11px] text-ink-faint">
@@ -388,7 +389,7 @@ export function AssetSearch({
                 className="press inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] py-1 pl-1.5 pr-2.5 hover:border-cyan/50 disabled:opacity-50"
               >
                 <AssetLogo address={t.address} symbol={t.symbol} chainId={chainId} size={18} />
-                <span className="font-mono text-[11px] font-semibold text-ink">{t.symbol}</span>
+                <span className="font-mono text-[11px] font-semibold text-ink">{showSymbol(t.symbol)}</span>
               </button>
             ))}
           </div>

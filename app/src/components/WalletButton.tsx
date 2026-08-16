@@ -7,7 +7,7 @@ import { hasInjectedProvider, isMobileUA, walletAppLinks } from '../lib/wallet/m
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 const btn =
-  'press border border-white/20 bg-white/[0.04] px-3 py-1.5 font-mono text-xs uppercase tracking-[0.15em] text-ink hover:border-cyan hover:text-cyan'
+  'press inline-flex min-h-[36px] items-center border border-white/20 bg-white/[0.04] px-3 py-1.5 font-mono text-xs uppercase tracking-[0.15em] text-ink hover:border-cyan hover:text-cyan'
 
 // Connected state: the address opens a small profile menu (copy / explorer /
 // disconnect) — clicking your own address must never disconnect you directly.
@@ -103,8 +103,11 @@ function ConnectedMenu({ address }: { address: string }) {
 
 export function WalletButton() {
   const { address, isConnected } = useAccount()
-  const { connectors, connect, isPending } = useConnect()
+  const { connectors, connect, isPending, error: connectError, reset: resetConnect } = useConnect()
   const [open, setOpen] = useState(false)
+  // Which row is being tried, so the dialog can name it in both the pending
+  // state and the failure. Cleared when the dialog closes.
+  const [trying, setTrying] = useState<string | null>(null)
 
   // Any surface can summon the connect dialog (the swap console's CTA does) —
   // on a phone "top right" is nothing to point at (mobile UX review 4).
@@ -150,9 +153,29 @@ export function WalletButton() {
   }
   const list = deduped.sort((a, b) => rank(a.name) - rank(b.name))
 
+  // CLOSE ON SUCCESS, NOT ON CLICK. This used to fire connect() and immediately
+  // setOpen(false), so EVERY failure — a declined prompt, a wallet that never
+  // answers, and (the case this was written for) a throttled WalletConnect relay
+  // once the free tier's monthly cap is reached — closed the dialog and left the
+  // user looking at the same Connect button with nothing said. A control that
+  // silently does nothing teaches people the site is broken; the same rule the
+  // share button already follows.
+  //
+  // The relay case matters because it looks perfectly normal right up until it
+  // doesn't: the row is present, the click registers, and the failure is remote.
+  // Keeping the dialog open with the reason in it means the user can fall back
+  // to another wallet in the same breath — injected and Coinbase never touch
+  // that relay, so the route degrades rather than the product.
   const pick = (c: Connector) => {
-    connect({ connector: c })
+    resetConnect()
+    setTrying(c.name)
+    connect({ connector: c }, { onSuccess: () => setOpen(false) })
+  }
+
+  const closeDialog = () => {
     setOpen(false)
+    setTrying(null)
+    resetConnect()
   }
 
   return (
@@ -168,7 +191,7 @@ export function WalletButton() {
       {open && createPortal(
         <div
           className="fixed inset-0 z-[90] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
-          onClick={() => setOpen(false)}
+          onClick={closeDialog}
         >
           <div
             role="dialog"
@@ -180,7 +203,7 @@ export function WalletButton() {
             <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-3">
               <span className="font-mono text-xs uppercase tracking-[0.2em] text-ink">Connect wallet</span>
               <button
-                onClick={() => setOpen(false)}
+                onClick={closeDialog}
                 aria-label="Close"
                 className="press -m-2 grid h-10 w-10 place-items-center text-ink-faint hover:text-ink"
               >
@@ -219,10 +242,22 @@ export function WalletButton() {
                 >
                   <span className="text-sm text-ink">{c.name}</span>
                   <span className="font-mono text-[10px] uppercase tracking-wider text-ink-faint">
-                    {c.type === 'injected' ? 'Injected' : 'Connect'}
+                    {isPending && trying === c.name
+                      ? 'Waiting…'
+                      : c.type === 'injected'
+                        ? 'Injected'
+                        : 'Connect'}
                   </span>
                 </button>
               ))}
+              {connectError && !isPending && (
+                <p className="rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-200/90">
+                  {trying ? `${trying} didn\u2019t connect.` : 'That didn\u2019t connect.'}{' '}
+                  {/rejected|denied|user closed/i.test(connectError.message)
+                    ? 'The request was dismissed in the wallet \u2014 try again when you are ready.'
+                    : 'Nothing was signed. Try again, or pick another wallet above.'}
+                </p>
+              )}
               {mobileNoProvider && (
                 <p className="border-t border-white/10 pt-2.5 text-[11px] leading-relaxed text-ink-faint">
                   Rainbow, Uniswap, Rabby and other wallet apps: open this site in the wallet's

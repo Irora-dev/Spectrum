@@ -2,19 +2,23 @@ import { forwardRef, useCallback, useEffect, useRef, useState } from 'react'
 import { sanitizePostUrl } from '../../lib/spectrum/creator-metadata'
 import { TagInput } from '../TagInput'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { formatEther } from 'viem'
-import { useAccount, useSwitchChain } from 'wagmi'
+import { useAccount } from 'wagmi'
 import { DEPLOY_ENABLED } from '../../lib/config/features'
 import { tokenVisual } from '../../lib/spectrum/token-meta'
 import { resolveCreator } from '../../lib/spectrum/creator'
 import { sanitizeImageUrl } from '../../lib/spectrum/creator-metadata'
 import { chainCfg } from '../../lib/chain/chains'
 import type { DeployStatus } from '../../lib/spectrum/use-deploy'
+import type { MineProgress } from '../../lib/spectrum/create2-mine'
+import { SaltScanner } from './SaltScanner'
+import { NON_ATOMIC_LAUNCH_NOTE } from '../../lib/spectrum/launch-first-mint'
 import type { PublishStatus } from '../../lib/spectrum/use-publish'
 import type { RelayOutcome } from '../../lib/spectrum/persist-metadata'
 import { BasketAvatar } from '../BasketAvatar'
 import { BasketBento, type BentoItem } from '../BasketBento'
+import { WrongNetwork } from '../WrongNetwork'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The deploy ceremony — the orbit → gather → drop-through-portal → "Basket Deployed"
@@ -110,6 +114,12 @@ export interface DeployPortalProps {
   bentoItems: BentoItem[]
   /** Live on-chain deploy state (from useDeployBasket). Omit for a pure-preview ceremony. */
   deploy?: DeployPortalDeploy
+  /** SHOW-ONLY (the owner live 2026-08-15: "the beautiful creation animation with
+   *  the asset orbs coming together" must play in the NEW ceremony too):
+   *  when set, the orbit → gather → drop-through-portal show runs exactly as
+   *  ever, and instead of the reveal card this fires — the host owns what
+   *  comes next (the bundle ceremony's seed door). */
+  showOnly?: () => void
   /** Post-deploy "sign & publish your profile" ceremony (from usePublish). Omit (or
    *  `enabled:false`) to navigate to the basket immediately on success, as before. */
   publish?: DeployPortalPublish
@@ -151,6 +161,8 @@ export interface DeployPortalPublish {
 export interface DeployPortalDeploy {
   status: DeployStatus
   attempts: number
+  /** Live salt-search figures for the scanner (SaltScanner.tsx). */
+  mining?: MineProgress | null
   predicted: string | null
   priceWei: bigint | null
   txHash: string | null
@@ -159,45 +171,27 @@ export interface DeployPortalDeploy {
   /** DEPLOY_ENABLED && wallet connected on this chain — gates the sign button. */
   enabled: boolean
   onSign: () => void
+  /** Whether this wallet runs the launch as ONE all-or-nothing step. `false` is
+   *  said out loud before signing (NON_ATOMIC_LAUNCH_NOTE), never hidden. */
+  canBatch?: boolean | null
+  /** A first deposit rides this launch. */
+  hasSeed?: boolean
+  /** The first deposit landed. */
+  seeded?: boolean
+  seedTxHash?: string | null
+  /** Why it did not land. The basket is live and anyone can deposit first while
+   *  this is set, so it is shown beside a retry rather than swallowed. */
+  seedError?: string | null
+  /** Retry the first deposit. */
+  onSeed?: () => void
 }
 
 const shortHex = (h?: string | null) => (h ? `${h.slice(0, 6)}…${h.slice(-4)}` : '—')
 
-// ── the mining pixel bar (owner 2026-07-31: "a cool pixel bar that fills as
-// you go") — HONEST progress for a luck-of-the-draw search: fill follows the
-// cumulative probability of having found the salt by now, 1 − e^(−attempts/k)
-// with k = 65,536 (the expected probe count for the 0x88 suffix), capped at
-// 96% because the search has no guaranteed finish. Never a timer, never 100%.
-const MINE_CELLS = 24
-const MINE_EXPECTED = 65_536
-function MiningProgress({ attempts }: { attempts: number }) {
-  const p = Math.min(0.96, 1 - Math.exp(-attempts / MINE_EXPECTED))
-  const filled = Math.round(p * MINE_CELLS)
-  return (
-    <span className="mt-2 flex items-center gap-2">
-      <span className="flex gap-[3px]" role="progressbar" aria-valuenow={Math.round(p * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Salt search progress (probabilistic)">
-        {Array.from({ length: MINE_CELLS }, (_, i) => (
-          <span
-            key={i}
-            className={i === filled ? 'animate-pulse' : undefined}
-            style={{
-              width: 7,
-              height: 10,
-              borderRadius: 2,
-              background:
-                i < filled
-                  ? `color-mix(in srgb, var(--color-cyan) ${100 - (i / MINE_CELLS) * 45}%, var(--color-violet))`
-                  : i === filled
-                    ? 'color-mix(in srgb, var(--color-cyan) 45%, transparent)'
-                    : 'rgba(255,255,255,0.08)',
-            }}
-          />
-        ))}
-      </span>
-      <span className="font-num text-[11px] tabular-nums text-ink-faint">≈{Math.round(p * 100)}%</span>
-    </span>
-  )
-}
+// The mining readout — the pixel bar the owner asked for on 2026-07-31, the live
+// candidate scanner, and the honest figures — now all live in SaltScanner.tsx,
+// so there is one place that describes the wait rather than a bar here and a
+// sentence there.
 
 export function DeployPortal({
   open,
@@ -216,12 +210,17 @@ export function DeployPortal({
   bentoItems,
   deploy,
   publish,
+  showOnly,
 }: DeployPortalProps) {
   const creator = resolveCreator({ handle: creatorHandle, name: creatorName, deployer: creatorAddress })
   const avatar = sanitizeImageUrl(avatarUrl ?? '') ?? undefined
   const banner = sanitizeImageUrl(bannerUrl ?? '') ?? undefined
   const orbTokens = assets.slice(0, 14)
   const [revealed, setRevealed] = useState(false)
+  // "Start over" discards the entire built basket, so it arms before it fires.
+  const [armedStartOver, setArmedStartOver] = useState(false)
+  const startOverTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(startOverTimer.current), [])
   const [runId, setRunId] = useState(0)
   const navigate = useNavigate()
 
@@ -505,7 +504,23 @@ export function DeployPortal({
   // 2026-07-07 12:11: "any button there should take you to seed the basket,
   // you shouldn't be able to get away from that"). Before success, exits close.
   const deployed = deploy?.status === 'success' && !!deploy.token
-  const exitPortal = deployed ? goToBasket : onClose
+  // ⚠ NOT DISMISSABLE WHILE THE CHAIN HOLDS IT (2026-08-07, same class as the
+  // BridgeFund fix earlier today). Escape, the backdrop and Close all ran
+  // exitPortal unguarded, and onClose calls deploy.reset() — which throws away
+  // txHash and token while broadcast() keeps running, because nothing aborts
+  // it. The receipt then lands with no UI: runSeed fires two more wallet
+  // prompts at a user looking at the builder, clearDraft wipes the draft, and
+  // the navigate-to-basket effects are gated on `deploying` so they never run.
+  // A basket is created on-chain and the person who paid for it is shown
+  // nothing. Money and permanence, so the exits simply stop until it settles —
+  // an in-flight deploy has no safe "never mind".
+  const chainHolding =
+    deploy?.status === 'signing' || deploy?.status === 'confirming' || deploy?.status === 'seeding'
+  const exitPortal = chainHolding ? () => undefined : deployed ? goToBasket : onClose
+  // The basket is live and holds NOTHING: the two-step path's deposit was declined
+  // or failed. Anyone can make the first deposit while this is true, so the ceremony
+  // holds here with the retry as the primary action instead of navigating away.
+  const seedOwing = !!deploy?.hasSeed && deployed && !deploy.seeded
 
   // The thesis form state lives HERE, not in the panel: the ceremony has ONE
   // button hierarchy (owner 2026-07-07 13:57) — Sign & publish / Skip sit in
@@ -550,8 +565,11 @@ export function DeployPortal({
     if (!(open && deploy?.status === 'success' && deploy.token)) return
     if (publish?.enabled && publish.status !== 'skipped') return
     if (silentLineagePending) return
+    // A basket that is live and empty must not be navigated away from: the first
+    // deposit is the thing that closes the window, and the retry lives here.
+    if (seedOwing) return
     goToBasket()
-  }, [open, deploy?.status, deploy?.token, publish?.enabled, publish?.status, silentLineagePending, goToBasket])
+  }, [open, deploy?.status, deploy?.token, publish?.enabled, publish?.status, silentLineagePending, seedOwing, goToBasket])
 
   if (!open) return null
 
@@ -652,8 +670,9 @@ export function DeployPortal({
         </div>
       </div>
 
-      {/* ── reveal card ─────────────────────────────────────────────────── */}
-      {revealed && (
+      {/* ── reveal card (or the show-only exit) ─────────────────────────── */}
+      {revealed && showOnly && <ShowOnlyExit onDone={showOnly} />}
+      {revealed && !showOnly && (
         <div className="absolute inset-0 z-50 flex items-center justify-center overflow-y-auto p-4" onClick={exitPortal}>
           <div
             // Width follows the stage: the publish ceremony spreads into two
@@ -687,7 +706,7 @@ export function DeployPortal({
                     <div className="mt-1 truncate font-display text-xl font-bold uppercase leading-tight tracking-tight text-ink">{name || symbol || 'Your basket'}</div>
                   </div>
                 </div>
-                <StatusBadge status={deploy?.status} hasDeploy={!!deploy} />
+                <StatusBadge status={deploy?.status} hasDeploy={!!deploy} seedOwing={seedOwing} />
                 <div className="relative mt-2 flex items-center gap-1.5 font-mono text-[11px] text-ink-dim">
                   {avatar && (
                     <BasketAvatar
@@ -713,20 +732,21 @@ export function DeployPortal({
               <div className="mt-4 px-6 font-mono text-[10px] leading-relaxed text-ink-dim">
                 {!deploy || deploy.status === 'idle' ? (
                   <>{assets.length} assets · starts at $1.00 NAV.</>
-                ) : deploy.status === 'mining' ? (
+                ) : deploy.status === 'mining' || deploy.status === 'preparing' ? (
                   <>
-                    Mining the 0x88 hook address… {deploy.attempts.toLocaleString()} salts tried (CREATE2)
-                    <MiningProgress attempts={deploy.attempts} />
-                    {/* expectation-setter (owner 2026-07-30, enlarged 07-31): the salt
-                        search is luck-of-the-draw — quiet minutes are normal, not a hang */}
-                    <span className="mt-2 block font-display text-sm font-semibold uppercase tracking-[0.14em] text-ink-dim">
-                      Could take a few minutes…
-                    </span>
+                    {deploy.status === 'mining'
+                      ? 'Mining the basket’s hook address — CREATE2, one salt at a time'
+                      : 'Hook address mined · reading the launch price…'}
+                    {/* The scanner stays through 'preparing' so the found address
+                        gets a beat on screen. On the local path the search can be
+                        over in under a second, and a panel that vanished in the
+                        same frame it appeared would read as a glitch. */}
+                    <SaltScanner
+                      mining={deploy.mining ?? null}
+                      attempts={deploy.attempts}
+                      found={deploy.status === 'preparing' ? deploy.predicted : null}
+                    />
                   </>
-                ) : deploy.status === 'preparing' ? (
-                  <>Hook address mined · reading the launch price…</>
-                ) : deploy.status === 'error' ? (
-                  <span className="text-rose-300">Deploy halted: {deploy.error}</span>
                 ) : deploy.status === 'success' ? (
                   <div className="space-y-3">
                     <div>
@@ -739,7 +759,9 @@ export function DeployPortal({
                       >
                         {shortHex(deploy.token)}
                       </a>
+                      {deploy.seeded && <span className="ml-2 text-teal">✓ first deposit made</span>}
                     </div>
+                    {seedOwing && <SeedOwedNote error={deploy.seedError ?? null} />}
                     {publish?.enabled && (
                       <PublishPanel
                         publish={publish}
@@ -766,6 +788,49 @@ export function DeployPortal({
                       Hook <span className="text-ink">{shortHex(deploy.predicted)}</span> · launch fee{' '}
                       {deploy.priceWei != null ? formatEther(deploy.priceWei) : '—'} ETH · starts at $1.00 NAV
                     </div>
+                    {/* An honest downgrade, not a halt: the wallet would not take the
+                        launch and the deposit as one step, so the note below now
+                        applies and the next press does it in two. */}
+                    {/* A DECLINE IS NOT A DEAD END (2026-08-07). 'error' used to be a
+                        terminal branch rendering "Deploy halted: …" and nothing else —
+                        the sign button lives further down, so the only ways out were
+                        Close and Start over, and both reset() and throw away the mined
+                        CREATE2 salt that took minutes to find. Rejecting a wallet
+                        prompt, the most ordinary thing a person does, cost the whole
+                        preparation. broadcast() guards on preparedRef rather than on
+                        status, so the salt is still valid and the retry is free. */}
+                    {(deploy.status === 'ready' || deploy.status === 'error') && deploy.error && (
+                      <p
+                        className={
+                          deploy.status === 'error'
+                            ? 'rounded-lg border border-rose-400/30 bg-rose-400/[0.06] px-3 py-2 font-sans text-xs leading-relaxed text-rose-200/90'
+                            : 'font-sans text-xs leading-relaxed text-amber-200/90'
+                        }
+                      >
+                        {deploy.status === 'error' ? `Deploy halted: ${deploy.error}` : deploy.error}
+                      </p>
+                    )}
+                    {!deploy.hasSeed && deploy.seedError && (
+                      <p className="rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-sans text-xs leading-relaxed text-amber-200/90">
+                        {deploy.seedError}
+                      </p>
+                    )}
+                    {/* Said BEFORE anything is signed, in the creator's own terms: a
+                        wallet that signs one step at a time leaves a gap between the
+                        basket existing and holding anything, and in that gap somebody
+                        else can make the first deposit. Buying first is what closes it,
+                        and it is the very next thing this ceremony does. */}
+                    {deploy.hasSeed && deploy.canBatch === false && (
+                      <p className="rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 font-sans text-xs leading-relaxed text-amber-200/90">
+                        {NON_ATOMIC_LAUNCH_NOTE}
+                      </p>
+                    )}
+                    {deploy.hasSeed && deploy.canBatch === true && (
+                      <p className="rounded-lg border border-teal/30 bg-teal/[0.06] px-3 py-2 font-sans text-xs leading-relaxed text-teal">
+                        Your wallet signs the launch and your first deposit together, so no one can put money
+                        in before you.
+                      </p>
+                    )}
                     {deploy.txHash && (
                       <div>
                         tx{' '}
@@ -785,15 +850,21 @@ export function DeployPortal({
                       <button
                         type="button"
                         onClick={deploy.onSign}
-                        disabled={deploy.status !== 'ready'}
+                        disabled={deploy.status !== 'ready' && deploy.status !== 'error'}
                         className="press w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black transition-transform hover:enabled:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
                         style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }}
                       >
-                        {deploy.status === 'signing'
+                        {deploy.status === 'error'
+                          ? 'Try again · sign & launch'
+                          : deploy.status === 'signing'
                           ? 'Confirm in wallet…'
                           : deploy.status === 'confirming'
                             ? 'Deploying…'
-                            : `Sign & deploy · ${deploy.priceWei != null ? formatEther(deploy.priceWei) : '—'} ETH`}
+                            : deploy.status === 'seeding'
+                              ? 'Making your first deposit…'
+                              : deploy.hasSeed
+                                ? `Sign & launch · ${deploy.priceWei != null ? formatEther(deploy.priceWei) : '—'} ETH + your deposit`
+                                : `Sign & deploy · ${deploy.priceWei != null ? formatEther(deploy.priceWei) : '—'} ETH`}
                       </button>
                     ) : (
                       <DeployGate chainId={chainId} />
@@ -803,7 +874,31 @@ export function DeployPortal({
               </div>
 
               <div className="mt-4 flex gap-2 border-t border-white/10 p-4">
-                {deployed ? (
+                {seedOwing ? (
+                  // The basket is live and empty. The ONLY primary action here is the
+                  // first deposit: it is what stops someone else making it, with a
+                  // starved leg, at the next buyer's expense. Leaving is still
+                  // possible (it is the creator's basket), just never the loud option.
+                  <>
+                    <button
+                      type="button"
+                      onClick={deploy?.onSeed}
+                      disabled={deploy?.status === 'seeding' || !deploy?.onSeed}
+                      className="flex-1 rounded-xl py-2.5 font-display text-sm font-bold uppercase tracking-[0.15em] text-black transition-transform hover:enabled:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{ background: 'linear-gradient(90deg,var(--color-amber),var(--color-magenta),var(--color-cyan))' }}
+                    >
+                      {deploy?.status === 'seeding' ? 'Confirm in wallet…' : 'Buy first · closes the gap'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={goToBasket}
+                      disabled={deploy?.status === 'seeding'}
+                      className="press rounded-xl border border-white/12 px-4 py-2.5 font-display text-sm font-bold uppercase tracking-[0.15em] text-ink-dim hover:enabled:border-white/30 hover:enabled:text-ink disabled:opacity-60"
+                    >
+                      Later
+                    </button>
+                  </>
+                ) : deployed ? (
                   // The basket is LIVE: ONE button hierarchy in ONE place (owner
                   // 13:57). While the thesis form shows, the primary IS "Sign &
                   // publish" with Skip beside it (skip = straight to seeding);
@@ -845,6 +940,18 @@ export function DeployPortal({
                       Continue · seed your basket →
                     </button>
                   )
+                ) : chainHolding ? (
+                  /* NOTHING TO PRESS WHILE THE CHAIN HOLDS IT. Close, Replay and
+                     Start over all reset the deploy while broadcast() keeps
+                     running, so they are not merely unhelpful here — they are
+                     the mechanism by which a paid-for basket loses its own UI.
+                     They are ABSENT rather than disabled: a row of dead buttons
+                     is the thing we keep removing elsewhere, and this state is
+                     short and self-resolving. The card above already narrates
+                     signing / confirming / seeding. */
+                  <p className="flex-1 py-2.5 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint">
+                    {deploy?.status === 'seeding' ? 'Seeding — do not close this tab' : 'Confirming on-chain — do not close this tab'}
+                  </p>
                 ) : (
                   <>
                     {!deploy ? (
@@ -875,12 +982,33 @@ export function DeployPortal({
                     >
                       ↻ Replay
                     </button>
+                    {/* TWO PRESSES (2026-08-07). onStartOver wipes assets,
+                        weights, name, symbol and fee, which then trips
+                        draftIsEmpty and clears the saved draft too — the whole
+                        basket, gone from one click of a tertiary button sitting
+                        between Close and ↻ Replay, neither of which destroys
+                        anything. Same arm-then-confirm as the builder's "Start
+                        fresh" and the wallet unlink, auto-disarming after a few
+                        seconds. */}
                     <button
                       type="button"
-                      onClick={onStartOver}
-                      className="press rounded-xl border border-white/12 px-4 py-2.5 font-mono text-[11px] uppercase tracking-wide text-ink-dim hover:border-white/30 hover:text-ink"
+                      onClick={() => {
+                        if (armedStartOver) {
+                          setArmedStartOver(false)
+                          onStartOver()
+                          return
+                        }
+                        setArmedStartOver(true)
+                        window.clearTimeout(startOverTimer.current)
+                        startOverTimer.current = window.setTimeout(() => setArmedStartOver(false), 3000)
+                      }}
+                      className={`press rounded-xl border px-4 py-2.5 font-mono text-[11px] uppercase tracking-wide ${
+                        armedStartOver
+                          ? 'border-magenta/50 text-magenta'
+                          : 'border-white/12 text-ink-dim hover:border-white/30 hover:text-ink'
+                      }`}
                     >
-                      Start over
+                      {armedStartOver ? 'Discard the basket — press again' : 'Start over'}
                     </button>
                   </>
                 )}
@@ -891,6 +1019,22 @@ export function DeployPortal({
       )}
     </div>,
     document.body,
+  )
+}
+
+// The basket exists and holds nothing. Said plainly, with what to do about it and
+// why it matters, because the creator is the only person who can close it now.
+// Never a hard stop: their basket, their call. Just never a quiet one.
+function SeedOwedNote({ error }: { error: string | null }) {
+  return (
+    <div className="rounded-lg border border-amber-400/30 bg-amber-400/[0.06] p-3 font-sans text-xs leading-relaxed text-amber-200/90">
+      <p>
+        Your basket is live but holds nothing yet.{' '}
+        {error ? 'The first deposit did not go through.' : 'The first deposit is still to make.'} Until it does,
+        someone else can make it, and they get to choose how that money splits across your holdings.
+      </p>
+      {error && <p className="mt-1.5 text-amber-200/70">{error}</p>}
+    </div>
   )
 }
 
@@ -1113,9 +1257,14 @@ function PublishPanel({
 // Reveal-card status badge — tracks the REAL deploy state. "Deployed · live
 // onchain" is earned by the receipt, never by the animation finishing. The
 // pure-preview ceremony (no deploy prop) keeps the celebration badge.
-function StatusBadge({ status, hasDeploy }: { status?: DeployStatus; hasDeploy: boolean }) {
+function StatusBadge({ status, hasDeploy, seedOwing }: { status?: DeployStatus; hasDeploy: boolean; seedOwing?: boolean }) {
   const deployed = !hasDeploy || status === 'success'
-  const [label, tone] = deployed
+  // "Live" is not the whole truth while the basket holds nothing: that is the state
+  // someone else can still first-fund. Name it rather than let the teal badge imply
+  // the launch is finished.
+  const [label, tone] = deployed && seedOwing
+    ? ['Live · no deposit yet', 'amber']
+    : deployed
     ? ['Deployed · live onchain', 'teal']
     : status === 'mining' || status === 'preparing'
       ? ['Assembling · not deployed yet', 'cyan']
@@ -1125,9 +1274,11 @@ function StatusBadge({ status, hasDeploy }: { status?: DeployStatus; hasDeploy: 
           ? ['Confirm in wallet…', 'amber']
           : status === 'confirming'
             ? ['Deploying…', 'amber']
-            : status === 'error'
-              ? ['Deploy halted', 'rose']
-              : ['Not deployed yet', 'cyan']
+            : status === 'seeding'
+              ? ['Making your first deposit…', 'amber']
+              : status === 'error'
+                ? ['Deploy halted', 'rose']
+                : ['Not deployed yet', 'cyan']
   const tones: Record<string, string> = {
     teal: 'border-teal/30 bg-teal/10 text-teal',
     cyan: 'border-cyan/30 bg-cyan/10 text-cyan',
@@ -1147,9 +1298,7 @@ function StatusBadge({ status, hasDeploy }: { status?: DeployStatus; hasDeploy: 
 // "off on this build" when the flag IS on (that read as mock mode). The wallet
 // being on the wrong network is the common case: offer the switch right here.
 function DeployGate({ chainId }: { chainId: number }) {
-  const cfg = chainCfg(chainId)
   const { isConnected, chainId: walletChainId } = useAccount()
-  const { switchChain, isPending } = useSwitchChain()
 
   if (!DEPLOY_ENABLED) {
     return (
@@ -1166,24 +1315,35 @@ function DeployGate({ chainId }: { chainId: number }) {
       </div>
     )
   }
+  // The shared pre-flight notice (2026-08-05 consolidation): this branch used to
+  // say "your wallet is on the wrong network" without ever saying WHICH one it
+  // was on, which is the guessing game the shared component ends. Same switch
+  // button chrome, same copy, plus the declined-switch acknowledgement.
   if (walletChainId !== chainId) {
     return (
       <div className="space-y-2">
-        <div className="text-amber-200/90">
-          Your wallet is on the wrong network, this deploy signs on {cfg.name}.
-        </div>
-        <button
-          type="button"
-          onClick={() => switchChain({ chainId })}
-          disabled={isPending}
-          className="press rounded-lg border border-cyan/40 bg-cyan/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-cyan hover:enabled:bg-cyan/20 disabled:opacity-60"
-        >
-          {isPending ? 'Confirm in wallet…' : `Switch wallet to ${cfg.name}`}
-        </button>
+        <WrongNetwork
+          requiredChainId={chainId}
+          action="This deploy signs"
+          button={{
+            className:
+              'rounded-lg border border-cyan/40 bg-cyan/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-cyan hover:enabled:bg-cyan/20',
+          }}
+        />
       </div>
     )
   }
   // enabled=false with the flag on, a wallet connected AND the right chain
   // shouldn't happen — surface it honestly rather than pretending it's fine.
   return <div className="text-amber-200/90">Deploy is not armed, reconnect your wallet and retry.</div>
+}
+
+/** The show-only mode's whole reveal: fire the host's continuation once, in
+ *  an effect (never during render), and paint nothing. */
+function ShowOnlyExit({ onDone }: { onDone: () => void }) {
+  useEffect(() => {
+    onDone()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return null
 }

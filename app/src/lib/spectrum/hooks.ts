@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useCallback, useMemo } from 'react'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Address } from 'viem'
 import { chainCfg, DEFAULT_CHAIN_ID, SUPPORTED_CHAIN_IDS } from '../chain/chains'
 import { useActiveChainId } from '../chain/active-chain'
@@ -90,6 +90,11 @@ export interface CreatorProfile {
   totalAumUsd: number
   /** Distinct chains this creator has launched on. */
   chains: number[]
+  /** Baskets in the discovered list whose deployer is UNKNOWN (the registry
+   *  read failed or hasn't landed yet) — any of them could be this creator's,
+   *  so while this is non-zero an empty `baskets` means "could not check",
+   *  never "this creator published nothing". The empty state branches on it. */
+  unknownDeployerCount: number
 }
 
 // Pure aggregation: a creator profile = all baskets whose on-chain deployer
@@ -113,18 +118,22 @@ export function buildCreatorProfile(address: string, all: BasketSummary[]): Crea
     seriesCount: countVersionSeries(mine),
     totalAumUsd,
     chains,
+    unknownDeployerCount: all.filter((b) => b.deployer == null).length,
   }
 }
 
 // All baskets by one creator (deployer) + headline stats. Reuses the cached
 // `useAllBaskets` query, so opening a profile costs no extra network.
+// `chainsFailed` rides along: a failed CHAIN contributes [] to the combined
+// list, so this creator's every basket may live in the gap — the empty state
+// must treat that as "could not check", exactly like an unknown deployer.
 export function useCreatorProfile(address?: string) {
-  const { data: all, isLoading, isError } = useAllBaskets()
+  const { data: all, isLoading, isError, chainsFailed } = useAllBaskets()
   const data = useMemo(
     () => (address && all ? buildCreatorProfile(address, all) : undefined),
     [address, all],
   )
-  return { data, isLoading, isError }
+  return { data, isLoading, isError, chainsFailed }
 }
 
 export interface PortfolioHolding {
@@ -133,6 +142,11 @@ export interface PortfolioHolding {
   balance: number
   /** balance × navPerToken, in USD. */
   valueUsd: number
+  /** WHO holds it, per group member (owner 2026-08-16, the sort-by-wallet
+   *  control): the merged read has kept per-wallet balances since 2026-08-11
+   *  — this carries them onto the row instead of discarding them at the fold.
+   *  Absent on single-wallet reads, where the owner is the address itself. */
+  contributors?: { owner: string; usd: number }[]
 }
 
 export interface Portfolio {
@@ -144,47 +158,140 @@ export interface Portfolio {
   totalValueUsd: number
   heldCount: number
   createdCount: number
+  /** Baskets whose balance could not be READ this pass (an RPC refusal, not a
+   *  zero balance). Every total here is a floor while this is > 0, and the
+   *  page must say so rather than printing at full confidence. */
+  unreadableCount: number
+  /** Held-basket USD per wallet in the group (lowercase address → USD). The
+   *  group panel's rows could previously only show TOKEN dollars and carried a
+   *  note saying baskets were unattributable; they are attributable now. */
+  basketUsdByWallet: Map<string, number>
 }
 
 // A connected wallet's positions: baskets held (balance × NAV) + baskets
 // created. Per-wallet balances are the only fresh read (batched per chain).
-export function usePortfolio(address?: string) {
+//
+// Takes one address, or a linked-wallet GROUP (wallet-links.ts). A group
+// merges the READ — balances sum per basket, `created` unions — and the
+// returned `address` is the group's FIRST entry (the anchor; group callers
+// must not act on it — acting belongs to useAccount's connected wallet).
+// Single-address callers behave byte-identically.
+export function usePortfolio(address?: string | string[]) {
   const { data: all, isLoading: allLoading, isError: allError, chainsFailed } = useAllBaskets()
+  const qc = useQueryClient()
   const baskets = useMemo(() => all ?? [], [all])
   const sig = baskets.map((b) => `${b.chainId}:${b.address}`).join(',')
+  const addrSig = (Array.isArray(address) ? address.join(',') : (address ?? '')).toLowerCase()
+  const addrs = useMemo(() => {
+    const list = (Array.isArray(address) ? address : address ? [address] : []).map((a) => a.toLowerCase())
+    return list.filter((a, i) => a && list.indexOf(a) === i)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addrSig])
 
   const balances = useQuery({
-    queryKey: ['spectrum', 'portfolio', address?.toLowerCase(), sig],
-    queryFn: () => getUserHoldings(address as Address, baskets),
-    enabled: !!address && baskets.length > 0,
+    queryKey: ['spectrum', 'portfolio', addrs.join('|'), sig],
+    queryFn: async () => {
+      const reads = await Promise.all(addrs.map((a) => getUserHoldings(a as Address, baskets)))
+      const merged = new Map<string, number>()
+      // WHO holds it, kept alongside HOW MUCH (2026-08-11): the raw-token
+      // sweep has carried `contributors` since it learned to read groups, and
+      // the basket half threw the same fact away — so the group panel could
+      // only show token dollars per wallet and had to say so. Same shape here.
+      const byWallet = new Map<string, Map<string, number>>()
+      for (let i = 0; i < reads.length; i++) {
+        const owner = addrs[i]
+        for (const [k, v] of reads[i].balances) {
+          merged.set(k, (merged.get(k) ?? 0) + v)
+          if (v > 0) {
+            const per = byWallet.get(k) ?? new Map<string, number>()
+            per.set(owner, (per.get(owner) ?? 0) + v)
+            byWallet.set(k, per)
+          }
+        }
+      }
+      // A basket counts as unreadable when a read of it FAILED and no wallet in
+      // the group produced a number for it — one wallet's success is a real
+      // (if partial) answer, and calling that unreadable would over-warn.
+      const unreadable = new Set<string>()
+      for (const r of reads) for (const k of r.unreadable) if (!merged.has(k)) unreadable.add(k)
+      return { balances: merged, unreadable, byWallet }
+    },
+    enabled: addrs.length > 0 && baskets.length > 0,
     staleTime: LIST_STALE_MS,
     refetchInterval: LIST_POLL_ACTIVE_MS,
+    // Group changes change the KEY — keep the standing book while the merged
+    // balances load rather than emptying the page (same law as raw-holdings,
+    // including its identity gate: an account SWITCH shares no address with
+    // the previous read, and carrying it showed A's positions — and a bogus
+    // transient PnL against B's cost-basis indexes — under B's name).
+    placeholderData: (prev, prevQuery) => {
+      if (!prev || !prevQuery) return undefined
+      const prevSet = String(prevQuery.queryKey[2] ?? '').split('|').filter(Boolean)
+      return prevSet.some((a) => addrs.includes(a)) ? prev : undefined
+    },
   })
 
   const data = useMemo<Portfolio | undefined>(() => {
-    if (!address || !all) return undefined
-    const addr = address.toLowerCase()
-    const balMap = balances.data ?? new Map<string, number>()
+    if (addrs.length === 0 || !all) return undefined
+    const balMap = balances.data?.balances ?? new Map<string, number>()
     const holdings = all
       .map((basket) => {
         const balance = balMap.get(basket.address.toLowerCase()) ?? 0
-        return { basket, balance, valueUsd: balance * basket.navPerToken }
+        // per-wallet attribution rides the row (sort-by-wallet, 2026-08-16) —
+        // the byWallet map already held it; the fold just stopped dropping it
+        const per = balances.data?.byWallet.get(basket.address.toLowerCase())
+        const contributors = per
+          ? [...per.entries()]
+              .filter(([, bal]) => bal > 0)
+              .map(([owner, bal]) => ({ owner, usd: bal * basket.navPerToken }))
+              .sort((a, b) => b.usd - a.usd)
+          : undefined
+        return { basket, balance, valueUsd: balance * basket.navPerToken, ...(contributors?.length ? { contributors } : {}) }
       })
       .filter((h) => h.balance > 0)
       .sort((a, b) => b.valueUsd - a.valueUsd)
-    const created = all.filter((b) => b.deployer?.toLowerCase() === addr && !b.supersededBy)
+    const created = all.filter(
+      (b) => b.deployer && addrs.includes(b.deployer.toLowerCase()) && !b.supersededBy,
+    )
     const totalValueUsd = holdings.reduce((s, h) => s + h.valueUsd, 0)
+    // per-wallet BASKET dollars, priced with the same NAV the rows use
+    const basketUsdByWallet = new Map<string, number>()
+    for (const h of holdings) {
+      const per = balances.data?.byWallet.get(h.basket.address.toLowerCase())
+      if (!per) continue
+      for (const [owner, bal] of per) {
+        basketUsdByWallet.set(owner, (basketUsdByWallet.get(owner) ?? 0) + bal * h.basket.navPerToken)
+      }
+    }
     return {
-      address,
+      address: addrs[0],
       holdings,
       created,
       totalValueUsd,
       heldCount: holdings.length,
       createdCount: created.length,
+      // baskets whose balance the RPC would not answer for — a FLOOR marker on
+      // every total derived from this book (audit 2026-08-11)
+      unreadableCount: balances.data?.unreadable.size ?? 0,
+      basketUsdByWallet,
     }
-  }, [address, all, balances.data])
+  }, [addrs, all, balances.data])
 
-  return { data, isLoading: allLoading || balances.isLoading, isError: allError || balances.isError, chainsFailed }
+  // A failed portfolio read used to be a DEAD END (audit 2026-08-07): this hook
+  // handed back `isError` and no way to try again, so Yours.tsx could only
+  // apologise and the reader's only exit was a browser reload. Both halves have
+  // to go back out, in order: the per-chain basket lists first (their all-fail
+  // is what `allError` reports, and an empty list keeps `balances` disabled), then
+  // this wallet's balances for the case where the lists were fine and the
+  // balance read is what blipped. The lists go through the client rather than
+  // useAllBaskets' combine — that shape is shared with every other caller and
+  // does not need a refetch handle bolted onto it for one page's retry button.
+  const refetch = useCallback(async () => {
+    await qc.refetchQueries({ queryKey: ['spectrum', 'baskets'] })
+    await balances.refetch()
+  }, [qc, balances.refetch])
+
+  return { data, isLoading: allLoading || balances.isLoading, isError: allError || balances.isError, chainsFailed, refetch }
 }
 
 export interface LiveExposure {

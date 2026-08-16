@@ -1,7 +1,8 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
 import { basketHref } from '../lib/spectrum/short-url'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { useCreatorMeta } from '../lib/spectrum/hooks'
 import { resolveCreator } from '../lib/spectrum/creator'
@@ -88,22 +89,31 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
       {/* the basket's own paper-warp identity, faded left so the text keeps contrast */}
       <BasketWash ix={ix} opacity={0.34} />
       {/* header — click anywhere (except Visit) to expand the basket */}
-      <div className="relative flex items-center gap-4 px-3 py-3 sm:px-4">
+      {/* THE ROW OVERLAPPED ITSELF ON A PHONE (owner 2026-08-06 23:13: "you see
+          BASECORE and then you see the percentages … all of that information
+          needs to be visible, not clipping"). The identity block is `flex-1
+          min-w-0` but its ticker was `shrink-0`, so once the two stat columns
+          were subtracted the ticker had nowhere to go and PAINTED OVER the
+          percentage — not a clip, an overlap. Every gap and every figure below
+          is reduced under `sm` so the four facts (ticker · perf · TVL, and the
+          rank) fit side by side at 390px; from `sm` up the row is exactly what
+          it was. */}
+      <div className="relative flex items-center gap-2 px-3 py-3 sm:gap-4 sm:px-4">
         <button
           type="button"
           onClick={toggleOpen}
           aria-expanded={open}
-          aria-label={`Toggle ${ix.symbol} basket`}
+          aria-label={`Toggle ${showSymbol(ix.symbol)} basket`}
           className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan/70"
         />
 
         {/* identity — ONE line across the width: ticker · name · creator
             (details like the description live in the expanded view) */}
-        <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-3.5">
+        <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2 sm:gap-3.5">
           <svg
             viewBox="0 0 24 24"
             aria-hidden
-            className={`h-4 w-4 shrink-0 text-ink-faint transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+            className={`h-3.5 w-3.5 shrink-0 text-ink-faint transition-transform duration-200 sm:h-4 sm:w-4 ${open ? 'rotate-90' : ''}`}
             fill="none"
             stroke="currentColor"
             strokeWidth="2.5"
@@ -112,11 +122,32 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
           >
             <path d="M9 6l6 6-6 6" />
           </svg>
-          {rank != null && <span className="w-5 shrink-0 text-center font-mono text-xs tabular-nums text-ink-faint">{rank}</span>}
-          <BasketAvatar address={ix.address} symbol={ix.symbol} size={36} />
-          <div className="flex min-w-0 flex-1 items-baseline gap-x-3">
-            <span className="shrink-0 font-display text-base font-bold leading-none text-ink">${ix.symbol}</span>
-            <span className="hidden max-w-[11rem] shrink-0 truncate text-sm text-ink-dim min-[440px]:block">{ix.name?.trim() || '—'}</span>
+          {rank != null && <span className="w-4 shrink-0 text-center font-mono text-xs tabular-nums text-ink-faint sm:w-5">{rank}</span>}
+          {/* THE AVATAR IS WHAT PAYS FOR THE TICKER (owner 2026-08-06 23:13).
+              Measured at 390px: 316px of row content, of which the two stat
+              columns take 160 and the chevron/rank/avatar/gaps take 96, left
+              the ticker 52px — "$STONKMEME" needs ~91. It is the one element
+              here that repeats what the ticker and the row's own BasketWash
+              already say, so below sm it stands down and the ticker gets its
+              ~102px. Back at every width the desktop row ever had it. */}
+          <span className="hidden shrink-0 sm:block">
+            <BasketAvatar address={ix.address} symbol={ix.symbol} size={36} />
+          </span>
+          <div className="flex min-w-0 flex-1 items-baseline gap-x-2 sm:gap-x-3">
+            {/* `min-w-0 truncate` below sm is the guard, not the fix: a ticker
+                longer than the room left now ends in an ellipsis instead of
+                overlapping the number beside it. `sm:shrink-0` hands the
+                desktop row back its original behaviour untouched. */}
+            {/* ⚠ BOUNDED, and it lost this guard in the absorption union
+                (specallocator's catch, 2026-08-07): my lane rewrote this line
+                for mobile and the merge took my side wholesale, dropping the
+                showSymbol their lane had added. The tell was the asymmetry —
+                the aria-label above stayed bounded, so a screen-reader user got
+                the safe string while a sighted user got the hostile one.
+                `truncate` clips the BOX; showSymbol bounds the STRING and
+                strips controls and bidi overrides, which CSS cannot do. */}
+            <span className="min-w-0 truncate font-display text-sm font-bold leading-none text-ink sm:shrink-0 sm:text-base">${showSymbol(ix.symbol)}</span>
+            <span className="hidden max-w-[11rem] shrink-0 truncate text-sm text-ink-dim min-[440px]:block">{ix.name?.trim() ? showName(ix.name) : '—'}</span>
             {/* THE THESIS on the face — why this basket exists, before any number
                 (thesis-first, R+C 2026-07-06); the n-asset line is the fallback.
                 In stats mode the numbers ARE the face, the thesis lives one
@@ -133,14 +164,16 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
             value-over-caption like the creator rows, sized to actually READ
             (owner 13:46: bigger descriptors, bigger numbers, more width) */}
         {stats && (
-          <div className="pointer-events-none relative flex shrink-0 items-end gap-5 text-right sm:gap-8">
-            <div className="w-[5.5rem]">
+          <div className="pointer-events-none relative flex shrink-0 items-end gap-2 text-right sm:gap-8">
+            {/* wider column, smaller number, below sm: "+999.99%" is eight
+                glyphs and the old 72px box could not hold them at 18px */}
+            <div className="w-20 sm:w-[5.5rem]">
               {perfMeasurable(ix) ? (
                 (() => {
                   const p = perfToDate(ix) * 100
                   return (
                     <div
-                      className={`font-num font-semibold leading-none tabular-nums ${Math.abs(p) >= 1000 ? 'text-sm' : 'text-lg sm:text-xl'}`}
+                      className={`font-num font-semibold leading-none tabular-nums ${Math.abs(p) >= 1000 ? 'text-sm' : 'text-base sm:text-xl'}`}
                       style={{ color: p >= 0 ? 'var(--color-cyan)' : 'var(--color-magenta)' }}
                     >
                       {Math.abs(p) >= 1000 ? `${p >= 0 ? '+' : ''}${Math.round(p).toLocaleString()}%` : formatPct(p)}
@@ -149,23 +182,29 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
                 })()
               ) : (
                 <div
-                  className="font-num text-lg leading-none text-ink-faint"
+                  className="font-num text-base leading-none text-ink-faint sm:text-lg"
                   title={`Below the $${MEASURABLE_TVL_FLOOR_USD.toLocaleString()} measurable-TVL floor, NAV here is fee arithmetic, not performance`}
                 >
                  —
                 </div>
               )}
-              <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim">to date</div>
+              <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-ink-dim sm:text-[10px]">to date</div>
             </div>
             <div className="hidden w-16 min-[520px]:block">
-              <div className="font-num text-lg leading-none tabular-nums text-ink sm:text-xl">
+              <div className="font-num text-base leading-none tabular-nums text-ink sm:text-xl">
                 {ix.holdersCount != null ? ix.holdersCount.toLocaleString() : '—'}
               </div>
-              <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim">holders</div>
+              <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-ink-dim sm:text-[10px]">holders</div>
             </div>
-            <div className="hidden w-20 min-[440px]:block">
-              <div className="font-num text-lg leading-none tabular-nums text-ink sm:text-xl">{formatUsdCompact(ix.aumUsd)}</div>
-              <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-dim">TVL</div>
+            {/* TVL IS NEVER HIDDEN (mobile sweep 2026-08-06): this lens ranks
+                by TVL⊕perf, and below 440px every row rendered as rank +
+                ticker + dead space — the two facts the ordering is MADE of
+                were both gone, and four of seven rows read a bare "— to
+                date". The one number that explains the order stays at every
+                width; holders (below) is still the widescreen extra. */}
+            <div className="w-[4.5rem] sm:w-20">
+              <div className="font-num text-base leading-none tabular-nums text-ink sm:text-xl">{formatUsdCompact(ix.aumUsd)}</div>
+              <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-ink-dim sm:text-[10px]">TVL</div>
             </div>
           </div>
         )}
@@ -217,7 +256,13 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
         <div className="min-h-0 overflow-hidden">
           <div className="border-t border-white/10 p-3">
             <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-0.5 min-[440px]:hidden">
-              <span className="text-sm text-ink">{ix.name?.trim() || '—'}</span>
+              {/* ⚠ BOUNDED IN CODE, because nothing bounds it in CSS here
+                  (specallocator's sweep, 2026-08-07): this span sits in a
+                  flex-wrap row with no truncate, no line-clamp and no
+                  max-width, so a deployer name's length is genuinely unbounded
+                  at this site. showName also does what CSS never can — strip
+                  bidi overrides and zero-width characters. */}
+              <span className="text-sm text-ink">{showName(ix.name) || '—'}</span>
             </div>
             {/* the creator's signed thesis leads the expansion (owner ask) — its
                 own quiet panel with real air, the creator's face on the right;
@@ -278,7 +323,7 @@ export function BasketListRow({ ix, rank, chain, stats = false, open: controlled
                 assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
                 navPerToken={ix.navPerToken}
                 ageSec={null}
-                symbol={`$${ix.symbol}`}
+                symbol={`$${showSymbol(ix.symbol)}`}
                 fallback={ix.navSeries}
                 underlyingAssets={ix.top.map((t) => ({ address: t.address, symbol: t.symbol }))}
                 heightClass="h-44 sm:h-52"

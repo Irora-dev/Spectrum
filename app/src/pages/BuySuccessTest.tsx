@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { SwapPendingOverlay } from '../components/SwapPendingOverlay'
 import type { DexStep, DexTxState } from '../lib/spectrum/use-dex-swap'
 
@@ -64,7 +65,7 @@ export function BuySuccessTest() {
   const share = withShare
     ? {
         url: shareUrl,
-        xHref: `https://twitter.com/intent/tweet?text=${encodeURIComponent(`I just added $${b.symbol} to my portfolio, take a look`)}&url=${encodeURIComponent(shareUrl)}`,
+        xHref: `https://twitter.com/intent/tweet?text=${encodeURIComponent(`I just added $${showSymbol(b.symbol)} to my portfolio, take a look`)}&url=${encodeURIComponent(shareUrl)}`,
       }
     : null
 

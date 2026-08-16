@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFile } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
@@ -22,6 +23,9 @@ type NodeRes = {
   setHeader(name: string, value: string): void
   end(body?: string): void
 }
+/** What the 0x dev bridge reads off connect's request object. `originalUrl`
+ *  keeps the full path (connect strips the mount prefix from `url`). */
+type BridgeReq = NodeReq & { originalUrl?: string; url?: string }
 
 // Brand the STATIC document head from brand.config at build time — the <title>, description,
 // and OG / Twitter tags that crawlers and social unfurlers read before any JS runs (the runtime
@@ -197,11 +201,131 @@ function setupApply(): Plugin {
   }
 }
 
+// Dev-only READ for the /setup studio's Extension panel: proxies
+// extension/scripts/status.mjs --json (the append-only introspection contract).
+// Serve-only like setupApply — a deployed static site has no such endpoint, and
+// the panel degrades to "run this locally". No CORS headers are ever set, so a
+// hostile page can trigger but never READ it; it also only reports booleans and
+// file names, never credential values (that is status.mjs's own contract).
+function setupExtensionStatus(): Plugin {
+  return {
+    name: 'setup-extension-status',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__setup/extension-status', (rawReq, rawRes) => {
+        const req = rawReq as unknown as NodeReq
+        const res = rawRes as unknown as NodeRes
+        res.setHeader('content-type', 'application/json')
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          return res.end(JSON.stringify({ ok: false, error: 'GET only' }))
+        }
+        const extDir = resolve(server.config.root, '../extension')
+        if (!existsSync(resolve(extDir, 'scripts/status.mjs'))) {
+          return res.end(JSON.stringify({ ok: true, absent: true }))
+        }
+        execFile(
+          process.execPath,
+          [resolve(extDir, 'scripts/status.mjs'), '--json'],
+          { cwd: extDir, timeout: 10_000 },
+          (err, stdout) => {
+            if (err) {
+              res.statusCode = 500
+              return res.end(JSON.stringify({ ok: false, error: 'status.mjs failed' }))
+            }
+            // Guarded: a throw inside a node-style callback is an uncaught
+            // exception that kills the whole dev server, not a 500.
+            try {
+              res.end(JSON.stringify({ ok: true, status: JSON.parse(stdout) }))
+            } catch {
+              res.statusCode = 500
+              res.end(JSON.stringify({ ok: false, error: 'status.mjs printed non-JSON' }))
+            }
+          },
+        )
+      })
+    },
+  }
+}
+
+// THE 0x DEV BRIDGE (2026-08-12, portfolio-execution arming). In production
+// the browser's quote calls to /api/zerox/* are answered by the Netlify edge
+// function (app/netlify/edge-functions/zerox.ts); plain `vite` serves no such
+// route, so on localhost every quote read-failed by construction. This mounts
+// THE SAME tested handler (src/lib/spectrum/zerox-proxy-handler.ts — platform-
+// agnostic Request→Response by design) on the dev server. The key stays
+// SERVER-SIDE: `ZEROX_API_KEY` (no VITE_ prefix, so it can never be inlined
+// into the client bundle) is read from .env.local AT REQUEST TIME via the same
+// envLocalValue helper the site-html plugin uses — a key added or rotated
+// there answers on the next request, no restart needed. With no key the
+// handler's own NO_UPSTREAM_KEY (503) flows through, which the client
+// classifies read-failed and words as "we could not reach the exchange" —
+// never a fact about the market. Serve-only: no deployed build carries this.
+function zeroxDevBridge(): Plugin {
+  return {
+    name: 'zerox-dev-bridge',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/api/zerox', (rawReq, rawRes) => {
+        const req = rawReq as unknown as BridgeReq
+        const res = rawRes as unknown as NodeRes
+        void (async () => {
+          try {
+            const host = typeof req.headers.host === 'string' ? req.headers.host : 'localhost'
+            // connect strips the mount path from url; originalUrl carries the
+            // full /api/zerox/... path the handler's prefix-strip expects
+            const full = req.originalUrl ?? `/api/zerox${req.url ?? ''}`
+            // The handler is loaded through vite's OWN module runner rather
+            // than a static import: a static import would pull the src tree
+            // into the node tsconfig's program (which carries no dom lib), and
+            // the runner keeps the tested source as the single artifact vite
+            // transforms either way. The local types below are the handler's
+            // contract, honored by the paired tests it already has.
+            type HeadersLike = { set(k: string, v: string): void }
+            type ZeroxHandler = (
+              request: unknown,
+              env: { apiKey: string | null; canonicalOrigin: string | null; extraOrigins: readonly string[] },
+            ) => Promise<{ status: number; headers: { forEach(cb: (v: string, k: string) => void): void }; text(): Promise<string> }>
+            const { handleZeroxProxy } = (await server.ssrLoadModule('/src/lib/spectrum/zerox-proxy-handler.ts')) as {
+              handleZeroxProxy: ZeroxHandler
+            }
+            // The fetch classes via globalThis: present at runtime (node 18+)
+            // but not ambient names under the node tsconfig.
+            const G = globalThis as Record<string, unknown>
+            const HeadersCtor = G.Headers as new () => HeadersLike
+            const RequestCtor = G.Request as new (url: string, init?: { method?: string; headers?: HeadersLike }) => unknown
+            const headers = new HeadersCtor()
+            for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+            const out = await handleZeroxProxy(new RequestCtor(`http://${host}${full}`, { method: req.method ?? 'GET', headers }), {
+              apiKey: process.env.ZEROX_API_KEY || envLocalValue('ZEROX_API_KEY') || null,
+              canonicalOrigin: null, // dev: the request's own origin is the site
+              extraOrigins: [],
+            })
+            res.statusCode = out.status
+            out.headers.forEach((v: string, k: string) => res.setHeader(k, v))
+            res.end(await out.text())
+          } catch {
+            res.statusCode = 502
+            res.setHeader('content-type', 'application/json')
+            res.end(JSON.stringify({ name: 'UPSTREAM_UNREACHABLE', message: 'The dev 0x bridge failed to answer.' }))
+          }
+        })()
+      })
+    },
+  }
+}
+
 // base: './' keeps asset URLs relative so the build works under any
 // IPFS/ENS gateway path. Clean per-route HTML for IPFS is handled at deploy time.
 export default defineConfig({
   base: './',
-  plugins: [react(), tailwindcss(), brandHtml(), siteHtml(), setupApply()],
+  // Stryker's sandbox (.stryker-tmp) lives inside the app while a mutation
+  // run is active; vite's watcher picking it up mid-run resolved public
+  // assets INTO the half-built sandbox and error-overlayed the whole dev
+  // server (measured 2026-08-05 — the review screenshot caught it). The
+  // dev server and the mutation harness must never see each other.
+  server: { watch: { ignored: ['**/.stryker-tmp/**'] } },
+  plugins: [react(), tailwindcss(), brandHtml(), siteHtml(), setupApply(), setupExtensionStatus(), zeroxDevBridge()],
   build: {
     rollupOptions: {
       output: {

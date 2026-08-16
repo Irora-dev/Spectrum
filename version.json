@@ -1,10 +1,11 @@
 {
-  "version": "2026.08.01",
-  "note": "Ethereum and Base move to the new launch-ceremony contracts, and baskets from the retired factories stay listed and keep trading through their own lineage's router. The basket page is rebuilt \u2014 wider, with a left price axis on the chart and an honest since-inception return \u2014 position PnL and holder fee claims are visible where you look, /earn finally shows holder fees, and links are short (/t/r/T2-29374eaa) while every existing URL still resolves. BREAKING: bundles now ship DISABLED \u2014 the idea is becoming its own product. If your site shows bundles and you want to keep them, add 'bundle' back to `pages` in brand.config.ts when you update; nothing was removed.",
+  "version": "2026.08.16",
+  "note": "The fee model changes with this release: the portfolio batching fee is 0.25% (0x's own ~0.15% makes ~0.4% all-in on aggregator legs), the direct-swap fee is 0.4%, and 100% of every Spectrum fee now buys and burns PRISM; there is no integrator split. Both money contracts are a NEW deployed generation with new call shapes, seated per chain in deployments.json (feeGeneration: 2), and every safety gate (the shown-vs-signed laws, the selector pins, settlement-decimals verification against the token itself) is generation-aware. Version upgrades that the in-kind path cannot serve now run as a protected sell-then-buy through each version's own pool, spending only the measured proceeds. The portfolio's first open gains a guided tour; every refusal on a money surface now carries the button its sentence names. BREAKING: sites pinning the old batcher/wrapper call shapes must update; bundles ship enabled on the canonical config.",
   "impact": "breaking",
   "sacred": [
     "launch",
-    "swap"
+    "swap",
+    "executor"
   ],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"

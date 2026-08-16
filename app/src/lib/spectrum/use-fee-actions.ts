@@ -92,10 +92,14 @@ export function useFeeActions(basket: Address | undefined, chainId: number, onSu
   )
 
   /** Permissionless burn crank (flushPrismBurn). `minEthOut` is the caller's
-   *  slippage floor on the USDC→ETH swap, in wei (0 = no protection). */
+   *  slippage floor on the USDC→ETH swap, in wei — REQUIRED > 0: live RH legs
+   *  execute a zero floor unprotected (the sandwich shape F8 forbids) and
+   *  post-F8 legs revert it, so this choke point refuses rather than trusting
+   *  every button to remember. */
   const flushBurn = useCallback(
     (minEthOut: bigint) =>
       runTx(BURN_KEY, async () => {
+        if (minEthOut <= 0n) throw new Error('A slippage floor is required to flush the burn.')
         const target = basket as Address
         if (address && publicClient) {
           await publicClient.simulateContract({ account: address, address: target, abi: basketAbi, functionName: 'flushPrismBurn', args: [minEthOut] })

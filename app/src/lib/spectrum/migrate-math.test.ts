@@ -252,3 +252,39 @@ describe('planRebalance — balanced-target rebalance', () => {
     expect(mixed.buys.map((b) => b.asset)).toEqual([B])
   })
 })
+
+describe('the zero-first dance is skipped for MEASURED tokens only', () => {
+  const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+  const USDG_RH = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168'
+  const UNKNOWN = '0x1111111111111111111111111111111111111111'
+
+  it('a measured settlement token re-approves directly, saving a transaction', () => {
+    expect(approvalPlan(5n, 10n, { chainId: 8453, token: USDC_BASE })).toBe('direct')
+    expect(approvalPlan(5n, 10n, { chainId: 4663, token: USDG_RH })).toBe('direct')
+    expect(approvalPlan(5n, 10n, { chainId: 1, token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' })).toBe('direct')
+  })
+
+  it('⚠ ANY token not measured keeps zero-first — the default must stay the safe one', () => {
+    expect(approvalPlan(5n, 10n, { chainId: 8453, token: UNKNOWN })).toBe('zero-first')
+  })
+
+  it('⚠ the allowlist is CHAIN-SCOPED — the same address elsewhere is not the same token', () => {
+    expect(approvalPlan(5n, 10n, { chainId: 1, token: USDC_BASE })).toBe('zero-first')
+    expect(approvalPlan(5n, 10n, { chainId: 4663, token: USDC_BASE })).toBe('zero-first')
+  })
+
+  it('case does not decide safety', () => {
+    expect(approvalPlan(5n, 10n, { chainId: 8453, token: USDC_BASE.toLowerCase() })).toBe('direct')
+    expect(approvalPlan(5n, 10n, { chainId: 8453, token: USDC_BASE.toUpperCase().replace('0X', '0x') })).toBe('direct')
+  })
+
+  it('omitting the token keeps every existing caller conservative', () => {
+    expect(approvalPlan(5n, 10n)).toBe('zero-first')
+  })
+
+  it('the other branches are untouched by the allowlist', () => {
+    expect(approvalPlan(0n, 10n, { chainId: 8453, token: USDC_BASE })).toBe('direct')
+    expect(approvalPlan(10n, 10n, { chainId: 8453, token: USDC_BASE })).toBe('none')
+    expect(approvalPlan(5n, 0n, { chainId: 8453, token: USDC_BASE })).toBe('none')
+  })
+})

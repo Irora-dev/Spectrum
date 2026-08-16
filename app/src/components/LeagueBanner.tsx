@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import type { Address } from 'viem'
 import { useActiveChain } from '../lib/chain/active-chain'
@@ -23,7 +23,12 @@ export function LeagueBanner() {
     queryKey: ['spectrum', 'league', chainId],
     queryFn: () => fetchLeagueSnapshot(clientFor(chainId), pool as Address),
     enabled: !!pool,
-    refetchInterval: 60_000,
+    // No standing poll on an ADVERT (RPC audit 2026-08-06, the crown-fix
+    // class): a parked anonymous homepage tab re-read the score to beat every
+    // 60s — 2 posts/min on the app's front door, for a passive viewer. The
+    // staleTime keeps a refocus honest; /league itself stays LIVE (its own
+    // 30s poll on this same key — a watcher there feeds this banner too).
+    staleTime: 60_000,
   })
   if (!pool && !devPreview) return null
   // There is no pot any more (contract f71ef4b) — the headline is the SCORE TO

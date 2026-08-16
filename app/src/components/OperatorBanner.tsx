@@ -11,7 +11,8 @@ import { useAnnouncement } from '../lib/spectrum/notes-social'
 // "" or the note's own expiry clears. Dismissal is per-browser per-text.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function OperatorBanner() {
+/** Slide form — the BannerCarousel consumes this; the component wrapper stays for compatibility. */
+export function useOperatorSlide() {
   const chainId = useActiveChainId()
   const { data } = useAnnouncement(chainId, INTERFACE_TAG_ADDRESS)
   const [dismissed, setDismissed] = useState<string | null>(() => {
@@ -51,4 +52,8 @@ export function OperatorBanner() {
       </div>
     </div>
   )
+}
+
+export function OperatorBanner() {
+  return <>{useOperatorSlide()}</>
 }

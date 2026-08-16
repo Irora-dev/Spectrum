@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { availableRanges } from '../lib/spectrum/history'
 import { useNavHistory } from '../lib/spectrum/hooks'
 import type { ChartRange, NavInput } from '../lib/spectrum/history'
@@ -85,7 +86,7 @@ export function BasketSpark({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legs, assets])
   const config = useMemo(
-    () => ({ v: { label: symbol ? `$${symbol}` : 'NAV', color, palette } }),
+    () => ({ v: { label: symbol ? `$${showSymbol(symbol)}` : 'NAV', color, palette } }),
     [symbol, color, palette],
   )
   // The move the shown window actually represents. With no y-axis anywhere in
@@ -133,7 +134,11 @@ export function BasketSpark({
               e.stopPropagation()
               setRangeSel(r)
             }}
-            className={`press rounded-md px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${
+            /* 32px below sm (mobile sweep 2026-08-06: measured ~17px tall, the
+               smallest control on either page). Held to 32 rather than 36:
+               these ride INSIDE a card's spark header, where a 36px row would
+               push down the picture the card exists to show. */
+            className={`press inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-md px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide sm:min-h-0 sm:min-w-0 sm:px-1.5 ${
               activeRange === r ? 'bg-white/12 text-ink' : 'text-ink-faint hover:text-ink-dim'
             }`}
           >

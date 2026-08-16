@@ -1,4 +1,5 @@
 import { getAddress } from 'viem'
+import { chainCfg } from '../chain/chains'
 import { cacheGet, cacheSet, DAY_MS } from './persist-cache'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18,19 +19,39 @@ import { cacheGet, cacheSet, DAY_MS } from './persist-cache'
 // fail, and every lookup — including misses — is cached for the session.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Chains with no DexScreener / TrustWallet coverage (Robinhood 4663) are absent
-// here — their rungs return null and the ladder falls to the generated visual.
-const CHAIN_SLUG: Record<number, string> = { 1: 'ethereum', 8453: 'base' }
+// ⚠ THE DEXSCREENER SLUG COMES FROM THE CHAIN BOOK, NOT FROM A COPY HERE
+// (the owner, 2026-08-16: "the logos of assets dont show on the deploy basket
+// spinning animation"). This file used to hold its own `{1, 8453}` map and a
+// comment asserting Robinhood had "no DexScreener coverage" — which stopped
+// being true when 4663 was indexed, and `chains.ts` was updated while this copy
+// was not. So every Robinhood asset silently fell through to initials, in the
+// launch animation and everywhere else this ladder is used.
+//
+// A second copy of a fact is a second thing to forget. `chainCfg` already
+// carries `dexscreenerSlug` as the single source of truth, so this reads it.
+const dexSlug = (chainId: number): string | null => {
+  try {
+    return chainCfg(chainId).dexscreenerSlug || null
+  } catch {
+    return null // an unsupported chain has no art, which is not an error
+  }
+}
 
 export function dexscreenerLogoUrl(address: string, chainId: number): string | null {
-  const slug = CHAIN_SLUG[chainId]
+  const slug = dexSlug(chainId)
   if (!slug) return null
   return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${address.toLowerCase()}.png?size=lg`
 }
 
-// TrustWallet's assets repo uses the same chain slugs, but CHECKSUMMED addresses.
+// ⚠ TRUSTWALLET KEEPS ITS OWN NARROW MAP, deliberately. Its slugs only LOOK
+// like DexScreener's because 'ethereum' and 'base' happen to match; it has no
+// Robinhood repo at all, so reusing the chain book here would build URLs that
+// 404 on every 4663 asset and slow the ladder down for nothing.
+const TRUSTWALLET_SLUG: Record<number, string> = { 1: 'ethereum', 8453: 'base' }
+
+// TrustWallet's assets repo uses CHECKSUMMED addresses.
 export function trustwalletLogoUrl(address: string, chainId: number): string | null {
-  const slug = CHAIN_SLUG[chainId]
+  const slug = TRUSTWALLET_SLUG[chainId]
   if (!slug) return null
   try {
     return `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${slug}/assets/${getAddress(address)}/logo.png`
@@ -71,7 +92,10 @@ const cgLookups = new Map<string, Promise<CoingeckoInfo | null>>()
 /** Coingecko contract lookup: image + market cap + rank, or null (unknown
  *  token / unsupported chain / network failure). Cached in-memory + on disk. */
 export function coingeckoInfo(address: string, chainId: number): Promise<CoingeckoInfo | null> {
-  const platform = CHAIN_SLUG[chainId]
+  // ⚠ COINGECKO'S PLATFORM IDS ARE ITS OWN, and only coincide with DexScreener's
+  // for these two. Keyed narrowly on purpose: asking Coingecko about a platform
+  // it does not have is a guaranteed miss plus a wasted round-trip.
+  const platform = TRUSTWALLET_SLUG[chainId]
   if (!platform) return Promise.resolve(null)
   const key = `${chainId}:${address.toLowerCase()}`
   let p = cgLookups.get(key)

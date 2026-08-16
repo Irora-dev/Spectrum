@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import {
   GRADIENT,
   MAX_CREATOR_PCT,
@@ -15,7 +15,7 @@ import { pageEnabled } from '../theme/brand'
 import brand from '../brand.config'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "Learn how this works" (R 2026-07-29 11:29; site-wide per Colby same day):
+// "Learn how this works" (R 2026-07-29 11:29; site-wide per the owner same day):
 // the five-slide teaching walkthrough — the /creators marketing retold one
 // idea per slide, reusing that page's own animated pieces (single source,
 // zero copy drift). Born on /league; also opens from the home hero's
@@ -142,7 +142,7 @@ function LaunchSlide({ onClose }: { onClose: () => void }) {
     <div className="mt-8 space-y-3">
       {pageEnabled(brand.pages, 'launch') && (
         <Link
-          to="/launch"
+          to="/create"
           onClick={onClose}
           className="press group flex items-center justify-between gap-4 rounded-2xl border border-cyan/40 bg-cyan/[0.07] px-6 py-5 transition-colors hover:border-cyan/70"
         >

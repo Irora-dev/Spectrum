@@ -3,7 +3,7 @@
 // (fee-model redesign, on main).
 //
 // The fee engine is governed by FIXED PROTOCOL CONSTANTS, not per-basket dials:
-//   • the PRISM burn share is a fixed `BURN_SHARE_BPS` (10% of every fee) —
+//   • the PRISM burn share is a fixed `BURN_SHARE_BPS` (25% of every fee, D-R3) —
 //     uniform on every basket, no creator input, no ratchet (the basket has ZERO
 //     deployer-controlled selectors over live state);
 //   • the interface kickback is a fixed `INTERFACE_SHARE_BPS` slice of the
@@ -39,8 +39,14 @@ export const PROTOCOL_FEE_MODEL = {
   MIN_BASKET_FEE_BPS: 100,
   /** Maximum per-basket fee (3.00%). */
   MAX_BASKET_FEE_BPS: 300,
-  /** PRISM burn share of every pool mint/redeem fee — FIXED, uniform, immutable (10%). */
-  BURN_SHARE_BPS: 1_000,
+  /** PRISM burn share of every pool mint/redeem fee — FIXED, uniform,
+   *  immutable. 25% per D-R3 (the owner, 2026-08-02, in the contract source's own
+   *  words: raised from v1's 1_000 so every basket burns ≥ 0.25% of notional;
+   *  the headline fee is unchanged — the increase comes out of the post-burn
+   *  remainder). The FE carried v1's 10% until 2026-08-14, when the owner caught
+   *  the stale bar live ("i mean its 25% prism fee % right" — he was right;
+   *  SpectrumBasket.sol:151 is the source). */
+  BURN_SHARE_BPS: 2_500,
   /** Interface kickback — FIXED slice of the post-burn remainder (≈5% of every fee). Per-tx tag. */
   INTERFACE_SHARE_BPS: 555,
   /** Launcher/origination slice — FIXED slice of the SAME post-burn base (≈5% of every fee). Per-basket. */
@@ -65,7 +71,7 @@ export const PROTOCOL_FEE_MODEL = {
  *  call (silent no-op — the accrual retains and keeps growing), and the
  *  incumbent mainnet code pays the whole sub-floor pot to the CRANKER as
  *  bounty (the recipient gets zero). Both mean the UI must say "accruing",
- *  never offer a flush. ⚠ The 25/10 placeholder floors await Colby's
+ *  never offer a flush. ⚠ The 25/10 placeholder floors await the owner's
  *  keep/calibrate word before the salt re-mine — if they change, update this
  *  WITH the new address book, not before. */
 export const FRONTEND_FLUSH_FLOOR_USDC: Record<number, number> = { 1: 10 }
@@ -99,7 +105,7 @@ export interface FeeSplit {
   /** Creator league, taken off the top BEFORE everything else. 0 on any chain
    *  whose lineage has no league leg, and on a basket with no creator payout. */
   league: number
-  /** PRISM buy-and-burn (10% off the post-league base + all rounding dust). */
+  /** PRISM buy-and-burn (25% off the post-league base + all rounding dust). */
   burn: number
   /** Interface kickback (present only when a tx carries an interface tag). */
   interface: number
@@ -114,12 +120,12 @@ export interface FeeSplit {
 /**
  * The fee waterfall expressed as fractions of the TOTAL fee, mirroring the
  * on-chain `_distributeFee` order EXACTLY — including the order of
- * the conditional skims and the rule that BURN is the RESIDUAL sink (it gets 10%
+ * the conditional skims and the rule that BURN is the RESIDUAL sink (it gets 25%
  * plus all rounding dust, computed last):
  *   league     = fee·LEAGUE/BPS              (off the top, league lineages only,
  *                                             and only with a creatorPayout)
  *   net        = fee − league                (what the pre-existing waterfall splits)
- *   afterBurn  = net·(BPS−BURN)/BPS          (burn ≈ 10% of the post-league base)
+ *   afterBurn  = net·(BPS−BURN)/BPS          (burn ≈ 25% of the post-league base)
  *   interface  = afterBurn·INTERFACE/BPS     (only when a tx carries an interface tag)
  *   launcher   = afterBurn·LAUNCHER/BPS      (only when the basket has a launcher)
  *   remainder  = afterBurn − (present skims)

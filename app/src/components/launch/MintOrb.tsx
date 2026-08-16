@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
 import { AssetLogo } from '../AssetLogo'
 import { PixelDissolve } from '../PixelDissolve'
@@ -24,12 +25,17 @@ export function MintOrb({
   chainId,
   status,
   onDone,
+  zIndex = 60,
 }: {
   address: string
   symbol?: string
   chainId: number
   status: MintStatus
   onDone?: () => void
+  /** Stacking context: the orb must paint ABOVE its host. The default clears
+   *  the builder page and the basket reshape modal (z-50); a host that is
+   *  itself a higher layer (the thesis reshape modal, z-[90]) passes its own. */
+  zIndex?: number
 }) {
   const [mounted, setMounted] = useState(false)
   useEffect(() => {
@@ -79,7 +85,7 @@ export function MintOrb({
     : undefined
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[60] grid place-items-center">
+    <div className="pointer-events-none fixed inset-0 grid place-items-center" style={{ zIndex }}>
       {/* faint backdrop */}
       <div
         aria-hidden
@@ -162,7 +168,7 @@ export function MintOrb({
           {/* caption */}
           <div className="text-center">
             <div className="font-display text-sm font-bold uppercase tracking-wide text-ink">
-              {symbol ? `$${symbol}` : 'Token'}
+              {symbol ? `$${showSymbol(symbol)}` : 'Token'}
             </div>
             <div className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
               {added ? 'Added to basket' : 'Finding best pool…'}

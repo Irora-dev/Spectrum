@@ -23,14 +23,18 @@ describe('feeSplit with the league leg', () => {
     expect(before.league).toBe(0)
   })
 
-  it('reproduces the contract numbers the audit measured', () => {
+  it('reproduces the DEPLOYED contract numbers (D-R3 burn 25% — SpectrumBasket.sol:151)', () => {
+    // The audit's 24.0/22.8 pin was itself computed at v1's 10% burn — the
+    // constant the owner caught stale live (2026-08-14: "i mean its 25% prism
+    // fee % right"). At the deployed 2_500 bps burn, creator 30% of the
+    // remainder pays 20.0% league-off / 19.0% league-on.
     const off = feeSplit(MAX, both)
     const on = feeSplit(MAX, { ...both, leagueBps: 500 })
-    // what the FE showed before the fix vs what the contract actually pays
-    expect(off.creator * 100).toBeCloseTo(24.0, 1)
-    expect(on.creator * 100).toBeCloseTo(22.8, 1)
-    expect(off.holders * 100).toBeCloseTo(56.0, 1)
-    expect(on.holders * 100).toBeCloseTo(53.2, 1)
+    expect(off.burn * 100).toBeCloseTo(25.0, 1)
+    expect(off.creator * 100).toBeCloseTo(20.0, 1)
+    expect(on.creator * 100).toBeCloseTo(19.0, 1)
+    expect(off.holders * 100).toBeCloseTo(46.7, 1)
+    expect(on.holders * 100).toBeCloseTo(44.3, 1)
     expect(on.league * 100).toBeCloseTo(5.0, 6)
   })
 

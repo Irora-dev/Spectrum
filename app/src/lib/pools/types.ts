@@ -55,6 +55,23 @@ export interface PoolCandidate {
   poolId: string | null
   /** V4 PoolKey; null otherwise. */
   ethPoolKey: PoolKey | null
+  /** THE POOL'S TWO SIDES — the identity anchor, not a convenience field.
+   *
+   *  Discovery already knows this and used to throw it away: the V2 path READS
+   *  `token0()` to pick the right reserve and then discarded it, and the V4
+   *  paths carry the pair in `ethPoolKey` already. Without it on the candidate,
+   *  a safety screen cannot do the one check that actually matters — matching
+   *  the user's token BY ADDRESS and confirming the other side is a canonical
+   *  quote asset. Symbol matching is what lets a scam token wear a real tile.
+   *
+   *  Sorted the way the venue sorts: `token0` is the numerically lower address
+   *  (every Uniswap venue orders this way), which is why populating these costs
+   *  ZERO extra RPC calls — V2 has an authoritative read already paid for, V3
+   *  is derivable from the pair the factory was asked for, and V4/V4Q read
+   *  straight off the PoolKey. Compare case-insensitively; these are not
+   *  normalised to lowercase, because the rest of this module keeps `Address`. */
+  token0: Address
+  token1: Address
   /** ETH/WETH-side depth (on-chain). Fallback ranking only — NOT comparable across
    *  venues (V2/V3 are real reserves; V4's virtual reserve inflates concentrated L). */
   depthEth: number
@@ -82,13 +99,21 @@ export interface BestPoolResult {
   /** All valid Uniswap candidates, deepest-first. */
   candidates: PoolCandidate[]
   warnings: string[]
+  /** The deepest HOOKED v4 pool's ETH-side depth, when one exists — hooked
+   *  pools can't be routed (basket legs are hookless by design), but their
+   *  depth tells whether the token's REAL market is one we can't use
+   *  (the FWA class, measured 2026-08-15). null = none seen. */
+  hookedMarket: { hookedDepthEth: number; bestHooklessDepthEth: number } | null
 }
 
 export type PoolErrorCode =
+  | 'HOOKED_MARKET'
   | 'NO_POOL'
   | 'ONLY_AERODROME'
   | 'BAD_ASSET'
   | 'VENUE_CHECK_FAILED' // an RPC error left V2/V3 coverage incomplete — retry beats a wrong pool
+  | 'V2_ONLY' // a Uniswap V2 pair is the token's ONLY route, and this chain's factory rejects venue 2 (`rejectsV2Legs`)
+  | 'V2_LEG_REJECTED' // a leg CARRIES a venue-2 route on a rejecting chain (a draft saved before the rule) — v2-legs.ts
   // Constituent screening (token-screen.ts) — deterministic disqualifiers:
   | 'NOT_A_CONTRACT' // no code at the address on this chain
   | 'NON_STANDARD' // decimals() reverts / out of range — the deploy itself would revert

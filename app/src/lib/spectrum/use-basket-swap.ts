@@ -4,11 +4,12 @@ import type { Address, Hex } from 'viem'
 import { chainCfg } from '../chain/chains'
 import { deploymentFor } from '../chain/deployments'
 import { SWAP_ENABLED } from '../config/features'
-import { encodeMintHookData, encodeRedeemHookData } from './hook-data'
+import { encodeMintHookData, encodeRedeemHookData, type MintFunding } from './hook-data'
 import { getStoredRef } from './referral'
 import { friendlyRevert } from './decode-revert'
 import { erc20ApproveAbi, swapRouterAbi } from './abis-v2'
 import type { BasketData } from './basket-data'
+import { verifiedSettlementDecimals } from './settlement-verify'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The buy/sell broadcast surface — the FIRST real caller of the hook-data.ts
@@ -60,6 +61,10 @@ export interface SwapArgs {
   minOutRaw: bigint
   /** Slippage tolerance, bps — drives the BUY legMins = quotedLeg × (1 − slippage). */
   slippageBps: number
+  /** BUY only — where each leg's funding share comes from, resolved for THIS amount
+   *  (use-mint-funding.ts). Required: a buy payload with no split reverts NoOutput on a
+   *  D-R1 basket and the encoder refuses to guess one. Undefined on a sell. */
+  funding?: MintFunding
 }
 
 export const APPROVE_KEY = 'approve'
@@ -198,6 +203,12 @@ export function useBasketSwap(ix: BasketData) {
         // referral (owner 2026-07-07): a stored ?ref tags the interface slice to
         // the referrer; null → the operator's default tag.
         const interfaceTag = getStoredRef(address)
+        if (args.side === 'buy' && !args.funding) {
+          // Never sign a buy whose funding share is unknown: with no split the basket
+          // acquires nothing and reverts NoOutput (contracts' KitZeroSplitProbe,
+          // 2026-08-05), and inventing one is the starved-basket exploit.
+          throw new Error('This buy is still being prepared. Wait a moment and try again.')
+        }
         const { hookData } =
           args.side === 'buy'
             ? encodeMintHookData({
@@ -205,10 +216,15 @@ export function useBasketSwap(ix: BasketData) {
                 slippageBps: args.slippageBps,
                 minOut: args.minOutRaw,
                 interfaceTag,
+                funding: args.funding as MintFunding,
               })
             : encodeRedeemHookData({ legCount: args.legCount, minOut: args.minOutRaw, interfaceTag })
         const callArgs = [basket, tokenIn, args.amountRaw, args.minOutRaw, hookData, to] as const
         if (address && publicClient) {
+          // law S2b, console form (SpectrumContracts follow-up 2026-08-16):
+          // a config-vs-chain decimals slip would mis-scale the buy's amount
+          // or the sell's floor — verify before the wallet is contacted
+          await verifiedSettlementDecimals(publicClient, chainId, usdc as Address)
           await publicClient.simulateContract({ account: address, address: spender, abi: swapRouterAbi, functionName: 'swapExactIn', args: callArgs })
         }
         return writeContractAsync({ address: spender, abi: swapRouterAbi, functionName: 'swapExactIn', args: callArgs, chainId })

@@ -81,8 +81,27 @@ export function perfMeasurable(b: BasketSummary): boolean {
  * floor, so it was hiding genuine ones rather than seed noise.
  */
 export const LISTING_TVL_FLOOR_USD = 10
-export function listable(b: BasketSummary): boolean {
-  return (b.aumUsd || 0) >= LISTING_TVL_FLOOR_USD
+/**
+ * ⚠ THE FLOOR NEVER HIDES YOUR OWN BASKET FROM YOU (the owner 2026-08-06 23:2x,
+ * off a live outside user: he deployed, the screen reloaded before he could
+ * seed, "it was gone", and he had to re-find his own basket by pasting its
+ * contract address). The floor exists to keep dust out of a STRANGER's browse;
+ * applied to the creator it turns the most important minute of the product —
+ * the one right after launch — into a disappearance. A freshly-deployed basket
+ * is $0 by definition, so the floor caught exactly the case it must not.
+ *
+ * `viewer` is the connected wallet, or a linked-wallet GROUP (each address is
+ * checked, so a basket deployed from one of your linked wallets still counts
+ * as yours). Absent = the old behaviour exactly, so every caller without a
+ * viewer is byte-identical.
+ */
+export function listable(b: BasketSummary, viewer?: string | string[] | null): boolean {
+  if ((b.aumUsd || 0) >= LISTING_TVL_FLOOR_USD) return true
+  if (!viewer || !b.deployer) return false
+  const mine = b.deployer.toLowerCase()
+  return Array.isArray(viewer)
+    ? viewer.some((v) => v?.toLowerCase() === mine)
+    : viewer.toLowerCase() === mine
 }
 
 /**

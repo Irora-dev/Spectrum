@@ -60,4 +60,15 @@ describe('rewriteOgHtml', () => {
     expect(out).toContain('name="twitter:image" content="https://spectrum.xyz/og.png"')
     expect(out).not.toContain('<title>Spectrum · onchain baskets</title>')
   })
+
+  it('points og:image at the basket OWN card when one was rendered, and falls back when not', () => {
+    // The fallback is the load-bearing half: a basket launched after the last
+    // build has no card, and a stale-but-branded picture beats a broken image.
+    const withCard = basketMeta({ symbol: 'LPADS', name: 'Launchpads' }, 4663, '0xAbCd', 'https://x.io', true)
+    expect(withCard.image).toBe('https://x.io/og/4663/0xabcd.png')
+    const without = basketMeta({ symbol: 'LPADS', name: 'Launchpads' }, 4663, '0xAbCd', 'https://x.io', false)
+    expect(without.image).toBe('https://x.io/og.png')
+    // and unspecified must behave as "no card"
+    expect(basketMeta({ symbol: 'LPADS', name: 'Launchpads' }, 4663, '0xAbCd', 'https://x.io').image).toBe('https://x.io/og.png')
+  })
 })

@@ -18,7 +18,17 @@
   /* Ink ramp */
   --color-ink: #e8e8f0;
   --color-ink-dim: #8b8b9e;
-  --color-ink-faint: #565669;
+  /* Was #565669, which measured 2.81:1 on the void and 2.72:1 on panel — under
+     the 4.5:1 AA floor, in 15 places the live detect pass found. #7a7a8d clears
+     both surfaces (4.78 / 4.64) and ink-dim stays at 6.02, so the two quiet
+     tokens keep a visible gap. Fixed at the TOKEN because auditing 15 call
+     sites' intent is slower and leaves the next one to reintroduce it.
+     ⚠️ THIS VALUE IS THE STATIC DEFAULT ONLY. theme/presets.ts carries an
+     `inkFaint` per design style and applyBrand writes it OVER these variables at
+     runtime — so changing the token here alone fixed nothing, which the live
+     detect pass proved by still reporting 15 failures. Every preset was raised
+     to clear AA on its OWN panel; keep the two in step. */
+  --color-ink-faint: #7a7a8d;
 
   /* Accents */
   --color-violet: #7b5cff;
@@ -63,7 +73,14 @@ body {
       transparent 1px
     );
   background-size: 100% 100%, 72px 72px, 72px 72px;
-  background-attachment: fixed;
+  /* PER-LAYER attachment (owner 2026-08-02 17:39: "there's a weird cutoff of the
+     actual grid background here"). The vignette stays viewport-anchored, but the
+     two GRID layers must SCROLL: a fixed-attachment background is re-resolved
+     inside any backdrop-filter region, so every `bg-panel/70 backdrop-blur-*`
+     panel (the flow's Shell and its station rail, Bezel, the popup) cut the 72px
+     lattice at their own rounded edge. Scroll-attached, the lattice runs
+     continuously under them. Order matches background-image above. */
+  background-attachment: fixed, scroll, scroll;
   color: var(--color-ink);
   /* Body face is per-style: spectral keeps the mono technical voice; umbra/sylvan switch to a
      sans body (structure.ts sets --font-body). Falls back to mono so the default is unchanged. */
@@ -86,6 +103,24 @@ body {
   background: var(--st-card-bg, rgba(23, 23, 32, 0.78));
   border: var(--st-card-border, 1px solid rgba(255, 255, 255, 0.1));
   box-shadow: var(--st-card-shadow, inset 0 1px 0 rgba(255, 255, 255, 0.05));
+}
+
+/* Opaque paint that DISAPPEARS into .card-surface — for sticky table cells and
+   edge fades that must hide content scrolling beneath them. bg-panel here read
+   as a black box on the glass (the token page's "black square", owner 0903):
+   #0c0c12 is darker than the card's rendered pixel. The card's own translucent
+   color composited over the page void IS that pixel, in every design style —
+   an opaque --st-card-bg (umbra/sylvan) simply wins the composite. */
+.card-mask {
+  background:
+    linear-gradient(var(--st-card-bg, rgba(23, 23, 32, 0.78)), var(--st-card-bg, rgba(23, 23, 32, 0.78))),
+    var(--color-void);
+}
+/* The "more to scroll" right-edge hint: the same composite, faded out leftward
+   by masking the paint itself, so it matches the card in every style too. */
+.card-mask-fade-l {
+  -webkit-mask-image: linear-gradient(to left, #000, transparent);
+  mask-image: linear-gradient(to left, #000, transparent);
 }
 
 /* Tabular figures everywhere numbers matter (also on by default via the body
@@ -132,14 +167,19 @@ body {
 
 /* Headings balance their line lengths; body copy avoids orphans. Scoped to real
    semantic elements (most display type in the app is divs, which opt in via the
-   Tailwind `text-balance`/`text-pretty` utilities where it matters). */
-h1,
-h2,
-h3 {
-  text-wrap: balance;
-}
-p {
-  text-wrap: pretty;
+   Tailwind `text-balance`/`text-pretty` utilities where it matters).
+   MUST live in @layer base: `text-wrap` and `white-space` share text-wrap-mode,
+   and an unlayered rule outranks every layered utility — left bare, these make
+   `truncate`/`text-nowrap` silently wrap on any <p>/<h1-3> kit-wide. */
+@layer base {
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
 }
 
 /* SPECTRUM wordmark — a prism of light refracts across the letters. Two
@@ -165,13 +205,13 @@ p {
     ),
     linear-gradient(
       100deg,
-      var(--color-ink) 0%,
-      var(--color-ink) 41%,
+      var(--wm-ink, var(--color-ink)) 0%,
+      var(--wm-ink, var(--color-ink)) 41%,
       var(--color-amber) 45%,
       var(--color-magenta) 50%,
       var(--color-cyan) 55%,
-      var(--color-ink) 59%,
-      var(--color-ink) 100%
+      var(--wm-ink, var(--color-ink)) 59%,
+      var(--wm-ink, var(--color-ink)) 100%
     );
   background-size: 220% 100%, 300% 100%;
   background-repeat: no-repeat;
@@ -182,6 +222,15 @@ p {
      without `alternate`; ease-in-out makes it dwell at the crossover and the
      edges → a slow swell that recedes, not a constant-velocity sweep. */
   animation: spectrum-refract 16s ease-in-out infinite;
+}
+
+/* Bright variant (owner 2026-08-01 20:02: "a little bit brighter white with
+   just a very gentle drop shadow" — the manager hero over the art). The base
+   ink lifts to pure white and the glyphs cast a soft shadow; drop-shadow works
+   on clipped-text because it follows the painted pixels, not the box. */
+.spectrum-wordmark--bright {
+  --wm-ink: #ffffff;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
 }
 
 @keyframes spectrum-refract {
@@ -726,5 +775,384 @@ p {
 @media (prefers-reduced-motion: reduce) {
   .forge-add-ring {
     animation: none;
+  }
+}
+
+/* ── the fork marks (homepage) ────────────────────────────────────────────────
+   The held-assets cluster breathes and the basket mark turns, both slowly enough
+   to read as ambient rather than as an animation demanding attention. Transform
+   and opacity only — never layout properties — so these stay on the compositor.
+   Both are DECORATIVE: reduced motion stops them at rest and nothing is lost. */
+@keyframes fork-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -10px, 0); }
+}
+.fork-drift {
+  animation: fork-drift 7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform;
+}
+@keyframes fork-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.fork-spin {
+  animation: fork-spin 48s linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fork-drift,
+  .fork-spin {
+    animation: none;
+  }
+}
+
+/* The manager hero's mini-portfolio: weight bars breathing between two mixes
+   (the "reweighting" promise shown, not told). Width animation is deliberate
+   here — three tiny bars, GPU cost negligible, and the breathe IS the point. */
+.manager-breathe {
+  animation: manager-breathe 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+}
+@keyframes manager-breathe {
+  from {
+    width: var(--breathe-from, 40%);
+  }
+  to {
+    width: var(--breathe-to, 60%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .manager-breathe {
+    animation: none;
+  }
+}
+
+/* ── Portfolio hero entrance (owner 2026-08-02: "more interesting intro
+   animations for the card and stats") — the stat chips pop in with a soft
+   spring after the card lands; the hero mix bar's segments grow left-to-right.
+   Both run once, hold their from-state through the delay, and sit at rest
+   under reduced motion. The big total counts up in JS (Yours.tsx), zero-safe. */
+@keyframes chip-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.7);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+.chip-pop {
+  animation: chip-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--chip-i, 0) * 90ms + 240ms);
+}
+@keyframes seg-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.seg-grow {
+  transform-origin: left;
+  animation: seg-grow 0.7s cubic-bezier(0.32, 0.72, 0, 1) both;
+  animation-delay: calc(var(--seg-i, 0) * 70ms + 350ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip-pop,
+  .seg-grow {
+    animation: none;
+  }
+}
+
+/* (the .banner-rail one-strip cap retired 2026-08-02 — BannerCarousel rotates
+   every live message through ONE slot, so nothing can be shadowed permanently) */
+
+/* ── The money CTA (owner 2026-08-02: "make the gradient bg nicer") — a
+   deeper diagonal spectral with an inner top highlight and a soft violet
+   bloom, replacing the flat 3-stop rainbow on the big action buttons. */
+.spectral-btn {
+  background: linear-gradient(135deg, #2fd4f5 0%, #7c5cff 52%, #f043b8 118%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -10px 20px rgba(10, 6, 24, 0.22),
+    0 12px 32px -12px rgba(124, 92, 255, 0.55);
+}
+.spectral-btn:hover {
+  filter: saturate(1.12) brightness(1.06);
+}
+
+/* ── The trim/add bar v2 (owner 14:43: "the dragging bars are really ugly —
+   complete design sweep") — the native range input is now an INVISIBLE drag
+   layer; the component draws the track, the change-fill, the current marker,
+   and the thumb itself. Namespaced; my block in the shell file, flagged to
+   the kit lane. */
+.trim-bar {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  background: transparent;
+  cursor: grab;
+  z-index: 10;
+  /* the slider owns HORIZONTAL touches (mobile sweep 2026-08-15: inside the
+     list view's snap rail a weight drag panned the rail instead of the thumb);
+     pan-y keeps vertical page scroll alive when the gesture starts here */
+  touch-action: pan-y;
+}
+.trim-bar:active {
+  cursor: grabbing;
+}
+.trim-bar::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+.trim-bar::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+.trim-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 100%;
+  width: 24px;
+  background: transparent;
+  border: 0;
+}
+.trim-bar::-moz-range-thumb {
+  height: 100%;
+  width: 24px;
+  background: transparent;
+  border: 0;
+}
+.trim-bar:focus-visible {
+  outline: none;
+}
+.trim-bar:focus-visible + .trim-thumb {
+  box-shadow: 0 0 0 6px rgba(53, 224, 255, 0.35), 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+
+/* ── Reshape-mode entrance + board polish (owner 2026-08-02 "continue to
+   refine and beautify") — the glass panel breathes in once; the board's
+   verdict crossfades when its story changes. Namespaced; shell-file addition
+   flagged to the kit lane per the ratified process. */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.panel-in {
+  animation: panel-in 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+@keyframes verdict-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.verdict-in {
+  animation: verdict-in 0.35s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel-in,
+  .verdict-in {
+    animation: none;
+  }
+}
+
+/* ── Portfolio first-open intro (owner ~10:4x "continue to refine and
+   beautify") — the veil breathes in once, the panel rises through a blur,
+   and each step (and its children, staggered inline) arrives as its own
+   small entrance. Namespaced; reduced motion cuts every one. */
+@keyframes intro-veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.intro-veil-in {
+  animation: intro-veil-in 0.5s ease-out both;
+}
+@keyframes intro-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+.intro-panel-in {
+  animation: intro-panel-in 0.62s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@keyframes intro-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.intro-step-in {
+  animation: intro-step-in 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .intro-veil-in,
+  .intro-panel-in,
+  .intro-step-in {
+    animation: none;
+  }
+}
+
+/* one-row overflow strips (the explore tag pills): scroll without a bar */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── BENTO LIQUID ENTRANCE (BasketBento entrance='fill') — a color block
+   RISES through the tile (translateY, so its top edge is a genuine moving
+   surface); a 200%-wide rounded bar rotates over that surface as a rolling
+   WAVE, under a soft crest glow that fades once the liquid settles; the
+   tile's CONTENT holds back until the fill lands. Reduced motion: the tile
+   is simply there, settled. ── */
+.bento-fill {
+  overflow: hidden;
+  border-radius: inherit;
+}
+.bento-fill-liquid {
+  position: absolute;
+  inset: 0;
+  /* rise fast, then HOVER just below the top with the waves rolling — that
+     hover beat is what makes the surface READ (harness-proven 2026-08-06) —
+     then settle; slightly translucent while liquid, solid once paint */
+  animation:
+    bento-liquid-rise 1500ms cubic-bezier(0.33, 1, 0.5, 1) both,
+    bento-liquid-solidify 1500ms ease-out both;
+}
+.bento-fill-wave {
+  position: absolute;
+  bottom: calc(100% - 4px); /* overlap the seam — a bob-gap read as a dark slit */
+  left: 0;
+  width: 200%;
+  height: 40px;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.bento-fill-wave-front {
+  animation-name: bento-wave-drift;
+  animation-duration: 2.6s; /* gentle — the owner's word over the choppier first cut */
+}
+.bento-fill-wave-back {
+  height: 48px;
+  animation-name: bento-wave-drift-back;
+  animation-duration: 3.8s;
+}
+.bento-fill-crest {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+  animation: bento-crest-fade 1500ms ease-out both;
+}
+.bento-fill-host > *:not(.bento-fill) {
+  animation: bento-fill-content 300ms ease-out 1350ms both;
+}
+@keyframes bento-liquid-rise {
+  0% { transform: translateY(103%); }
+  45% { transform: translateY(14%); }
+  82% { transform: translateY(12%); }
+  100% { transform: translateY(0); }
+}
+@keyframes bento-liquid-solidify {
+  0% { opacity: 0.82; }
+  70% { opacity: 0.9; }
+  100% { opacity: 1; }
+}
+@keyframes bento-wave-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes bento-wave-drift-back {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+@keyframes bento-crest-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes bento-fill-content {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* the arrival card's own entrance — it rises to meet you as the hero gives
+   way (the collapse), instead of blinking into place */
+.arrival-enter {
+  animation: arrival-rise 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes arrival-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* the settled total lands with a soft focus pull */
+.total-settle {
+  animation: total-settle 550ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes total-settle {
+  from { opacity: 0; filter: blur(6px); transform: scale(0.96); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+
+/* the primary connect act breathes — the halo the owner asked to glow,
+   given a slow pulse so the page's one act reads alive, never busy */
+.glow-breathe {
+  animation: glow-breathe 3.6s ease-in-out infinite;
+}
+@keyframes glow-breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.75; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bento-fill-liquid,
+  .bento-fill-wave,
+  .bento-fill-wave-front,
+  .bento-fill-wave-back,
+  .bento-fill-crest,
+  .bento-fill-host > *:not(.bento-fill),
+  .arrival-enter,
+  .total-settle,
+  .glow-breathe {
+    animation: none;
+  }
+  /* the crest's fade-out lived in its keyframes; with animation off it sat
+     at full opacity forever (audit 2026-08-06 UX#10) — and the waves only
+     LOOK settled because the clip hides them; hide both outright */
+  .bento-fill-crest,
+  .bento-fill-wave {
+    display: none;
   }
 }

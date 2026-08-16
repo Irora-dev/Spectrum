@@ -84,9 +84,15 @@ export function PrismClaim() {
   // Whose allocation: defaults to the connected wallet; any address can be
   // checked — and claimed FOR (permissionless; delivery can't be redirected).
   const [input, setInput] = useState('')
+  // Seed from the wallet, then LET GO (QOL 2026-08-07). With `input` in the
+  // deps this refired every time the field went empty and typed the connected
+  // address straight back in — so select-all-delete, which is exactly how you
+  // start checking a second wallet's allocation, fought you. Keyed on the
+  // wallet alone: it still seeds on connect and on an account switch, and the
+  // "use connected" button below restores it deliberately.
   useEffect(() => {
-    if (!input && connected) setInput(connected)
-  }, [connected, input])
+    if (connected) setInput(connected)
+  }, [connected])
   const trimmed = input.trim()
   const account = isAddress(trimmed, { strict: false }) ? (trimmed as Address) : null
   const isSelf = !!connected && !!account && connected.toLowerCase() === account.toLowerCase()
@@ -417,6 +423,19 @@ export function PrismClaim() {
                       vault&rsquo;s contract page
                     </a>{' '}
                     with the amount + proof from the snapshot above.
+                  </p>
+                )}
+                {/* THE FAILURE BELONGS BESIDE THE BUTTON THAT CAUSED IT (QOL
+                    2026-08-07). `error` used to render only at the very bottom
+                    of the left column — after this card, after the whole
+                    TradePrism panel and the mirror card — so a rejected or
+                    reverted claim snapped the button back to "Claim" with the
+                    explanation a screenful below, off-screen. It still renders
+                    down there for the sync action's own failures; a claim
+                    failure now says so where you are looking. */}
+                {error && busy !== 'claim' && (
+                  <p className="mt-3 rounded-lg border border-magenta/30 bg-magenta/[0.06] px-3 py-2 font-mono text-[11px] leading-relaxed text-magenta">
+                    {error}
                   </p>
                 )}
                 {!isSelf && connected && (

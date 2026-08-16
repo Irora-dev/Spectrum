@@ -58,7 +58,17 @@ export default async (request: Request, context: EdgeContext): Promise<Response>
     const chain = Number(url.searchParams.get('chain')) || 8453
     if (addr) {
       const t = await tokenFor(url.origin, chain, addr)
-      if (t) meta = basketMeta(t, chain, addr, url.origin)
+      if (t) {
+        // Does this basket have a card from the last build? One cheap HEAD at
+        // the edge, and any failure means "no" — a missing or slow card must
+        // degrade to the generic image, never block the page or throw.
+        let hasCard = false
+        try {
+          const probe = await fetch(`${url.origin}/og/${chain}/${addr.toLowerCase()}.png`, { method: 'HEAD' })
+          hasCard = probe.ok
+        } catch { /* no card — the generic one stands in */ }
+        meta = basketMeta(t, chain, addr, url.origin, hasCard)
+      }
     }
   } else {
     const creator = url.pathname.match(/^\/creator\/(0x[0-9a-fA-F]{40})$/)

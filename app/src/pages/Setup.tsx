@@ -7,6 +7,7 @@ import type { BrandConfig, DesignStyle, PageKey } from '../theme/brand'
 import { PAGE_KEYS, validateSiteName } from '../theme/brand'
 import { applyBrand } from '../theme/theme'
 import { AnnounceComposer } from '../components/AnnounceComposer'
+import { ExtensionPanel } from '../components/setup/ExtensionPanel'
 import { InfoDot } from '../components/InfoDot'
 import { GRADIENT_CATALOG } from '../theme/catalog'
 import { brandConfigToTs } from '../theme/export-brand'
@@ -90,6 +91,7 @@ const PAGE_LABELS: Record<PageKey, string> = {
   fees: 'Flush (fee console)', portfolio: 'Portfolio', creators: 'Creators',
   refer: 'Refer & earn', league: 'Creator league', bundle: 'Bundles (cross-chain)',
   claim: 'PRISM claim (community airdrop)', integrate: 'Integrate', docs: 'Docs / FAQ / Learn',
+  create: 'Create flow (portfolio builder — simulated engine, off by default)',
 }
 
 // Live design studio: the operator customizes the site's look + pages ON the site and
@@ -98,7 +100,7 @@ const PAGE_LABELS: Record<PageKey, string> = {
 // The draft is a per-browser preview (localStorage); real visitors always see the committed
 // brand.config.ts. Deploy config never touches the live look, so it isn't applied — just exported.
 export function Setup() {
-  const [draft, setDraft] = useState<BrandConfig>(() => loadDraft() ?? structuredClone(brand))
+  const [draft, setDraft] = useState<BrandConfig>(() => loadDraft(brand) ?? structuredClone(brand))
   const [deploy, setDeploy] = useState<DeployConfig>(() => loadDeployDraft() ?? structuredClone(DEFAULT_DEPLOY))
   const [copied, setCopied] = useState('')
   const [confirmed, setConfirmed] = useState(false)
@@ -541,6 +543,10 @@ export function Setup() {
           </div>
         </div>
       </section>
+
+      {/* The extension walkthrough — reads the local packaging state via the
+          dev middleware; degrades honestly on a deployed site. */}
+      <ExtensionPanel sectionTitle={sectionTitle} />
 
       {/* Actions */}
       <div className="mt-5 flex flex-wrap items-center gap-3">

@@ -14,10 +14,19 @@ declare module 'node:path' {
 declare module 'node:url' {
   export function fileURLToPath(url: string): string
 }
+declare module 'node:child_process' {
+  export function execFile(
+    file: string,
+    args: string[],
+    options: { cwd?: string; timeout?: number },
+    callback: (error: unknown, stdout: string, stderr: string) => void,
+  ): void
+}
 // Minimal process global for reading real env vars at config time (CI dashboards
-// inject them as process env), and import.meta.url for path resolution (the node
-// tsconfig has no DOM/node libs to provide either).
-declare const process: { env: Record<string, string | undefined> }
+// inject them as process env), execPath for spawning the same node binary, and
+// import.meta.url for path resolution (the node tsconfig has no DOM/node libs
+// to provide either).
+declare const process: { env: Record<string, string | undefined>; execPath: string }
 interface ImportMeta {
   url: string
 }

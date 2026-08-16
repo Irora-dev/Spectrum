@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The BLUEPRINT basket — the ghost that holds the spotlight when no live basket
@@ -89,7 +89,7 @@ export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
           </h2>
           <p className="mt-3 text-base leading-relaxed text-ink-dim">Be the first to launch a basket token.</p>
           <Link
-            to="/launch"
+            to="/create"
             className="press mt-6 inline-block rounded-xl px-8 py-3.5 font-display text-sm font-bold uppercase tracking-[0.16em] text-black transition-transform hover:scale-[1.02]"
             style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }}
           >

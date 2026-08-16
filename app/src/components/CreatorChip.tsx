@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { BasketAvatar } from './BasketAvatar'
 import { useCreatorMeta } from '../lib/spectrum/hooks'
 import { resolveCreator } from '../lib/spectrum/creator'

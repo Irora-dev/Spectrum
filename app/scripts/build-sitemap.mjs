@@ -42,7 +42,8 @@ const ALL_ROUTES = [
   { path: '/bundle', page: 'bundle' },
   { path: '/claim', page: 'claim' },
   { path: '/integrate', page: 'integrate' },
-  { path: '/faq', page: 'docs' },
+  // /faq is a REDIRECT to /learn now — listing it would advertise a soft-404 to
+  // crawlers and split one page's ranking across two URLs.
   { path: '/learn', page: 'docs' },
   { path: '/docs', page: 'docs' },
   { path: '/verify', page: null },

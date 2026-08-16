@@ -38,6 +38,7 @@ export interface PageToggles {
   claim: boolean // /claim (PRISM v2 community-airdrop claim tool, Ethereum mainnet) + its banner
   integrate: boolean // /integrate
   docs: boolean // /docs + /docs/valuation + /faq + /learn
+  create: boolean // /create (the picker-first Create flow) + its embed on Home
 }
 
 export type PageKey = keyof PageToggles
@@ -51,7 +52,7 @@ export type PageKey = keyof PageToggles
 // portfolio-plus-completion framing: a bundle is ONE ALLOCATION made of several
 // single-chain basket tokens the buyer holds themselves. Never "one token".
 export const PAGE_KEYS: PageKey[] = [
-  'discover', 'launch', 'trade', 'fees', 'portfolio', 'creators', 'refer', 'league', 'bundle', 'claim', 'integrate', 'docs',
+  'discover', 'launch', 'trade', 'fees', 'portfolio', 'creators', 'refer', 'league', 'bundle', 'claim', 'integrate', 'docs', 'create',
 ]
 
 export interface BrandConfig {
@@ -83,6 +84,12 @@ export interface BrandConfig {
    *  to be droppable: `false` removes every instance. The protocol's PRISM
    *  buy-and-burn leg is unaffected either way (it is contract-side). */
   prismCredit?: boolean
+  /** Outbound chart links on asset rows (default ON; the owner-signed R/C daily
+   *  2026-08-02, DexScreener only) — the brand's real vendored mark linking
+   *  to its token page. Same posture as `prismCredit`: a THIRD-PARTY outbound
+   *  link on the operator's own site, so `false` hides every instance (see
+   *  lib/spectrum/chart-links.ts). */
+  chartLinks?: boolean
   /** Curated launch STARTER suggestions (default ON; owner 2026-07-30): the
    *  per-chain seed set the builder/composer shelves fall back to before a
    *  chain has organic basket data (see lib/chain/starter-suggestions.ts).
@@ -91,6 +98,12 @@ export interface BrandConfig {
    *  organic (most-used constituents of live baskets, ranked by live market
    *  data). Stock entries additionally respect `stocks`. */
   starterTokens?: boolean
+  /** Chrome Web Store URL of THIS SITE's published extension (the operator's
+   *  own listing, white-label). When set, /extension leads with the store
+   *  button; unset, it offers the site-hosted zip plus the load-unpacked
+   *  walkthrough. Firefox one-click comes from the signed .xpi the packaging
+   *  step hosts, independent of this key. */
+  extensionStoreUrl?: string
 }
 
 /** Default-on: a page shows unless it is explicitly turned off. */
@@ -113,12 +126,24 @@ export function starterTokensEnabled(config: Pick<BrandConfig, 'starterTokens'>)
   return config.starterTokens !== false
 }
 
-/** /setup availability: always served in dev; production default-ON unless `setupStudio: false`. */
+/** /setup availability: ALWAYS served in dev; production is OPT-IN via
+ *  `setupStudio: true`.
+ *
+ *  Flipped from default-ON 2026-08-02 (Ⓡ the owner). A deployed operator site was
+ *  serving the customiser to its own visitors unless someone remembered to switch
+ *  it off. That is not a fund risk — the write-back endpoint is dev-only
+ *  (`apply: 'serve'`), drafts never leave the browser, and the deploy form starts
+ *  from DEFAULT_DEPLOY so it never prefills a fee wallet or a private RPC — but it
+ *  reads as unfinished on a live product and invites confused support questions.
+ *  Defaults should serve the steady state, and the steady state is a site with real
+ *  users on it.
+ *
+ *  Dev is deliberately unchanged, so setting up and updating are unaffected. */
 export function setupStudioEnabled(config: Pick<BrandConfig, 'setupStudio'>): boolean {
   // Narrow probe instead of import.meta.env.DEV: this file is also loaded by vite.config
   // (the brandHtml plugin imports brand.config), where ImportMeta has no `env` typing.
   const env = (import.meta as { env?: { DEV?: boolean } }).env
-  return env?.DEV === true || config.setupStudio !== false
+  return env?.DEV === true || config.setupStudio === true
 }
 
 /** The flat token record applyBrandVars writes onto :root — one field per `--*` var. */

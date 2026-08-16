@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link, Navigate, useSearchParams } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link, Navigate, useSearchParams } from 'react-router'
 import { SWAP_ENABLED } from '../lib/config/features'
 import { setActiveChainId, useActiveChain } from '../lib/chain/active-chain'
 import { CHAINS, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
@@ -21,6 +22,8 @@ import { BasketWash } from '../components/BasketWash'
 // ?basket=&chain= deep link, and — from lg up — the IDENTITY PANEL beside the
 // console (owner 2026-07-07 15:4x UX pass: you're buying a whole thesis, the
 // page should show it: wash, constituents, NAV/TVL, the creator's tagline).
+// It is also the one host that opts the console into `payFromHoldings` (owner QOL
+// round 2026-08-05: the swap console should know what you hold) — see below.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function Swap() {
@@ -54,14 +57,41 @@ function SwapPage() {
       <div className="mx-auto w-full max-w-5xl pt-4">
         {/* header (owner 13:46): "Trade" eyebrow gone, title at the Launch
             page's size, the sub is one plain line, and the chain chip grew
-            into a real Ethereum ⇄ Base toggle */}
+            into a real Ethereum ⇄ Base toggle.
+
+            PHONE MASTHEAD (owner 2026-08-06 23:13, device-wall walk): the sub
+            "needs to be centered" and "needs to be across two lines" — it was
+            auto-wrapping after "WETH" and orphaning "or USDC." on its own line.
+            So below sm the whole masthead centers (the TITLE goes with it: a
+            centered paragraph under a left-aligned 5xl SWAP reads as a bug, not
+            a composition) and the sub breaks at its own comma — the promise on
+            line 1, the means on line 2. The break is an explicit `<br>`, so no
+            `max-w-[NNch]` cap may ever be added here: a cap narrower than a
+            hand-broken line re-wraps every one of them. `[text-wrap:balance]`
+            is wrong for the same reason — the line COUNT is the spec here, not
+            something to be chosen for us.
+            `[&>div]:w-full` is load-bearing: PageHeader's text column is a
+            flex item sized to its content, and hand-breaking the sub SHRINKS
+            that content to the longest line — the "centered" block would then
+            centre inside a 271px column sitting at the left edge, ~32px off the
+            page's true centre. sm: reverts all of it; desktop is untouched. */}
         <PageHeader
-          className="mb-6 px-1"
+          className="mb-6 px-1 max-sm:text-center max-sm:[&>div]:w-full"
           size="lg"
           title="Swap"
-          sub="Any basket, straight from ETH, WETH or USDC."
+          sub={
+            <>
+              Any basket,{' '}
+              <br className="sm:hidden" />
+              straight from ETH, WETH or USDC.
+            </>
+          }
           actions={
-            <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] p-1">
+            /* justify-center below sm: PageHeader gives this row the full phone
+               width, so its three chips used to cluster at the left edge of a
+               full-width pill — fine under a left-aligned masthead, visibly
+               half-done under the centered one above (owner 2026-08-06 23:13). */
+            <div className="flex items-center justify-center gap-1 rounded-full border border-white/10 bg-white/[0.03] p-1 sm:justify-start">
               {[...SUPPORTED_CHAIN_IDS].reverse().map((id) => (
                 <button
                   key={id}
@@ -83,7 +113,22 @@ function SwapPage() {
             below the console so the money controls stay first) */}
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,560px)_minmax(0,1fr)] lg:gap-8">
           <div className="min-w-0 space-y-6">
-            <DexSwapCard chainId={chainId} initialBasket={paramBasket} initialAmount={paramAmount} large onBasketChange={setSelected} />
+            {/* payFromHoldings — the console opens on what this wallet actually
+                holds on this network, largest priced holding first, instead of a
+                static ETH (owner QOL round 2026-08-05, his own idea that the swap
+                page should know what you have). Opted in HERE only: it costs a
+                wallet-wide holdings read, and this is the roomy standalone page
+                where the pay side is the first decision. A suggestion, never a
+                hijack — DexSwapCard yields to a pick, a remembered pick, a
+                quick-buy link's amount and anything typed. */}
+            <DexSwapCard
+              chainId={chainId}
+              initialBasket={paramBasket}
+              initialAmount={paramAmount}
+              large
+              payFromHoldings
+              onBasketChange={setSelected}
+            />
             {/* Buy PRISM itself, right under the console (owner 2026-07-30) */}
             <TradePrism buyOnly />
           </div>
@@ -122,7 +167,7 @@ function BasketContextPanel({ address, chainId }: { address: string | null; chai
           <BasketAvatar address={b.address} symbol={b.symbol} size={44} />
           <div className="min-w-0">
             <div className="truncate font-display text-xl font-bold uppercase tracking-tight text-ink">{b.name}</div>
-            <div className="font-mono text-xs text-ink-dim">${b.symbol}</div>
+            <div className="font-mono text-xs text-ink-dim">${showSymbol(b.symbol)}</div>
           </div>
         </div>
 

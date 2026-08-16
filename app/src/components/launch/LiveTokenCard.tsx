@@ -1,4 +1,5 @@
 import { PrismMark } from '../../hud'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
 import { AssetLogo } from '../AssetLogo'
 
 const DEFAULT_GRAD = 'conic-gradient(from -90deg, var(--color-cyan), var(--color-violet), var(--color-magenta), var(--color-amber), var(--color-teal), var(--color-cyan))'
@@ -74,7 +75,7 @@ export function LiveTokenCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-display text-xl font-bold uppercase tracking-wide text-ink">
-              {symbol ? `$${symbol}` : <span className="text-ink-faint">$SYMBOL</span>}
+              {symbol ? `$${showSymbol(symbol)}` : <span className="text-ink-faint">$SYMBOL</span>}
             </span>
           </div>
           <div className={`mt-1 truncate font-display text-base ${name.trim() ? 'text-ink-dim' : 'text-ink-faint'}`}>

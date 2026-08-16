@@ -148,12 +148,25 @@ export function CartesianRoot<TData extends Row>({
   return (
     <ChartContext value={ctx}>
       <CommonChartContext value={ctx.common}>
+        {/* TOUCH READS THE CHART TOO (owner 2026-08-06 23:13, on the bento
+            popup and then: "same for the chart, obviously you need to tap").
+            onPointerMove alone was mouse-shaped in practice: on a finger it
+            only fires mid-drag, the drag scrolled the page instead of
+            scrubbing, and pointerleave fired on lift so the readout vanished
+            the instant you let go. Three additions, none of which touch the
+            mouse path: a TAP sets the readout (pointerdown), `pan-y` lets a
+            horizontal drag scrub while a vertical one still scrolls the page,
+            and the clear-on-leave is mouse-only so a tapped value survives
+            until the next tap. */}
         <div
           ref={ref}
           className={cn("relative h-full w-full", className)}
+          style={interactive ? { touchAction: 'pan-y' } : undefined}
           onPointerEnter={() => ctx.setMouseInChart(true)}
+          onPointerDown={interactive ? (e) => onMove(e.clientX) : undefined}
           onPointerMove={interactive ? (e) => onMove(e.clientX) : undefined}
-          onPointerLeave={() => {
+          onPointerLeave={(e) => {
+            if (e.pointerType !== 'mouse') return
             ctx.setMouseInChart(false)
             ctx.setHoverIndex(null)
             onHoverChange?.(null)

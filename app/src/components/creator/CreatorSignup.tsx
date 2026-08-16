@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import { useAccount, usePublicClient, useSignTypedData, useWriteContract } from 'wagmi'
 import { isAddress, parseAbi, type Address } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
@@ -20,9 +21,14 @@ import { useActiveChainId } from '../../lib/chain/active-chain'
 import { chainCfg } from '../../lib/chain/chains'
 import { clientFor } from '../../lib/chain/rpc'
 import { AssetLogo } from '../AssetLogo'
+import { BasketAvatar } from '../BasketAvatar'
+import { searchTokens, type TokenHit } from '../../lib/spectrum/token-search'
 import { WalletButton } from '../WalletButton'
 import { WALLET_ENABLED } from '../../lib/config/features'
 import { shortAddr } from '../../lib/spectrum/format'
+import { creatorPath } from '../../lib/spectrum/handle-registry'
+import { useHandleForAddress } from '../../lib/spectrum/use-handles'
+import { useNetworkSwitch } from '../WrongNetwork'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Creator sign-up (lab 2026-07-28) — the /creators self-serve profile editor.
@@ -69,6 +75,9 @@ function draftFromExisting(blob: SignedCreatorIdentity | null): {
 
 export function CreatorSignup() {
   const { address, isConnected, chainId: walletChainId } = useAccount()
+  // "Your page" prefers your claimed name (the address form always works).
+  const { lookup: myHandle } = useHandleForAddress(address)
+  const myPage = creatorPath(address ?? '', myHandle.status === 'found' ? myHandle.owner : null)
   const chainId = useActiveChainId()
   const cfg = chainCfg(chainId)
   const { signTypedDataAsync } = useSignTypedData()
@@ -80,9 +89,65 @@ export function CreatorSignup() {
   // every site instantly. No registry on this chain → signed-blob fallback
   // (localStorage + download for the operator to commit).
   const registry = cfg.notesRegistry
+  // The house switch affordance (owner 2026-08-16: the publish gate "doesnt
+  // allow / detect the rh switch") — the old shape was a press-time error
+  // string, which neither offered the switch nor updated when the wallet
+  // moved. The hook's mismatch is reactive and switchNow() is dapp-initiated,
+  // which propagates even where an in-wallet manual switch does not.
+  const sw = useNetworkSwitch(chainId)
   const [draft, setDraft] = useState(() => draftFromExisting(null))
   const [pickInput, setPickInput] = useState('')
   const [pickError, setPickError] = useState<string | null>(null)
+  // THE REAL TOKEN SEARCH (owner 2026-08-15: "this section should literally
+  // use the search we have for tokens in the create system") — the same
+  // searchTokens engine the pickers run, debounced; a pasted address still
+  // adds directly.
+  const [pickResults, setPickResults] = useState<TokenHit[]>([])
+  useEffect(() => {
+    const q = pickInput.trim()
+    if (q.length < 2 || isAddress(q, { strict: false })) {
+      setPickResults([])
+      return
+    }
+    const ctl = new AbortController()
+    const t = setTimeout(() => {
+      // House-pinned identities transcend the active chain HERE (owner
+      // 2026-08-16: "if you type in prism anywhere in the ticker search
+      // system including what assets you're bullish on it should always show
+      // 0xcf4d…e040 first"). A bullish pick is an identity claim, not a leg
+      // on this chain, so the mainnet sweep's house pins may lead the list.
+      // Leg pickers must NOT do this: a chain-1 address cannot be a leg of a
+      // basket on another chain.
+      void Promise.all([
+        searchTokens(q, chainId, ctl.signal),
+        chainId !== 1 ? searchTokens(q, 1, ctl.signal).catch(() => [] as TokenHit[]) : Promise.resolve([] as TokenHit[]),
+      ])
+        .then(([hits, ethHits]) => {
+          const pinned = ethHits.filter((h) => h.housePinned)
+          const seen = new Set(pinned.map((h) => h.address.toLowerCase()))
+          setPickResults([...pinned, ...hits.filter((h) => !seen.has(h.address.toLowerCase()))].slice(0, 6))
+        })
+        .catch(() => {})
+    }, 250)
+    return () => {
+      clearTimeout(t)
+      ctl.abort()
+    }
+  }, [pickInput, chainId])
+  const addPickHit = (hit: TokenHit) => {
+    if (draft.picks.some((x) => x.address.toLowerCase() === hit.address.toLowerCase())) {
+      setPickError('Already in your list.')
+      return
+    }
+    if (draft.picks.length >= MAX_PICKS) {
+      setPickError(`Up to ${MAX_PICKS} tokens.`)
+      return
+    }
+    setPickError(null)
+    setPickInput('')
+    setPickResults([])
+    setDraft((d) => ({ ...d, picks: [...d.picks, { address: hit.address, note: '', symbol: hit.symbol }] }))
+  }
   const [resolving, setResolving] = useState(false)
   const [signing, setSigning] = useState(false)
   const [published, setPublished] = useState<SignedCreatorIdentity | null>(null)
@@ -318,15 +383,15 @@ export function CreatorSignup() {
           </div>
         ) : publishedOnchain ? (
           <div className="space-y-4">
-            <h3 className="font-display text-xl font-bold uppercase tracking-tight text-teal">Profile published on-chain — live everywhere</h3>
+            <h3 className="font-display text-xl font-bold uppercase tracking-tight text-teal">Profile published on-chain, live everywhere</h3>
             <p className="max-w-2xl text-sm leading-relaxed text-ink-dim">
-              Your profile now lives on {cfg.name} itself. Every visitor — on this site and on any other
-              site running this kit — reads it straight from the chain. No account, no database, no
+              Your profile now lives on {cfg.name} itself. Every visitor, on this site and on any other
+              site running this kit, reads it straight from the chain. No account, no database, no
               operator step; update it any time with another transaction.
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <Link
-                to={`/creator/${address}`}
+                to={myPage}
                 className="rounded-lg bg-cyan px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-black press hover:opacity-90"
               >
                 View your page →
@@ -353,7 +418,7 @@ export function CreatorSignup() {
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <Link
-                to={`/creator/${address}`}
+                to={myPage}
                 className="rounded-lg bg-cyan px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-black press hover:opacity-90"
               >
                 View your page →
@@ -376,12 +441,46 @@ export function CreatorSignup() {
           </div>
         ) : (
           <div className="space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-ink-dim">
-                Signing as <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-ink">{shortAddr(address)}</code>{' '}
-                on {cfg.name} — <Link to={`/creator/${address}`} className="text-cyan hover:underline">your page</Link>
-              </p>
-            </div>
+            {/* THE LIVE PREVIEW (owner 2026-08-15: "way more visual, way less
+                text, more fun") — you are not filling a form, you are watching
+                your page assemble: banner behind, avatar, name, handle, bio,
+                exactly the hero's own composition, live on every keystroke. */}
+            <Link
+              to={myPage}
+              className="group relative block h-40 overflow-hidden rounded-2xl border border-white/10"
+              title="Open your public page"
+            >
+              {draft.bannerUrl.trim() ? (
+                <img src={draft.bannerUrl.trim()} alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover opacity-70 transition-opacity group-hover:opacity-90" />
+              ) : (
+                <span aria-hidden className="absolute inset-0 opacity-40" style={{ background: 'linear-gradient(120deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }} />
+              )}
+              <span aria-hidden className="absolute inset-0 bg-gradient-to-t from-void/90 via-void/30 to-transparent" />
+              <span className="absolute left-4 top-3 font-mono text-[9px] uppercase tracking-[0.2em] text-ink-faint">
+                preview · publish below to make it live · {shortAddr(address)} on {cfg.name}
+              </span>
+              <span className="absolute right-4 top-3 font-mono text-[9px] uppercase tracking-[0.2em] text-cyan opacity-0 transition-opacity group-hover:opacity-100">
+                your page →
+              </span>
+              <span className="absolute inset-x-4 bottom-3.5 flex items-center gap-3">
+                <BasketAvatar address={address} symbol={draft.name || 'you'} imageUrl={draft.avatarUrl.trim() || undefined} size={56} />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate font-display text-xl font-bold tracking-tight text-ink">
+                      {draft.name.trim() || 'Your name'}
+                    </span>
+                    {draft.handle.trim() && (
+                      <span className="rounded-full border border-white/15 bg-void/50 px-2 py-0.5 font-mono text-[10px] text-ink-dim">
+                        {draft.handle.trim().startsWith('@') ? draft.handle.trim() : `@${draft.handle.trim()}`}
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block max-w-[52ch] truncate text-[12px] text-ink-dim">
+                    {draft.bio.trim() || 'Your bio — one line about what you build.'}
+                  </span>
+                </span>
+              </span>
+            </Link>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -393,7 +492,7 @@ export function CreatorSignup() {
                 <input className={field} maxLength={20} placeholder="@basketchef" value={draft.handle} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} />
               </div>
               <div className="space-y-1.5">
-                <div className={label}>Avatar (url, ipfs, or upload — stored on-chain)</div>
+                <div className={label}>Avatar — url, ipfs or upload</div>
                 <div className="flex items-center gap-2">
                   <input className={field} placeholder="https://…/avatar.png" value={draft.avatarUrl} onChange={(e) => setDraft({ ...draft, avatarUrl: e.target.value })} />
                   <label className="press shrink-0 cursor-pointer rounded-lg border border-white/15 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim hover:border-cyan/50 hover:text-cyan">
@@ -413,13 +512,13 @@ export function CreatorSignup() {
                 {avatarNote && <p className="font-mono text-[10px] text-amber-300/90">{avatarNote}</p>}
               </div>
               <div className="space-y-1.5">
-                <div className={label}>Banner image URL</div>
+                <div className={label}>Banner — url</div>
                 <input className={field} placeholder="https://…/banner.png" value={draft.bannerUrl} onChange={(e) => setDraft({ ...draft, bannerUrl: e.target.value })} />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <div className={label}>Bio — who you are, what you build baskets around</div>
+              <div className={label}>Bio — one or two lines</div>
               <textarea
                 className={`${field} min-h-[90px] resize-y`}
                 maxLength={600}
@@ -440,10 +539,11 @@ export function CreatorSignup() {
                   value={draft.delegate}
                   onChange={(e) => setDraft({ ...draft, delegate: e.target.value })}
                 />
-                <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
-                  Lets a day-to-day wallet publish feed updates while this identity stays on your cold
-                  key. It can never edit this profile or your theses; its posts are labeled &ldquo;via
-                  delegate&rdquo;. Clear the field and republish to revoke.
+                <p
+                  className="font-mono text-[10px] leading-relaxed text-ink-faint"
+                  title="It can never edit this profile or your theses; its posts are labeled 'via delegate'. Clear the field and republish to revoke."
+                >
+                  A hot wallet may post updates as you — this identity stays on your cold key.
                 </p>
                 {draft.delegate.trim() && !isAddress(draft.delegate.trim(), { strict: false }) && (
                   <p className="font-mono text-[10px] text-magenta">Not a valid address.</p>
@@ -452,23 +552,55 @@ export function CreatorSignup() {
             )}
 
             <div className="space-y-2">
-              <div className={label}>Tokens you're bullish on (up to {MAX_PICKS})</div>
-              <div className="flex gap-2">
-                <input
-                  className={field}
-                  placeholder="0x… token address"
-                  value={pickInput}
-                  onChange={(e) => setPickInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addPick())}
-                />
-                <button
-                  type="button"
-                  onClick={addPick}
-                  disabled={resolving}
-                  className="shrink-0 rounded-lg border border-white/15 px-4 font-mono text-xs uppercase tracking-[0.14em] text-ink-dim press hover:border-cyan/50 hover:text-cyan"
-                >
-                  Add
-                </button>
+              <div className={label}>Bullish on (up to {MAX_PICKS})</div>
+              <div className="relative">
+                <div className="flex gap-2">
+                  <input
+                    className={field}
+                    placeholder="Search a token by name — or paste an address"
+                    value={pickInput}
+                    onChange={(e) => setPickInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      if (isAddress(pickInput.trim(), { strict: false })) addPick()
+                      else if (pickResults[0]) addPickHit(pickResults[0])
+                    }}
+                  />
+                  {isAddress(pickInput.trim(), { strict: false }) && (
+                    <button
+                      type="button"
+                      onClick={addPick}
+                      disabled={resolving}
+                      className="shrink-0 rounded-lg border border-white/15 px-4 font-mono text-xs uppercase tracking-[0.14em] text-ink-dim press hover:border-cyan/50 hover:text-cyan"
+                    >
+                      Add
+                    </button>
+                  )}
+                </div>
+                {/* the create system's own search, six best hits — click to add */}
+                {pickResults.length > 0 && (
+                  <div className="absolute inset-x-0 top-full z-20 mt-1.5 overflow-hidden rounded-xl border border-white/12 bg-void/95 shadow-xl backdrop-blur-md">
+                    {pickResults.map((h) => (
+                      <button
+                        key={h.address}
+                        type="button"
+                        onClick={() => addPickHit(h)}
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-white/[0.06]"
+                      >
+                        <AssetLogo address={h.address} symbol={h.symbol} chainId={chainId} size={22} preferredSrc={h.logoURI} />
+                        <span className="font-mono text-xs font-semibold text-ink">{showSymbol(h.symbol)}</span>
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-ink-faint">{h.name}</span>
+                        {h.verified && <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-teal">verified</span>}
+                        {h.liquidityUsd > 0 && (
+                          <span className="font-num text-[10px] tabular-nums text-ink-faint">
+                            ${Math.round(h.liquidityUsd).toLocaleString()}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               {pickError && <p className="font-mono text-[11px] text-magenta">{pickError}</p>}
               {draft.picks.length > 0 && (
@@ -493,7 +625,7 @@ export function CreatorSignup() {
                       />
                       <button
                         type="button"
-                        aria-label={`Remove ${p.symbol ?? p.address}`}
+                        aria-label={`Remove ${showSymbol(p.symbol ?? p.address)}`}
                         onClick={() => setDraft((d) => ({ ...d, picks: d.picks.filter((_, j) => j !== i) }))}
                         className="shrink-0 font-mono text-xs text-ink-faint press hover:text-magenta"
                       >
@@ -508,18 +640,34 @@ export function CreatorSignup() {
             {error && <p className="font-mono text-[11px] text-magenta">{error}</p>}
 
             <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                type="button"
-                onClick={publish}
-                disabled={signing}
-                className="rounded-lg bg-cyan px-5 py-2.5 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-black press hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
-              >
-                {signing ? 'Check your wallet…' : registry ? 'Publish on-chain' : 'Sign & publish profile'}
-              </button>
+              {registry && sw.mismatch ? (
+                /* the switch IS the button while the wallet is elsewhere —
+                   ClaimHandle's exact grammar; publishing appears the moment
+                   the wallet lands on the registry's chain */
+                <button
+                  type="button"
+                  onClick={sw.switchNow}
+                  disabled={sw.switching}
+                  className="press inline-flex h-12 items-center justify-center rounded-full border border-cyan/50 bg-cyan/10 px-7 font-display text-[13px] font-bold uppercase tracking-[0.12em] text-cyan disabled:cursor-wait disabled:opacity-60"
+                >
+                  {sw.switching ? 'Check your wallet…' : `Switch wallet to ${cfg.name}`}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={publish}
+                  disabled={signing}
+                  className="spectral-btn press inline-flex h-12 items-center justify-center rounded-full px-7 font-display text-[13px] font-bold uppercase tracking-[0.12em] text-void disabled:cursor-wait disabled:opacity-60"
+                >
+                  {signing ? 'Check your wallet…' : registry ? 'Publish on-chain →' : 'Sign & publish →'}
+                </button>
+              )}
               <span className="font-mono text-[10px] text-ink-faint">
-                {registry
-                  ? `One small transaction on ${cfg.name} — your profile lives on the chain itself, visible on every site.`
-                  : 'A signature, not a transaction — free, nothing leaves your wallet.'}
+                {registry && sw.mismatch
+                  ? `your wallet is on ${sw.walletWords} · switching signs nothing`
+                  : registry
+                    ? `one small transaction on ${cfg.name} · lives on the chain, visible on every site`
+                    : 'a signature, not a transaction — free'}
               </span>
             </div>
           </div>

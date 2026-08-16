@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { PrismMark } from '../hud'
 
 // Catch-all for unknown / stale URLs (e.g. an old shared link). Keeps people on

@@ -258,3 +258,30 @@ describe('perfMeasurable — the dust-basket floor (owner catch 2026-07-06)', ()
     expect(ranked.map((x) => x.address)).toEqual(['0xr', '0xd'])
   })
 })
+
+// ── the floor never hides your own basket from you ───────────────────────────
+// the owner 2026-08-06 23:2x, off a live outside user who deployed, lost the screen
+// before seeding, and could not find his own basket: a fresh basket is $0 by
+// definition, so the browse floor caught exactly the case it must not.
+describe('listable — a creator always sees their own baskets', () => {
+  const dust = { address: '0xd', deployer: A, aumUsd: 0 }
+  it('still hides a sub-floor basket from a stranger', () => {
+    expect(listable(b(dust), '0x000000000000000000000000000000000000dead')).toBe(false)
+  })
+  it('shows a sub-floor basket to the wallet that deployed it', () => {
+    expect(listable(b(dust), A)).toBe(true)
+  })
+  it('matches case-insensitively', () => {
+    expect(listable(b(dust), A.toUpperCase())).toBe(true)
+  })
+  it('accepts a linked-wallet GROUP and matches any member', () => {
+    expect(listable(b(dust), ['0x000000000000000000000000000000000000beef', A])).toBe(true)
+  })
+  it('with no viewer behaves exactly as before', () => {
+    expect(listable(b(dust))).toBe(false)
+    expect(listable(b({ ...dust, aumUsd: 40 }))).toBe(true)
+  })
+  it('never invents a match when the basket has no known deployer', () => {
+    expect(listable(b({ address: '0xe', deployer: null, aumUsd: 0 }), A)).toBe(false)
+  })
+})

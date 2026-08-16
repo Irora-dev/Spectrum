@@ -9,9 +9,28 @@ import { starterTokensEnabled, stocksEnabled } from '../../theme/brand'
 // PopularAssets re-ranks everything by live market data either way.
 //
 // Every entry must pass the builder's own findBestPool detection LIVE before
-// it ships here — proven 2026-07-30 (scripts/rh-starter-suggestions-check.ts):
-// NVDA $8.7M V4 USD-paired · AAPL $5.3M V4 USD-paired · PONS $671k V3 ·
-// STONKBROKER $1.29M V4. Stock addresses come from the official-registry shelf
+// it ships here — proven 2026-07-30 with scripts/rh-starter-suggestions-check.ts.
+//
+// ⚠ THOSE FIGURES ARE A SNAPSHOT, NOT A PROPERTY, AND THEY MOVED 400x IN NINE
+// DAYS. The original note recorded NVDA $8.7M · AAPL $5.3M · PONS $671k ·
+// STONKBROKER $1.29M as though they described the assets. SpectrumContracts
+// re-ran the SAME script on 2026-08-08: NVDA $183k (−97.9%), AAPL $12.5k
+// (−99.8%) AND ITS VENUE CHANGED V4→V3, PONS $1.23M (+83%). Nothing re-runs the
+// probe, so the prose was the only evidence and it had silently stopped being
+// true — the same defect as any load-bearing number restated in a comment.
+//
+// The dollar figures are deliberately NOT updated here. Rewriting them would
+// re-create the identical trap with fresher numbers; a shelf whose justification
+// is a hand-run script is unverified between runs BY CONSTRUCTION, and that is
+// the honest thing for this comment to say. Re-run the script before trusting
+// any of it, and treat a starter as a suggestion the live depth ranking still
+// has to survive — not as a vetted asset.
+//
+// WHETHER AAPL SHOULD STILL BE A STARTER at $12.5k is an owner call and is on
+// the owner's desk (2026-08-09), not decided here: removing an owner-chosen starter
+// is his ruling to make, and the drift is evidence for it rather than a mandate.
+//
+// Stock addresses come from the official-registry shelf
 // (stocks.ts), never restated. STONKBROKER was picked out of TEN same-name
 // Blockscout results as the one with 9,987 holders AND the only real pool
 // (the runner-up "STONKBROKER" reads $0 depth) — on this chain the name alone

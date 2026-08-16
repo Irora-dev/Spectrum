@@ -3,6 +3,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../chain/chains'
 import { clientFor, hasPrivateRpc, publicWideLogsRisky } from '../chain/rpc'
 import { cacheGet, cacheSet } from './persist-cache'
+import { chainlinkFeedFor, fetchChainlinkHistory } from './chainlink-history'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Position PnL — "Invested capital · Current value · Net PnL" (owner
@@ -50,21 +51,58 @@ export interface PnlPosition {
   realized: string
 }
 
+/** One trade, stored raw so the history can be REPLAYED (2026-08-11).
+ *  bigints are stringified — JSON has no bigint, and a money number must not
+ *  round-trip through a float. */
+export interface StoredFlow {
+  basket: string
+  kind: SwapFlow['kind']
+  amountIn: string
+  amountOut: string
+  blockNumber?: string
+  txHash?: string
+  /** ETH-out sells: proceeds priced at the sale's own block, settlement 6dp. */
+  proceedsUsd6?: string
+}
+
 export interface PnlIndex {
   /** Last block folded in (stringified bigint). */
   upToBlock: string
   /** lowercased basket address → position. */
   positions: Record<string, PnlPosition>
+  /** THE TRADES THEMSELVES, in chain order (2026-08-11). The fold answers
+   *  "what is it worth now"; a tax/accounting export answers "what happened,
+   *  when, against what basis" — which a running total cannot, because the
+   *  fold discards every individual disposal. Kept in the SAME cache write as
+   *  `positions` so the two can never cover different blocks. Absent on an
+   *  index written before this existed; CACHE_VER forces the rebuild. */
+  flows?: StoredFlow[]
 }
 
 export interface SwapFlow {
   basket: string
   /** buy = settlement in, shares out · sell = shares in, settlement out ·
-   *  sellEth = shares in, ETH out (proceeds unpriceable here: the sold
-   *  shares' basis leaves the position but no realized PnL books). */
+   *  sellEth = shares in, ETH out. */
   kind: 'buy' | 'sell' | 'sellEth'
   amountIn: bigint
   amountOut: bigint
+  /** The log's block. Priced ETH-out proceeds need it; the trade-history
+   *  export needs it on EVERY flow to date the row (2026-08-11). */
+  blockNumber?: bigint
+  /** The transaction, so an exported row can be verified on a block explorer —
+   *  an accountant's document has to be checkable, not just readable. */
+  txHash?: string
+  /** ETH-out sells only: the wei proceeds valued in SETTLEMENT units (6dp) at
+   *  the sale's own block, priced by the caller.
+   *
+   *  the owner 2026-08-02: "a sell paid out in eth is defffo pnl yes." It used to
+   *  book nothing, because pricing wei needed a price and the module refuses to
+   *  guess one. The resolution is not to guess: the caller prices the proceeds
+   *  at the BLOCK THE SALE HAPPENED IN, never at spot-now, so this is a
+   *  historical fact rather than a present-day estimate applied to a past
+   *  event. Absent (no feed on that chain) it stays unbooked exactly as before
+   *  — a missing price is not a verdict. */
+  proceedsUsd6?: bigint
 }
 
 /** Fold trade flows into positions — average-cost, pure, exported for tests.
@@ -90,9 +128,16 @@ export function foldFlows(positions: Record<string, PnlPosition>, flows: SwapFlo
         const proceedsCovered = (f.amountOut * covered) / f.amountIn
         realized += proceedsCovered - costRemoved
       }
-      // ETH-out sells: proceeds are wei, unpriceable here — the basis still
-      // LEAVES with the shares (or remaining-basis would overstate what the
-      // held position cost), but realized never books a guessed number.
+      if (f.kind === 'sellEth' && f.proceedsUsd6 != null) {
+        // ETH-out proceeds, valued at the sale's own block by the caller. Same
+        // arithmetic as a settlement sell — only the source of the number differs.
+        const proceedsCovered = (f.proceedsUsd6 * covered) / f.amountIn
+        realized += proceedsCovered - costRemoved
+      }
+      // An ETH-out sell with NO price (no feed on that chain) still removes the
+      // basis with the shares — otherwise the remaining basis would overstate
+      // what the held position cost — but books no realized number rather than
+      // inventing one.
       cost -= costRemoved
       shares -= covered
     }
@@ -101,9 +146,48 @@ export function foldFlows(positions: Record<string, PnlPosition>, flows: SwapFlo
   return out
 }
 
+/** SwapFlow → StoredFlow (bigints out to strings for JSON). */
+export function storeFlow(f: SwapFlow): StoredFlow {
+  return {
+    basket: f.basket,
+    kind: f.kind,
+    amountIn: f.amountIn.toString(),
+    amountOut: f.amountOut.toString(),
+    ...(f.blockNumber != null ? { blockNumber: f.blockNumber.toString() } : {}),
+    ...(f.txHash != null ? { txHash: f.txHash } : {}),
+    ...(f.proceedsUsd6 != null ? { proceedsUsd6: f.proceedsUsd6.toString() } : {}),
+  }
+}
+
+/** StoredFlow → SwapFlow. Refuses a row whose numbers will not parse rather
+ *  than letting a NaN reach money math (storage is a trust boundary). */
+export function readFlow(r: StoredFlow): SwapFlow | null {
+  try {
+    return {
+      basket: r.basket,
+      kind: r.kind,
+      amountIn: BigInt(r.amountIn),
+      amountOut: BigInt(r.amountOut),
+      ...(r.blockNumber != null ? { blockNumber: BigInt(r.blockNumber) } : {}),
+      ...(r.txHash != null ? { txHash: r.txHash } : {}),
+      ...(r.proceedsUsd6 != null ? { proceedsUsd6: BigInt(r.proceedsUsd6) } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
 // v2: the scan gained the legacy lineages' routers, so a v1 index is missing
 // every superseded-basket trade — rebuild rather than top up onto a short fold.
-const CACHE_VER = 'v2'
+// v3: ETH-out sells now BOOK realized when the chain has an ETH/USD feed
+// (the owner 2026-08-02). Every v2 index folded them as unbooked, so they must all
+// rebuild — a forward top-up would leave old sells silently missing.
+// v4: the index now carries the raw flows so the trade-history export can
+// replay them (2026-08-11). A v3 index has the fold but not the trades, and the
+// top-up only scans FORWARD — so the history would start at whenever the user
+// upgraded. One rebuild buys the whole past; it is the same single wide call a
+// fresh browser already makes.
+const CACHE_VER = 'v4'
 // The ROUTER SET is part of the key, not just the version. A newly-added legacy
 // lineage's trades are all historical — below the cached `upToBlock` — and the
 // incremental top-up only ever scans forward, so without this a book edit that
@@ -148,7 +232,7 @@ const SETTLEMENT_SELL_SELECTOR = toFunctionSelector(
   'function swapExactIn(address,address,uint256,uint256,bytes,address)',
 )
 
-async function scan(client: PublicClient, routers: Address[], wallet: Address, fromBlock: bigint, toBlock: bigint): Promise<SwapFlow[]> {
+async function scan(client: PublicClient, chainId: number, routers: Address[], wallet: Address, fromBlock: bigint, toBlock: bigint): Promise<SwapFlow[]> {
   const logs = await client.getLogs({
     address: routers,
     event: swappedEvent,
@@ -169,7 +253,7 @@ async function scan(client: PublicClient, routers: Address[], wallet: Address, f
       // 2026-08-01). Excluded: the shares simply stay uncovered, exactly like
       // a transfer-in, and the coverage ⓘ says so.
       if (tokenIn === '0x0000000000000000000000000000000000000000') continue
-      flows.push({ basket, kind: 'buy', amountIn, amountOut })
+      flows.push({ basket, kind: 'buy', amountIn, amountOut, blockNumber: l.blockNumber, txHash: l.transactionHash })
     } else {
       // SELL — settlement-out vs ETH-out share one event shape; classify by
       // the tx's input selector. One getTransaction per SELL log only (sells
@@ -190,10 +274,77 @@ async function scan(client: PublicClient, routers: Address[], wallet: Address, f
       } catch {
         kind = 'sellEth'
       }
-      flows.push({ basket, kind, amountIn, amountOut })
+      flows.push({ basket, kind, amountIn, amountOut, blockNumber: l.blockNumber, txHash: l.transactionHash })
     }
   }
+  await priceEthOutSells(client, chainId, flows)
   return flows
+}
+
+/**
+ * Value ETH-out proceeds AT THE BLOCK EACH SALE HAPPENED IN.
+ *
+ * The old behaviour booked nothing because pricing wei needs a price and this
+ * module refuses to guess one. the owner's call on 2026-08-02 is that these are
+ * realized PnL — so the answer is a HISTORICAL price, not spot-now applied
+ * retroactively, which would be exactly the guess the module was avoiding.
+ *
+ * Cheap by construction: sells are the rare flow, the feed history is fetched
+ * ONCE for the whole window, and the whole index is cached forever after.
+ * If the chain has no ETH/USD feed the flows are left unpriced and the fold
+ * keeps today's honest silence — a missing feed is not a verdict.
+ */
+async function priceEthOutSells(client: PublicClient, chainId: number, flows: SwapFlow[]): Promise<void> {
+  const eth = flows.filter((f) => f.kind === 'sellEth' && f.blockNumber != null)
+  if (!eth.length) return
+  const feed = chainlinkFeedFor(chainId, chainCfg(chainId).weth ?? '')
+  if (!feed) return // no feed on this chain — stays unbooked, exactly as before
+
+  // Block → timestamp, one read per DISTINCT block (several sells can share one).
+  const blocks = [...new Set(eth.map((f) => f.blockNumber as bigint))]
+  const times = new Map<bigint, number>()
+  await Promise.all(
+    blocks.map(async (bn) => {
+      try {
+        const b = await client.getBlock({ blockNumber: bn })
+        times.set(bn, Number(b.timestamp))
+      } catch {
+        /* unreadable block → this sale stays unpriced */
+      }
+    }),
+  )
+  const stamps = [...times.values()]
+  if (!stamps.length) return
+
+  let series: { time: number; value: number }[] = []
+  try {
+    series = await fetchChainlinkHistory(client, feed, Math.min(...stamps))
+  } catch {
+    return // history unavailable → unbooked, never guessed
+  }
+  if (!series.length) return
+
+  // Nearest round AT OR BEFORE the sale; the feed only updates on deviation, so
+  // the last print before the trade is the price that was live when it executed.
+  const priceAt = (t: number): number | null => {
+    let best: number | null = null
+    for (const pt of series) {
+      if (pt.time <= t) best = pt.value
+      else break
+    }
+    return best ?? series[0]?.value ?? null
+  }
+
+  for (const f of eth) {
+    const t = times.get(f.blockNumber as bigint)
+    if (t == null) continue
+    const usd = priceAt(t)
+    if (usd == null || !Number.isFinite(usd) || usd <= 0) continue
+    // wei → USD → settlement 6dp, in bigint the whole way so no float drift
+    // reaches a money number: (wei * usd_1e8 * 1e6) / (1e18 * 1e8).
+    const usd1e8 = BigInt(Math.round(usd * 1e8))
+    f.proceedsUsd6 = (f.amountOut * usd1e8) / 10n ** 20n
+  }
 }
 
 /** Load (and incrementally top up) the wallet's PnL index for one chain. */
@@ -217,10 +368,13 @@ export async function loadPnlIndex(chainId: number, wallet: Address, force = fal
       const head = (await client.getBlockNumber()) - 5n
       const from = cached ? BigInt(cached.upToBlock) + 1n : 0n
       if (head < 0n || (cached && from > head)) return cached
-      const flows = await scan(client, routers, wallet, from, head)
+      const flows = await scan(client, chainId, routers, wallet, from, head)
       const next: PnlIndex = {
         upToBlock: head.toString(),
         positions: foldFlows(cached?.positions ?? {}, flows),
+        // append, never replace: the scan is INCREMENTAL, so `flows` holds only
+        // what is new since upToBlock
+        flows: [...(cached?.flows ?? []), ...flows.map(storeFlow)],
       }
       cacheSet(key, next, 0) // history is immutable — never expires
       lastScanMs.set(key, Date.now())
@@ -299,18 +453,62 @@ export function usePnlIndex(chainId: number, wallet?: string) {
   })
 }
 
+/** Sum PnL indexes across a wallet GROUP: positions merge per basket by
+ *  summing their raw fields (cost, shares, realized are additive by
+ *  construction — average-cost folding is linear in them). `upToBlock` takes
+ *  the OLDEST member: the merged picture is only as fresh as its stalest
+ *  wallet, and claiming newer would misdescribe part of the money. */
+export function mergePnlIndexes(list: (PnlIndex | null | undefined)[]): PnlIndex | null {
+  const real = list.filter((x): x is PnlIndex => x != null)
+  if (real.length === 0) return null
+  if (real.length === 1) return real[0]
+  const positions: Record<string, PnlPosition> = {}
+  for (const idx of real) {
+    for (const [k, p] of Object.entries(idx.positions)) {
+      const prev = positions[k]
+      positions[k] = prev
+        ? {
+            cost: (BigInt(prev.cost) + BigInt(p.cost)).toString(),
+            shares: (BigInt(prev.shares) + BigInt(p.shares)).toString(),
+            realized: (BigInt(prev.realized) + BigInt(p.realized)).toString(),
+          }
+        : p
+    }
+  }
+  const upToBlock = real.reduce(
+    (min, i) => (BigInt(i.upToBlock) < BigInt(min) ? i.upToBlock : min),
+    real[0].upToBlock,
+  )
+  return { upToBlock, positions }
+}
+
 /** Every configured chain's index at once (the Portfolio summary) — same
- *  cache keys as usePnlIndex, so the per-holding rows ride the same data. */
-export function usePnlIndexes(wallet?: string): Record<number, PnlIndex | null> {
+ *  cache keys as usePnlIndex, so the per-holding rows ride the same data.
+ *
+ *  Takes one wallet or a linked-wallet GROUP: a group's indexes merge per
+ *  chain (mergePnlIndexes), so the hero's invested/net line describes the
+ *  same merged book the holdings show. Per-wallet cache keys are preserved —
+ *  a member's index is shared with its solo view, never refetched. */
+export function usePnlIndexes(wallet?: string | string[]): Record<number, PnlIndex | null> {
+  const list = (Array.isArray(wallet) ? wallet : wallet ? [wallet] : [])
+    .map((w) => w.toLowerCase())
+    .filter((w, i, arr) => w && arr.indexOf(w) === i)
   return useQueries({
-    queries: SUPPORTED_CHAIN_IDS.map((chainId) => ({
-      queryKey: ['spectrum', 'pnl', chainId, wallet?.toLowerCase()],
-      queryFn: () => loadPnlIndex(chainId, wallet as Address),
-      enabled: !!wallet && pnlAvailable(chainId),
-      staleTime: 60_000,
-      refetchOnWindowFocus: false,
-    })),
+    queries: list.flatMap((w) =>
+      SUPPORTED_CHAIN_IDS.map((chainId) => ({
+        queryKey: ['spectrum', 'pnl', chainId, w],
+        queryFn: () => loadPnlIndex(chainId, w as Address),
+        enabled: pnlAvailable(chainId),
+        staleTime: 60_000,
+        refetchOnWindowFocus: false,
+      })),
+    ),
     combine: (results) =>
-      Object.fromEntries(SUPPORTED_CHAIN_IDS.map((id, i) => [id, results[i].data ?? null])),
+      Object.fromEntries(
+        SUPPORTED_CHAIN_IDS.map((id, chainIdx) => [
+          id,
+          mergePnlIndexes(list.map((_, wIdx) => results[wIdx * SUPPORTED_CHAIN_IDS.length + chainIdx]?.data)),
+        ]),
+      ),
   })
 }

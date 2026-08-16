@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { parseLifiQuote, LifiQuoteError, LIFI_NATIVE } from './lifi'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buildLifiQuoteQuery, parseLifiQuote, LifiQuoteError, LIFI_NATIVE } from './lifi'
 import type { Address } from 'viem'
 
 const USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168' as Address
@@ -35,6 +35,30 @@ describe('parseLifiQuote (hostile-input guards on the external hub route)', () =
     expect(q.approvalAddress.toLowerCase()).toBe(DIAMOND.toLowerCase())
     expect(q.tx.value).toBe(asked.fromAmount) // native pay: value == offered ETH exactly
     expect(q.tx.gasLimit).toBe(0xd8c5cn)
+  })
+
+  it('sums estimate.gasCosts to the USD figure LiFi reports (B1: net means net of GAS)', () => {
+    const b = good()
+    ;(b.estimate as Record<string, unknown>).gasCosts = [
+      { amountUSD: '0.0021', type: 'SEND' },
+      { amountUSD: '0.30', type: 'APPROVE' },
+    ]
+    expect(parseLifiQuote(b, asked).gasCostUsd).toBeCloseTo(0.3021, 10)
+  })
+
+  it('gas the API does not state is null, never zero (direct wins uncontested)', () => {
+    expect(parseLifiQuote(good(), asked).gasCostUsd).toBeNull() // no gasCosts field at all
+    const empty = good()
+    ;(empty.estimate as Record<string, unknown>).gasCosts = []
+    expect(parseLifiQuote(empty, asked).gasCostUsd).toBeNull()
+  })
+
+  it('one unreadable gas entry nulls the WHOLE figure — a partial sum understates', () => {
+    for (const bad of [{ type: 'SEND' }, { amountUSD: '' }, { amountUSD: '-1' }]) {
+      const b = good()
+      ;(b.estimate as Record<string, unknown>).gasCosts = [{ amountUSD: '0.30' }, bad]
+      expect(parseLifiQuote(b, asked).gasCostUsd).toBeNull()
+    }
   })
 
   it('rejects an execution target that is not the approval spender', () => {
@@ -208,5 +232,162 @@ describe('parseLifiQuote — recipient echo (redteam F-5)', () => {
     const b = good()
     b.action.toAddress = '0x00000000000000000000000000000000DeaDBeef' as Address
     expect(parseLifiQuote(b, asked).toAmount).toBeGreaterThan(0n)
+  })
+})
+
+describe('buildLifiQuoteQuery — the refuel seam (bridging ruling 2026-08-02)', () => {
+  const base = {
+    chainId: 8453,
+    fromToken: LIFI_NATIVE,
+    toToken: USDG,
+    fromAmount: 100000000000000000n,
+    fromAddress: PAYER,
+    slippageBps: 50,
+    fromChainId: 1,
+  }
+
+  it('appends fromAmountForGas when positive, alongside an intact base query', () => {
+    const q = buildLifiQuoteQuery({ ...base, fromAmountForGas: 2500000000000000n })
+    expect(q.get('fromAmountForGas')).toBe('2500000000000000')
+    // The refuel must never disturb what the guards downstream rely on.
+    expect(q.get('fromChain')).toBe('1')
+    expect(q.get('toChain')).toBe('8453')
+    expect(q.get('fromAmount')).toBe('100000000000000000')
+    expect(q.get('toAddress')).toBe(PAYER)
+  })
+
+  it('omits the parameter entirely when unset — coverage is not universal', () => {
+    const q = buildLifiQuoteQuery(base)
+    expect(q.has('fromAmountForGas')).toBe(false)
+  })
+
+  it('omits the parameter at zero — a zero refuel is no refuel, not an ask', () => {
+    const q = buildLifiQuoteQuery({ ...base, fromAmountForGas: 0n })
+    expect(q.has('fromAmountForGas')).toBe(false)
+  })
+})
+
+// ── order + integrator (the thesis-run ruling, the owner 2026-08-09) ─────────────
+// `order` is a defaulted parameter so the kit-wide preference lives in ONE
+// word; `integrator` is the white-label law — the kit ships origin-less, and
+// attribution exists only when the operator's own env provides it.
+describe('buildLifiQuoteQuery — order and integrator', () => {
+  const base = {
+    chainId: 8453,
+    fromToken: LIFI_NATIVE,
+    toToken: USDG,
+    fromAmount: 100000000000000000n,
+    fromAddress: PAYER,
+    slippageBps: 50,
+    fromChainId: 1,
+  }
+
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('orders CHEAPEST by default (the owner 2026-08-09), without disturbing the base query', () => {
+    const q = buildLifiQuoteQuery(base)
+    expect(q.get('order')).toBe('CHEAPEST')
+    expect(q.get('fromChain')).toBe('1')
+    expect(q.get('toChain')).toBe('8453')
+    expect(q.get('fromAmount')).toBe('100000000000000000')
+  })
+
+  it('a surface can differ deliberately — the parameter overrides the default', () => {
+    expect(buildLifiQuoteQuery({ ...base, order: 'FASTEST' }).get('order')).toBe('FASTEST')
+  })
+
+  it('omits integrator entirely when the env is absent, empty, or blank — origin-less by design', () => {
+    // Stubbed in every branch: the machine running the suite may itself be a
+    // deployment with an identity in .env.local (the RH test deploy sets one),
+    // and this law is about what the BUILDER does with each env state.
+    vi.stubEnv('VITE_LIFI_INTEGRATOR', undefined)
+    expect(buildLifiQuoteQuery(base).has('integrator')).toBe(false)
+    vi.stubEnv('VITE_LIFI_INTEGRATOR', '')
+    expect(buildLifiQuoteQuery(base).has('integrator')).toBe(false)
+    vi.stubEnv('VITE_LIFI_INTEGRATOR', '   ')
+    expect(buildLifiQuoteQuery(base).has('integrator')).toBe(false)
+  })
+
+  it('carries the operator identity when their deployment sets one', () => {
+    vi.stubEnv('VITE_LIFI_INTEGRATOR', 'acme-operator')
+    expect(buildLifiQuoteQuery(base).get('integrator')).toBe('acme-operator')
+  })
+})
+
+describe('parseLifiQuote — on-top native fees reconcile, byte-exact (owner 2026-08-16: the RH leg class)', () => {
+  // A cross-chain shape: ETH on mainnet → USDG on 4663, tool fee charged in
+  // native ON TOP of fromAmount (feeCosts included:false), value = sum.
+  const askedX = {
+    chainId: 4663,
+    fromChainId: 1,
+    fromToken: LIFI_NATIVE,
+    toToken: USDG,
+    fromAmount: 100000000000000000n,
+    fromAddress: PAYER,
+  }
+  const FEE = 2000000000000000n // 0.002 native, on top
+  const crossFee = () => {
+    const b = good()
+    b.action.fromChainId = 1
+    b.action.toChainId = 4663
+    ;(b.estimate as Record<string, unknown>).approvalAddress = DIAMOND_BASE
+    b.transactionRequest.to = DIAMOND_BASE
+    ;(b.estimate as Record<string, unknown>).feeCosts = [
+      { name: 'relayer', included: false, amount: FEE.toString(), token: { address: LIFI_NATIVE, chainId: 1 } },
+    ]
+    b.transactionRequest.value = '0x' + (askedX.fromAmount + FEE).toString(16)
+    return b
+  }
+
+  it('accepts a native pay whose value = principal + the DISCLOSED on-top fee, and carries the fee', () => {
+    const q = parseLifiQuote(crossFee(), askedX)
+    expect(q.tx.value).toBe(askedX.fromAmount + FEE)
+    expect(q.nativeFeeRaw).toBe(FEE)
+  })
+
+  it('a fee-free response still parses with nativeFeeRaw 0n (the old exact-equality case)', () => {
+    expect(parseLifiQuote(good(), asked).nativeFeeRaw).toBe(0n)
+  })
+
+  it('rejects value that exceeds principal WITHOUT a disclosing fee entry — undisclosed wei still dies', () => {
+    const b = crossFee()
+    ;(b.estimate as Record<string, unknown>).feeCosts = []
+    expect(() => parseLifiQuote(b, askedX)).toThrow(/unexpected transaction value/)
+  })
+
+  it('an included:true fee never raises the expected value', () => {
+    const b = crossFee()
+    ;((b.estimate as Record<string, unknown>).feeCosts as Record<string, unknown>[])[0]!.included = true
+    // value still claims principal + fee → mismatch → reject
+    expect(() => parseLifiQuote(b, askedX)).toThrow(/unexpected transaction value/)
+  })
+
+  it('a destination-chain fee entry never rides this transaction value', () => {
+    const b = crossFee()
+    ;(((b.estimate as Record<string, unknown>).feeCosts as Record<string, unknown>[])[0]!.token as Record<string, unknown>).chainId = 4663
+    expect(() => parseLifiQuote(b, askedX)).toThrow(/unexpected transaction value/)
+  })
+
+  it('a token pay may carry the on-top native fee as its whole value', () => {
+    const b = crossFee()
+    b.action.fromToken = { address: USDG }
+    b.transactionRequest.value = '0x' + FEE.toString(16)
+    const q = parseLifiQuote(b, { ...askedX, fromToken: USDG })
+    expect(q.tx.value).toBe(FEE)
+    expect(q.nativeFeeRaw).toBe(FEE)
+  })
+
+  it('a native "fee" exceeding the principal is rejected outright', () => {
+    const b = crossFee()
+    const huge = askedX.fromAmount + 1n
+    ;((b.estimate as Record<string, unknown>).feeCosts as Record<string, unknown>[])[0]!.amount = huge.toString()
+    b.transactionRequest.value = '0x' + (askedX.fromAmount + huge).toString(16)
+    expect(() => parseLifiQuote(b, askedX)).toThrow(/native fee exceeds/)
+  })
+
+  it('an unreadable fee amount is malformed, never zero', () => {
+    const b = crossFee()
+    ;((b.estimate as Record<string, unknown>).feeCosts as Record<string, unknown>[])[0]!.amount = 'not-a-number'
+    expect(() => parseLifiQuote(b, askedX)).toThrow(/fee costs/)
   })
 })

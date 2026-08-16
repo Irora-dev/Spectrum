@@ -1,9 +1,10 @@
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 import { DEFAULT_CHAIN_ID } from '../lib/chain/chains'
 import { useAllBaskets, useCreatorMeta } from '../lib/spectrum/hooks'
 import { resolveCreator } from '../lib/spectrum/creator'
 import { perfMeasurable, perfToDate } from '../lib/spectrum/leaderboard'
 import { formatPct, formatUsdCompact } from '../lib/spectrum/format'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { BasketBento } from '../components/BasketBento'
 import { BasketWash } from '../components/BasketWash'
@@ -69,9 +70,17 @@ export function Embed() {
         <div className="relative flex items-center gap-3 pt-1">
           <BasketAvatar address={ix.address} symbol={ix.symbol} size={40} />
           <div className="min-w-0 flex-1">
-            <div className="font-display text-xl font-bold leading-tight text-ink">${ix.symbol}</div>
+            {/* BOUNDED AND INERT, because this card renders inside SOMEONE
+                ELSE'S page (audit 2026-08-07). The ticker had no clip and no
+                showSymbol, so a deployer's 2,000-character symbol became a wall
+                of text in an embedder's 420px iframe, and a U+202E in the name
+                reversed the attribution that follows it — our card turned into
+                a tool for misrepresenting a third party's site. */}
+            <div className="truncate font-display text-xl font-bold leading-tight text-ink">
+              ${showSymbol(ix.symbol)}
+            </div>
             <div className="truncate text-xs text-ink-dim">
-              {ix.name?.trim() || ''} · by {identity.label}
+              {showName(ix.name)} · by {identity.label}
             </div>
           </div>
         </div>

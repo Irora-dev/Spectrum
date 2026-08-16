@@ -15,3 +15,14 @@ site.zip
 .vite
 *.tsbuildinfo
 .claude/settings.local.json
+# Per-basket share cards are BUILD OUTPUT (scripts/build-og-cards.mjs), like the sitemap.
+public/og/
+# public/extension/ is deliberately NOT ignored: unlike the sitemap (prebuild
+# regenerates it every build), nothing on CI re-packages the extension — a
+# git-connected deploy ships only what is committed, so the packaged artifacts
+# must be committed to distribute at /extension.
+# Stryker mutation-testing artifacts (path-3 runs): the numbers file to the
+# thread; the raw report + sandbox are per-run machine output.
+reports/mutation/
+.stryker-tmp/
+.shadow/

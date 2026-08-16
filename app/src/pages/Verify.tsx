@@ -89,8 +89,15 @@ export function Verify() {
   // The protocol's deployer identity — resolved LIVE from mainnet ENS every visit
   // (never a baked address). Failure renders honestly as unresolvable.
   const [anchor, setAnchor] = useState<{ state: 'loading' | 'ok' | 'error'; address?: Address }>({ state: 'loading' })
+  // `attempt` exists so the failure can actually be retried (QOL 2026-08-07):
+  // the page told the reader to "retry later" while offering nothing to press,
+  // so a single flaky mainnet read left a reload as the only way forward. Same
+  // class the onboarding retry fixed — never ask for an action the page does
+  // not offer.
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let stale = false
+    setAnchor({ state: 'loading' })
     clientFor(MAINNET_CHAIN_ID)
       .getEnsAddress({ name: normalize(DEPLOYER_ANCHOR_ENS) })
       .then((a) => {
@@ -102,7 +109,7 @@ export function Verify() {
     return () => {
       stale = true
     }
-  }, [])
+  }, [attempt])
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-14">
@@ -164,7 +171,14 @@ export function Verify() {
           )}
           {anchor.state === 'error' && (
             <span className="font-mono text-[11px] text-amber-300">
-              Could not resolve {DEPLOYER_ANCHOR_ENS} right now — that means unverifiable, not genuine. Retry later.
+              Could not resolve {DEPLOYER_ANCHOR_ENS} right now — that means unverifiable, not genuine.{' '}
+              <button
+                type="button"
+                onClick={() => setAttempt((n) => n + 1)}
+                className="press underline underline-offset-4 hover:text-amber-200"
+              >
+                Try again
+              </button>
             </span>
           )}
         </div>

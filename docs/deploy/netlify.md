@@ -31,8 +31,8 @@ values — don't override them in the UI. Base `app` is also what makes Netlify 
 the **OG edge function** (`app/netlify/edge-functions/og.ts` — per-URL titles/descriptions
 for shared basket, creator and refer links).
 
-If your build complains about the Node version, add an env var `NODE_VERSION` = `20` in the
-next step.
+The Node version is pinned in the same file (`NODE_VERSION = "22"`), so there is nothing to
+add for it.
 
 ## 4. Set the environment variable
 

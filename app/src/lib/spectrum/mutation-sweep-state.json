@@ -1,0 +1,642 @@
+{
+  "note": "WRITTEN BY scripts/mutation-sweep.mjs — do not hand-edit `swept`. Triage lives in mutation-triage.json.",
+  "swept": {
+    "displayed-vs-signed": {
+      "at": "2026-08-16",
+      "digest": "sha256:e498c6c37342ea11",
+      "sites": 48,
+      "mutants": 48,
+      "killed": 44,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "displayed-vs-signed:421:26:> → >=",
+          "line": 421,
+          "col": 26,
+          "op": "> → >=",
+          "text": "if (optionalLegs.length > 0 && legs.length > 1 && optionalLegs.length === legs.length)"
+        },
+        {
+          "sig": "displayed-vs-signed:437:18:> → >=",
+          "line": 437,
+          "col": 18,
+          "op": "> → >=",
+          "text": "if (totalBudget > 0n && legs.length > 1) {"
+        },
+        {
+          "sig": "displayed-vs-signed:718:26:> → >=",
+          "line": 718,
+          "col": 26,
+          "op": "> → >=",
+          "text": "if (optionalLegs.length > 0 && legs.length > 1 && optionalLegs.length === legs.length)"
+        },
+        {
+          "sig": "displayed-vs-signed:721:18:> → >=",
+          "line": 721,
+          "col": 18,
+          "op": "> → >=",
+          "text": "if (totalCommit > 0n && legs.length > 1) {"
+        }
+      ]
+    },
+    "floor-discipline": {
+      "at": "2026-08-16",
+      "digest": "sha256:528846e18bb30d71",
+      "sites": 37,
+      "mutants": 37,
+      "killed": 35,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "floor-discipline:220:71:<= → <",
+          "line": 220,
+          "col": 71,
+          "op": "<= → <",
+          "text": "if (hopReserve == null || !Number.isFinite(hopReserve) || hopReserve <= 0) return null"
+        },
+        {
+          "sig": "floor-discipline:409:64:> → >=",
+          "line": 409,
+          "col": 64,
+          "op": "> → >=",
+          "text": "cumulative += Number.isFinite(leg.notional) && leg.notional > 0 ? leg.notional : 0"
+        }
+      ]
+    },
+    "plan-legs": {
+      "at": "2026-08-16",
+      "digest": "sha256:c326395cda113e4f",
+      "sites": 92,
+      "mutants": 92,
+      "killed": 80,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "plan-legs:92:60:> → >=",
+          "line": 92,
+          "col": 60,
+          "op": "> → >=",
+          "text": "const clean = weights.map((w) => (Number.isFinite(w) && w > 0 ? w : 0))"
+        },
+        {
+          "sig": "plan-legs:94:31:<= → <",
+          "line": 94,
+          "col": 31,
+          "op": "<= → <",
+          "text": "if (!(sum > 0) || totalCents <= 0) return weights.map(() => 0)"
+        },
+        {
+          "sig": "plan-legs:186:105:<= → <",
+          "line": 186,
+          "col": 105,
+          "op": "<= → <",
+          "text": "const depthUnreadable = t.liquidityUsd == null || !Number.isFinite(t.liquidityUsd) || t.li"
+        },
+        {
+          "sig": "plan-legs:355:94:> → >=",
+          "line": 355,
+          "col": 94,
+          "op": "> → >=",
+          "text": "const weightSum = targets.reduce((s, t) => s + (Number.isFinite(t.weightPct) && t.weightPc"
+        },
+        {
+          "sig": "plan-legs:392:89:> → >=",
+          "line": 392,
+          "col": 89,
+          "op": "> → >=",
+          "text": "const readable = !!t && Number.isFinite(t.weightPct) && t.weightPct > 0 && weightSum > 0"
+        },
+        {
+          "sig": "plan-legs:414:81:> → >=",
+          "line": 414,
+          "col": 81,
+          "op": "> → >=",
+          "text": "const readableConsent = !!t && Number.isFinite(t.weightPct) && t.weightPct > 0 && weightSu"
+        },
+        {
+          "sig": "plan-legs:414:98:> → >=",
+          "line": 414,
+          "col": 98,
+          "op": "> → >=",
+          "text": "const readableConsent = !!t && Number.isFinite(t.weightPct) && t.weightPct > 0 && weightSu"
+        },
+        {
+          "sig": "plan-legs:462:105:> → >=",
+          "line": 462,
+          "col": 105,
+          "op": "> → >=",
+          "text": "([k, t]) => !composedAssets.has(k) && Number.isFinite(t.weightPct) && t.weightPct > 0 && w"
+        },
+        {
+          "sig": "plan-legs:565:13:> → >=",
+          "line": 565,
+          "col": 13,
+          "op": "> → >=",
+          "text": "if (over > overPp) {"
+        },
+        {
+          "sig": "plan-legs:583:16:&& → ||",
+          "line": 583,
+          "col": 16,
+          "op": "&& → ||",
+          "text": "const got = r && Number.isFinite(r.realisedPct) ? Math.ceil(r.realisedPct) : null"
+        },
+        {
+          "sig": "plan-legs:631:28:<= → <",
+          "line": 631,
+          "col": 28,
+          "op": "<= → <",
+          "text": "for (let round = 0; round <= targets.length + 1; round++) {"
+        },
+        {
+          "sig": "plan-legs:707:65:> → >=",
+          "line": 707,
+          "col": 65,
+          "op": "> → >=",
+          "text": "(m, r) => (m == null || r.realisedPct - r.consentedPct > m.realisedPct - m.consentedPct ? "
+        }
+      ]
+    },
+    "batcher": {
+      "at": "2026-08-16",
+      "digest": "sha256:53dfaf8d81e3ba13",
+      "sites": 37,
+      "mutants": 37,
+      "killed": 27,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "batcher:191:49:<= → <",
+          "line": 191,
+          "col": 49,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(totalCents) || totalCents <= 0) return 0"
+        },
+        {
+          "sig": "batcher:199:45:<= → <",
+          "line": 199,
+          "col": 45,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(legCents) || legCents <= 0) return 0"
+        },
+        {
+          "sig": "batcher:210:24:<= → <",
+          "line": 210,
+          "col": 24,
+          "op": "<= → <",
+          "text": "if (venueBuyBudgetRaw <= 0n) return 0n"
+        },
+        {
+          "sig": "batcher:219:24:<= → <",
+          "line": 219,
+          "col": 24,
+          "op": "<= → <",
+          "text": "if (venueBuyBudgetRaw <= 0n) return 0n"
+        },
+        {
+          "sig": "batcher:229:17:<= → <",
+          "line": 229,
+          "col": 17,
+          "op": "<= → <",
+          "text": "if (ethHaveRaw <= 0n) return 0n"
+        },
+        {
+          "sig": "batcher:257:51:<= → <",
+          "line": 257,
+          "col": 51,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(budgetCents) || budgetCents <= 0) return 0"
+        },
+        {
+          "sig": "batcher:289:63:> → >=",
+          "line": 289,
+          "col": 63,
+          "op": "> → >=",
+          "text": "const weights = legCents.map((c) => (Number.isFinite(c) && c > 0 ? Math.floor(c) : 0))"
+        },
+        {
+          "sig": "batcher:291:16:<= → <",
+          "line": 291,
+          "col": 16,
+          "op": "<= → <",
+          "text": "if (spendable <= 0n || weightSum <= 0) return legCents.map(() => asFundingRaw(0n))"
+        },
+        {
+          "sig": "batcher:299:28:> → >=",
+          "line": 299,
+          "col": 28,
+          "op": "> → >=",
+          "text": ".sort((a, b) => (b.frac > a.frac ? 1 : b.frac < a.frac ? -1 : 0))"
+        },
+        {
+          "sig": "batcher:300:49:> → >=",
+          "line": 300,
+          "col": 49,
+          "op": "> → >=",
+          "text": "for (let k = 0; remainder > 0n && order.length > 0; k += 1, remainder -= 1n) {"
+        }
+      ]
+    },
+    "submission-store": {
+      "at": "2026-08-16",
+      "digest": "sha256:e847513f5f232a7b",
+      "sites": 93,
+      "mutants": 93,
+      "killed": 91,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "submission-store:885:33:> → >=",
+          "line": 885,
+          "col": 33,
+          "op": "> → >=",
+          "text": "if (!store || !id || id.length > MAX_STEP_KEY_LEN) return"
+        },
+        {
+          "sig": "submission-store:886:37:< → <=",
+          "line": 886,
+          "col": 37,
+          "op": "< → <=",
+          "text": "if (!Number.isFinite(atMs) || atMs < MIN_PLAUSIBLE_MS || atMs > MAX_PLAUSIBLE_MS) return"
+        }
+      ]
+    },
+    "pool-safety": {
+      "at": "2026-08-16",
+      "digest": "sha256:810e334fff890bec",
+      "sites": 31,
+      "mutants": 31,
+      "killed": 30,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "pool-safety:412:31:> → >=",
+          "line": 412,
+          "col": 31,
+          "op": "> → >=",
+          "text": "if (runnerUp && runnerUp.usd > 0) {"
+        }
+      ]
+    },
+    "funding-plan": {
+      "at": "2026-08-16",
+      "digest": "sha256:86e07b3f7948d343",
+      "sites": 100,
+      "mutants": 100,
+      "killed": 81,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "funding-plan:288:47:<= → <",
+          "line": 288,
+          "col": 47,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(needCents) || needCents <= 0) return 0"
+        },
+        {
+          "sig": "funding-plan:289:57:<= → <",
+          "line": 289,
+          "col": 57,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(availableCents) || availableCents <= 0) return 0"
+        },
+        {
+          "sig": "funding-plan:298:47:<= → <",
+          "line": 298,
+          "col": 47,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(drawCents) || drawCents <= 0) return 0"
+        },
+        {
+          "sig": "funding-plan:299:53:<= → <",
+          "line": 299,
+          "col": 53,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(surplusCents) || surplusCents <= 0) return 0"
+        },
+        {
+          "sig": "funding-plan:376:14:<= → <",
+          "line": 376,
+          "col": 14,
+          "op": "<= → <",
+          "text": "if (raw <= 0n)"
+        },
+        {
+          "sig": "funding-plan:436:19:> → >=",
+          "line": 436,
+          "col": 19,
+          "op": "> → >=",
+          "text": "if (sells.length > 0) {"
+        },
+        {
+          "sig": "funding-plan:439:50:>= → >",
+          "line": 439,
+          "col": 50,
+          "op": ">= → >",
+          "text": "if (inv.gasNeedRaw != null && inv.nativeRaw >= inv.gasNeedRaw) continue"
+        },
+        {
+          "sig": "funding-plan:532:32:> → >=",
+          "line": 532,
+          "col": 32,
+          "op": "> → >=",
+          "text": ".filter((r) => r.shortCents > 0)"
+        },
+        {
+          "sig": "funding-plan:540:21:> → >=",
+          "line": 540,
+          "col": 21,
+          "op": "> → >=",
+          "text": "if (r.shortCents > 0 && newMoneyLeft > 0 && newMoneyChain != null) {"
+        },
+        {
+          "sig": "funding-plan:557:21:> → >=",
+          "line": 557,
+          "col": 21,
+          "op": "> → >=",
+          "text": "if (r.shortCents > 0 && needsCarrier.has(r.chainId)) {"
+        },
+        {
+          "sig": "funding-plan:573:21:> → >=",
+          "line": 573,
+          "col": 21,
+          "op": "> → >=",
+          "text": "if (r.shortCents > 0) {"
+        },
+        {
+          "sig": "funding-plan:576:48:<= → <",
+          "line": 576,
+          "col": 48,
+          "op": "<= → <",
+          "text": "if (srcChain === r.chainId || available <= 0) continue"
+        },
+        {
+          "sig": "funding-plan:597:77:> → >=",
+          "line": 597,
+          "col": 77,
+          "op": "> → >=",
+          "text": "const inbound = bridges.filter((b) => b.toChainId === chainId && b.cents > 0)"
+        },
+        {
+          "sig": "funding-plan:597:66:&& → ||",
+          "line": 597,
+          "col": 66,
+          "op": "&& → ||",
+          "text": "const inbound = bridges.filter((b) => b.toChainId === chainId && b.cents > 0)"
+        },
+        {
+          "sig": "funding-plan:607:82:=== → !==",
+          "line": 607,
+          "col": 82,
+          "op": "=== → !==",
+          "text": "const local = [...resolvedById.get(chainId)!.drawn].some((d) => d.fromChainId === chainId)"
+        },
+        {
+          "sig": "funding-plan:632:16:<= → <",
+          "line": 632,
+          "col": 16,
+          "op": "<= → <",
+          "text": "if (b.cents <= 0 || bridgeSourceRefused.has(b.fromChainId)) continue"
+        },
+        {
+          "sig": "funding-plan:680:80:> → >=",
+          "line": 680,
+          "col": 80,
+          "op": "> → >=",
+          "text": "const liveBridges = bridges.filter((b) => liveIds.has(b.toChainId) && b.cents > 0 && !brid"
+        },
+        {
+          "sig": "funding-plan:689:33:> → >=",
+          "line": 689,
+          "col": 33,
+          "op": "> → >=",
+          "text": "const shift = liveSells.length > 0 ? 1 : 0"
+        },
+        {
+          "sig": "funding-plan:754:23:> → >=",
+          "line": 754,
+          "col": 23,
+          "op": "> → >=",
+          "text": "if (liveSells.length > 0) {"
+        }
+      ]
+    },
+    "runner-effects": {
+      "at": "2026-08-16",
+      "digest": "sha256:1eaf91bc4cbc9da8",
+      "sites": 122,
+      "mutants": 122,
+      "killed": 122,
+      "partial": false,
+      "survivors": []
+    },
+    "portfolio-batcher": {
+      "at": "2026-08-16",
+      "digest": "sha256:8c5239e473b64080",
+      "sites": 75,
+      "mutants": 40,
+      "killed": 36,
+      "partial": true,
+      "survivors": [
+        {
+          "sig": "portfolio-batcher:126:31:<= → <",
+          "line": 126,
+          "col": 31,
+          "op": "<= → <",
+          "text": "if (impact == null || impact <= 0 || impact >= 10_000) return spotOutRaw"
+        },
+        {
+          "sig": "portfolio-batcher:356:22:<= → <",
+          "line": 356,
+          "col": 22,
+          "op": "<= → <",
+          "text": "if (fundingTotalRaw <= 0n) return 0n"
+        },
+        {
+          "sig": "portfolio-batcher:365:33:> → >=",
+          "line": 365,
+          "col": 33,
+          "op": "> → >=",
+          "text": "while (c + (c * fee) / 10_000n > fundingTotalRaw) c -= 1n"
+        },
+        {
+          "sig": "portfolio-batcher:365:10:+ → -",
+          "line": 365,
+          "col": 10,
+          "op": "+ → -",
+          "text": "while (c + (c * fee) / 10_000n > fundingTotalRaw) c -= 1n"
+        }
+      ]
+    },
+    "allocation": {
+      "at": "2026-08-16",
+      "digest": "sha256:51df15a02c6273c2",
+      "sites": 121,
+      "mutants": 40,
+      "killed": 35,
+      "partial": true,
+      "survivors": [
+        {
+          "sig": "allocation:300:8:<= → <",
+          "line": 300,
+          "col": 8,
+          "op": "<= → <",
+          "text": "if (n <= 0) return []"
+        },
+        {
+          "sig": "allocation:401:42:> → >=",
+          "line": 401,
+          "col": 42,
+          "op": "> → >=",
+          "text": "Number.isFinite(t.weight) && t.weight > 0 ? t : { ...t, weight: 0 },"
+        },
+        {
+          "sig": "allocation:404:12:<= → <",
+          "line": 404,
+          "col": 12,
+          "op": "<= → <",
+          "text": "if (total <= 0 || clean.length === 0) return clean.map((t) => ({ ...t, pct: 0, usd: 0 }))"
+        },
+        {
+          "sig": "allocation:631:42:> → >=",
+          "line": 631,
+          "col": 42,
+          "op": "> → >=",
+          "text": "seedFromRows && seedFromRows.length > 0"
+        },
+        {
+          "sig": "allocation:644:50:> → >=",
+          "line": 644,
+          "col": 50,
+          "op": "> → >=",
+          "text": "seedFrom: seedFromRows && seedFromRows.length > 0 ? seedFromRows : undefined,"
+        }
+      ]
+    },
+    "execution-runner": {
+      "at": "2026-08-16",
+      "digest": "sha256:530a17b78a448eb1",
+      "sites": 49,
+      "mutants": 40,
+      "killed": 38,
+      "partial": true,
+      "survivors": [
+        {
+          "sig": "execution-runner:389:39:<= → <",
+          "line": 389,
+          "col": 39,
+          "op": "<= → <",
+          "text": "return prefix.length + digest.length <= MAX_STEP_KEY_LEN"
+        },
+        {
+          "sig": "execution-runner:939:22:< → <=",
+          "line": 939,
+          "col": 22,
+          "op": "< → <=",
+          "text": "for (let i = 0; i < joined.length; i++) {"
+        }
+      ]
+    },
+    "assemble-batch": {
+      "at": "2026-08-16",
+      "digest": "sha256:60f8cc13a2e2a174",
+      "sites": 42,
+      "mutants": 42,
+      "killed": 29,
+      "partial": false,
+      "survivors": [
+        {
+          "sig": "assemble-batch:204:28:> → >=",
+          "line": 204,
+          "col": 28,
+          "op": "> → >=",
+          "text": "if (input.fundingTotalRaw > 0n) {"
+        },
+        {
+          "sig": "assemble-batch:210:54:<= → <",
+          "line": 210,
+          "col": 54,
+          "op": "<= → <",
+          "text": "if (Number.isFinite(nano) && nano > 0 && nano <= Number.MAX_SAFE_INTEGER) expectedRaw = Bi"
+        },
+        {
+          "sig": "assemble-batch:210:42:> → >=",
+          "line": 210,
+          "col": 42,
+          "op": "> → >=",
+          "text": "if (Number.isFinite(nano) && nano > 0 && nano <= Number.MAX_SAFE_INTEGER) expectedRaw = Bi"
+        },
+        {
+          "sig": "assemble-batch:210:34:&& → ||",
+          "line": 210,
+          "col": 34,
+          "op": "&& → ||",
+          "text": "if (Number.isFinite(nano) && nano > 0 && nano <= Number.MAX_SAFE_INTEGER) expectedRaw = Bi"
+        },
+        {
+          "sig": "assemble-batch:210:46:&& → ||",
+          "line": 210,
+          "col": 46,
+          "op": "&& → ||",
+          "text": "if (Number.isFinite(nano) && nano > 0 && nano <= Number.MAX_SAFE_INTEGER) expectedRaw = Bi"
+        },
+        {
+          "sig": "assemble-batch:215:121:<= → <",
+          "line": 215,
+          "col": 121,
+          "op": "<= → <",
+          "text": "} else if (!(Number.isInteger(input.settlementDecimals) && input.settlementDecimals >= 0 &"
+        },
+        {
+          "sig": "assemble-batch:215:88:>= → >",
+          "line": 215,
+          "col": 88,
+          "op": ">= → >",
+          "text": "} else if (!(Number.isInteger(input.settlementDecimals) && input.settlementDecimals >= 0 &"
+        },
+        {
+          "sig": "assemble-batch:224:150:<= → <",
+          "line": 224,
+          "col": 150,
+          "op": "<= → <",
+          "text": "if (input.fundingAsset !== zeroAddress && Number.isInteger(input.settlementDecimals) && in"
+        },
+        {
+          "sig": "assemble-batch:224:117:>= → >",
+          "line": 224,
+          "col": 117,
+          "op": ">= → >",
+          "text": "if (input.fundingAsset !== zeroAddress && Number.isInteger(input.settlementDecimals) && in"
+        },
+        {
+          "sig": "assemble-batch:227:43:> → >=",
+          "line": 227,
+          "col": 43,
+          "op": "> → >=",
+          "text": "if (expectedRaw != null && expectedRaw > 0n) {"
+        },
+        {
+          "sig": "assemble-batch:227:28:&& → ||",
+          "line": 227,
+          "col": 28,
+          "op": "&& → ||",
+          "text": "if (expectedRaw != null && expectedRaw > 0n) {"
+        },
+        {
+          "sig": "assemble-batch:315:47:<= → <",
+          "line": 315,
+          "col": 47,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(hubNano) || hubNano <= 0 || hubNano > Number.MAX_SAFE_INTEGER)"
+        },
+        {
+          "sig": "assemble-batch:315:63:> → >=",
+          "line": 315,
+          "col": 63,
+          "op": "> → >=",
+          "text": "if (!Number.isFinite(hubNano) || hubNano <= 0 || hubNano > Number.MAX_SAFE_INTEGER)"
+        }
+      ]
+    }
+  }
+}

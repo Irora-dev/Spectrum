@@ -260,6 +260,34 @@ if (!(val('VITE_SITE_URL') || String(siteCfg.siteUrl ?? '').trim())) {
   }
 }
 
+// ── 6d. THE COMPOSE⇒SINK CANARY (pass-one LOW-2, 2026-08-14): the F4
+// fee-redirect law pins the composed feeRecipient to THIS operator's sink —
+// but with no sink configured the pin stands down by design, and the reviewer
+// MEASURED a composer-redirected recipient passing every law on a sink-less
+// deploy. The dangerous pair is a CONFIG state (flag flipped, sink unset), so
+// the config doctor is where it fails: at build time, on the deploy's real
+// env, before anything ships. FATAL — a live 0x path without the revenue pin
+// is a misconfiguration, not a preference. ──
+{
+  let composeEnabled = false
+  try {
+    const src = readFileSync(resolve(APP_DIR, 'src/lib/spectrum/portfolio-batcher.ts'), 'utf8')
+    // the interlock's own anchored single-match law: comments cannot decoy it
+    const hits = [...src.matchAll(/^[\t ]*export const ZEROEX_COMPOSE_ENABLED = (true|false)\b/gm)]
+    composeEnabled = hits.length === 1 ? hits[0][1] === 'true' : true // unreadable is LIVE
+  } catch {
+    composeEnabled = true // could not read the flag — treat as live, fail closed
+  }
+  if (composeEnabled) {
+    const sink = val('VITE_INTERFACE_TAG_ADDRESS') || String(siteCfg.feeWallet ?? '').trim()
+    if (!validAddr(sink)) {
+      errors.push(
+        'ZEROEX_COMPOSE_ENABLED is live but NO operator fee sink resolves (VITE_INTERFACE_TAG_ADDRESS and site.config.json feeWallet are both unset/invalid) — the F4 fee-redirect pin would stand down and a compromised composer could route the batch fee anywhere. Set the sink before building a compose-enabled deploy.',
+      )
+    }
+  }
+}
+
 // ── 6c. schema drift: a site.config.json written by an OLDER kit ──
 // The update path keeps the operator's three identity files (theirs-wins), so after
 // a kit update the committed json can predate fields the current code reads. Missing

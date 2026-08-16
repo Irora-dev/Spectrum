@@ -118,8 +118,19 @@ interface AlchemyPoint {
   timestamp: string
 }
 
+/** The native-asset placeholder. Not a contract, so no token API can answer for
+ *  it — callers that want native history map it to the chain's WETH first
+ *  (planPortfolioHistory does). */
+const NATIVE_SENTINEL = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+
 async function fetchAlchemy(network: string, address: string, plan: RangePlan): Promise<NavPoint[]> {
   if (!ALCHEMY_KEY) throw new Error('no-alchemy-key')
+  // ASK NOTHING WE KNOW CANNOT BE ANSWERED. Posting the native sentinel here
+  // returned 400 "Token not found" on every page load — a guaranteed-failed
+  // call, once per load, plus a red line in the console that trains everyone
+  // to ignore the console. Refusing locally costs nothing and the ladder falls
+  // through exactly as it did on the 400.
+  if (address.toLowerCase() === NATIVE_SENTINEL) throw new Error('native-sentinel-has-no-token-history')
   const endTime = Math.floor(Date.now() / 1000)
   const startTime = endTime - plan.seconds
   const res = await fetch(`https://api.g.alchemy.com/prices/v1/${ALCHEMY_KEY}/tokens/historical`, {
@@ -185,9 +196,18 @@ export async function fetchAssetHistory(
   await acquire()
   try {
     if (chainId === 4663) {
+      // A single feed round is held as the LAST resort rather than discarded:
+      // the rounds walk truncates honestly on any per-round failure (a
+      // rate-limited wave is indistinguishable from a phase end), which can
+      // leave exactly one point — the live latestRoundData answer. That one
+      // point is still a REAL price. Dropping it rendered a feed-listed asset
+      // as '—' beside a healthy feed (the WETH dash, observed 2026-08-03);
+      // one honest point prices the asset and simply draws no curve.
+      let single: NavPoint[] | null = null
       try {
         const c = await fetchChainlink4663(chainId, address, plan)
         if (c.length >= 2) return c
+        if (c.length === 1) single = c
       } catch {
         /* feed hiccup — try the pool rung */
       }
@@ -199,6 +219,7 @@ export async function fetchAssetHistory(
       } catch {
         /* patchy archival replicas — honest empty */
       }
+      if (single) return single
     }
     if (opts.preferKeyless) {
       try {

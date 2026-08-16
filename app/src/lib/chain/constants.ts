@@ -7,7 +7,8 @@ import type { Address } from 'viem'
 //
 // Fee-model values (fee bps, burn share, bounds) are NOT constants in V2 — they
 // vary per basket and are read on-chain (lib/spectrum/use-basket-fees.ts).
-// Auction parameters are read from factory views (abis-v2.ts), not hardcoded.
+// The launch fee and its 10-block cooldown are read from factory views
+// (abis-v2.ts), not hardcoded.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const BASE_CHAIN_ID = 8453

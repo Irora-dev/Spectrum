@@ -1,5 +1,6 @@
 import { useRef, type CSSProperties } from 'react'
-import { Link } from 'react-router-dom'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { BasketAvatar } from './BasketAvatar'
 import { AssetLogo } from './AssetLogo'
@@ -85,10 +86,10 @@ export function TopBasket({ ix, label = 'Largest by total value' }: { ix: Basket
               <BasketAvatar address={ix.address} symbol={ix.symbol} size={60} />
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-display text-2xl font-semibold leading-none text-ink">${ix.symbol}</span>
+                  <span className="font-display text-2xl font-semibold leading-none text-ink">${showSymbol(ix.symbol)}</span>
                   <ChainBadge chainId={ix.chainId} />
                 </div>
-                <div className="mt-1.5 truncate text-sm text-ink-dim">{ix.name || ix.symbol}</div>
+                <div className="mt-1.5 truncate text-sm text-ink-dim">{ix.name?.trim() ? showName(ix.name) : showSymbol(ix.symbol)}</div>
                 <div className="mt-1 flex items-center gap-1 font-mono text-[10px] tracking-wide text-ink-faint">
                   <span>by</span>
                   <CreatorChip deployer={ix.deployer} basket={ix.address} chainId={ix.chainId} size={16} asLink={false} className="font-mono text-[10px]" />

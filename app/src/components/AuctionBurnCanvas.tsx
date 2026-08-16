@@ -137,7 +137,11 @@ export function AuctionBurnCanvas() {
       </div>
 
       <div className="relative p-6 sm:p-7">
-        <h2 className="font-display text-3xl font-bold uppercase tracking-tight text-ink sm:text-4xl">Auction burn</h2>
+        {/* "Launch-fee burn", not "Auction burn": these contracts charge a flat
+            launch fee and hold no auction. The contract function is still named
+            flushAuctionProceeds(), so the CODE keeps that word; the page does
+            not, because the page is what a person reads. */}
+        <h2 className="font-display text-3xl font-bold uppercase tracking-tight text-ink sm:text-4xl">Launch-fee burn</h2>
         <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
           anyone can crank · gas only · Ethereum
         </div>
@@ -154,7 +158,7 @@ export function AuctionBurnCanvas() {
               <span className="text-xl text-ink-dim">ETH</span>
             </div>
             <p className="mt-3 max-w-[26rem] text-balance text-sm leading-snug text-ink-dim">
-              Auction fees waiting on the{' '}
+              Launch fees waiting on the{' '}
               <a href={`${cfg.explorer}/address/${factory}`} target="_blank" rel="noreferrer" className="text-cyan hover:underline">
                 factory
               </a>

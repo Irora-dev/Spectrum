@@ -28,7 +28,7 @@ function signatureOf(ev: AbiEvent): string {
 const eventsOf = (abi: Abi): AbiEvent[] => abi.filter((i): i is AbiEvent => i.type === 'event')
 
 const EVENT_ROWS: { contract: string; ev: AbiEvent; note: string }[] = [
-  { contract: 'Factory', ev: launchedEvent, note: 'One per basket created; ethPaid is the auction price.' },
+  { contract: 'Factory', ev: launchedEvent, note: 'One per basket created; ethPaid is the launch fee.' },
   { contract: 'Basket', ev: feeConfiguredEvent, note: 'Once at initialize; the immutable fee economics.' },
   ...eventsOf(basketAbi as Abi)
     .map((ev) => ({
@@ -85,8 +85,9 @@ export function IndexingReference() {
             not per trade.
           </>,
           <>
-            <IC>currentDeployPrice()</IC> REVERTS between auction slots. That is an honest state
-            (one deploy per slot), not an outage.
+            <IC>currentDeployPrice()</IC> returns a flat launch fee, and REVERTS{' '}
+            <IC>SlotNotOpen()</IC> for 10 blocks after a launch. That is an honest state, not an
+            outage.
           </>,
           <>
             Settlement asset per chain: the factory's <IC>USDC()</IC> immutable (USDC on Base and

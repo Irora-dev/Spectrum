@@ -1,24 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { showSymbol } from '../../lib/spectrum/safe-copy'
 import { AssetLogo } from '../AssetLogo'
 import { tokenVisual } from '../../lib/spectrum/token-meta'
 import { chainCfg } from '../../lib/chain/chains'
-import { aggregatePairs, ethHubsFor, type Agg, type DexPair } from '../../lib/spectrum/token-search'
+import { aggregatePairs, ethHubsFor, quoteSideUsd, type Agg, type DexPair } from '../../lib/spectrum/token-search'
 
 interface Candidate {
   address: string
   symbol: string
 }
 
-interface LiqLite {
+export interface LiqLite {
   liquidityUsd: number
   marketCapUsd: number
   priceChangeH24: number | null
+  /** USD price from the DEEPEST ETH/WETH-quoted pair — the same pair the 24h
+   *  change is read from, so the two figures never describe different markets.
+   *  null = no such pair quoted a price (the caller prints "—", never 0). */
+  priceUsd: number | null
   name: string
 }
 
 // large-cap gate for the "highlight the gainers" ordering (owner 19:15: "tokens
 // over say a 10 mil market cap ... good price appreciation").
-const MIN_HIGHLIGHT_MCAP = 10_000_000
+// EXPORTED (with LiqLite + fetchLiquidity) for the create face's cross-chain
+// picker (CreateAssetPicker, 2026-08-12): one home for the batch-depth read and
+// the gainer law — copying them there would be the restated-number trap.
+export const MIN_HIGHLIGHT_MCAP = 10_000_000
+
+// Same ceiling aggregatePairs keeps on one response: a glitchy or hostile
+// payload must degrade (a missing price prints "—"), never hang the picker.
+const MAX_PRICE_PAIRS = 500
 
 // "Trending tokens" — candidate legs drawn from live baskets (previously-used /
 // trending across ETH + Base), each shown with its 24h price move; large-cap
@@ -33,7 +45,7 @@ const MIN_HIGHLIGHT_MCAP = 10_000_000
 // The candidate POOL is still the live baskets' constituents (a true cross-chain
 // ">$10M mcap top-gainers" feed independent of baskets needs a data source —
 // flagged upstream, not wired here).
-async function fetchLiquidity(addresses: string[], chainId: number): Promise<Map<string, LiqLite>> {
+export async function fetchLiquidity(addresses: string[], chainId: number): Promise<Map<string, LiqLite>> {
   const out = new Map<string, LiqLite>()
   const uniq = [...new Set(addresses.map((a) => a.toLowerCase()))].slice(0, 30)
   if (uniq.length === 0) return out
@@ -48,13 +60,32 @@ async function fetchLiquidity(addresses: string[], chainId: number): Promise<Map
     })
     if (!r.ok) return out
     const pairs = (await r.json()) as DexPair[]
+    const rows = Array.isArray(pairs) ? pairs : []
+    const hubs = ethHubsFor(chainId)
     const aggs = new Map<string, Agg>()
-    aggregatePairs(Array.isArray(pairs) ? pairs : [], slug, ethHubsFor(chainId), aggs)
+    aggregatePairs(rows, slug, hubs, aggs)
+    // PRICE, from the deepest ETH/WETH-quoted pair (owner 2026-08-12: the
+    // create cards should show "price / mcap of each asset rather than 24hr %").
+    // Same quote-side depth rule the aggregate uses, so an impostor pool with a
+    // fake price cannot outrank the real market on its own claim.
+    const priceOf = new Map<string, { depth: number; price: number }>()
+    for (const p of rows.slice(0, MAX_PRICE_PAIRS)) {
+      if (p.chainId !== slug) continue
+      const key = p.baseToken?.address?.toLowerCase()
+      const quote = p.quoteToken?.address?.toLowerCase()
+      if (!key || !quote || !hubs.has(quote)) continue
+      const price = Number.parseFloat(p.priceUsd ?? '')
+      if (!Number.isFinite(price) || price <= 0) continue
+      const depth = quoteSideUsd(p)
+      const cur = priceOf.get(key)
+      if (!cur || depth > cur.depth) priceOf.set(key, { depth, price })
+    }
     for (const [a, agg] of aggs)
       out.set(a, {
         liquidityUsd: agg.liquidityUsd,
         marketCapUsd: agg.marketCapUsd,
         priceChangeH24: agg.topPairUsd > 0 ? agg.priceChangeH24 : null,
+        priceUsd: priceOf.get(a)?.price ?? null,
         name: agg.name,
       })
   } catch {
@@ -188,13 +219,13 @@ export function PopularAssets({
                 key={t.address}
                 type="button"
                 disabled={busy}
-                aria-label={`Add ${t.symbol} to basket`}
+                aria-label={`Add ${showSymbol(t.symbol)} to basket`}
                 onClick={() => onPick(t.address, t.symbol)}
                 className="press group flex shrink-0 items-center gap-2 rounded-full border border-white/10 py-1.5 pl-1.5 pr-3 transition-colors hover:border-white/30 disabled:cursor-not-allowed disabled:opacity-40"
                 style={{ background: `linear-gradient(100deg, ${color}22, rgba(255,255,255,0.02))` }}
               >
                 <AssetLogo address={t.address} symbol={t.symbol} chainId={chainId} size={22} discColor={`color-mix(in srgb, ${color} 55%, #000)`} />
-                <span className="font-display text-xs font-bold uppercase tracking-wide text-ink">{t.symbol}</span>
+                <span className="font-display text-xs font-bold uppercase tracking-wide text-ink">{showSymbol(t.symbol)}</span>
                 <span className={`font-num text-[11px] tabular-nums ${chgCls}`}>{chgText ?? '24h —'}</span>
               </button>
             )
@@ -205,7 +236,7 @@ export function PopularAssets({
               key={t.address}
               type="button"
               disabled={busy}
-              aria-label={`Add ${t.symbol} to basket`}
+              aria-label={`Add ${showSymbol(t.symbol)} to basket`}
               onClick={() => onPick(t.address, t.symbol)}
               className="group relative flex w-[156px] shrink-0 flex-col justify-between gap-3 overflow-hidden rounded-2xl border border-white/10 p-3 text-left transition-[border-color,translate,scale] duration-200 hover:-translate-y-0.5 hover:border-white/25 active:scale-[0.985] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
               style={{ background: `linear-gradient(160deg, ${color}26, ${color}0a 44%, rgba(255,255,255,0.02))` }}
@@ -225,7 +256,7 @@ export function PopularAssets({
                 </span>
               </div>
               <div className="relative min-w-0">
-                <div className="truncate font-display text-sm font-bold uppercase tracking-wide text-ink">{t.symbol}</div>
+                <div className="truncate font-display text-sm font-bold uppercase tracking-wide text-ink">{showSymbol(t.symbol)}</div>
                 <span className={`mt-1.5 inline-flex items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 font-num text-xs tabular-nums ${chgCls}`}>
                   {chgText ? `${chgText} 24h` : '24h —'}
                 </span>

@@ -86,7 +86,7 @@ const SCAFFOLDS: Record<number, Omit<ChainCfg, keyof ChainDeployment>> = {
     key: 'robinhood',
     name: 'Robinhood',
     viemChain: robinhood,
-    dexscreenerSlug: '', // DexScreener does not index Robinhood Chain (2026-07)
+    dexscreenerSlug: 'robinhood', // indexed since ~2026-08 (verified live 2026-08-03: PONS pairs under chainId 'robinhood'); Blockscout stays the zero-hit fallback
     explorer: ROBINHOOD_EXPLORER,
     usdcSymbol: 'USDG',
     externalHubRouter: 'lifi',

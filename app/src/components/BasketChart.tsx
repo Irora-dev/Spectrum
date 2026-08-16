@@ -1,4 +1,5 @@
 import { useId, useMemo, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useUnderlyingSeries } from '../lib/spectrum/use-underlying-series'
 import { useNavHistory } from '../lib/spectrum/hooks'
@@ -93,7 +94,7 @@ function ChartTooltip({
       <div className="flex items-baseline justify-between gap-5">
         <div className="font-num text-sm font-semibold tabular-nums text-ink">
           ${formatNav(p.value, 4)}
-          <span className="ml-1 text-[10px] font-normal text-ink-faint">{symbol}</span>
+          <span className="ml-1 text-[10px] font-normal text-ink-faint">{showSymbol(symbol)}</span>
         </div>
         <PctChip v={basketChange} />
       </div>
@@ -191,13 +192,18 @@ export function BasketChart({
   return (
     <div className={className}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        {/* THE RETURN FIGURE SPEAKS (owner 2026-08-16: "show the performance …
+            so people can see the success") — it was a text-xs whisper beside
+            the window word; the chart's one headline number now reads at
+            display size, colored by outcome. Same endpoint-over-endpoint math
+            as before, so figure and curve cannot disagree. */}
+        <div className="flex items-baseline gap-2">
           {change != null && (
             <span
-              className="font-num text-xs font-semibold tabular-nums"
+              className="font-num text-xl font-semibold leading-none tabular-nums sm:text-2xl"
               style={{ color: accent }}
             >
-              {formatPct(change)}
+              {formatPct(change, 1)}
             </span>
           )}
           <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
@@ -223,7 +229,8 @@ export function BasketChart({
               style={{ background: under ? 'var(--color-cyan)' : 'linear-gradient(100deg, rgba(53,224,255,0.75), rgba(164,139,255,0.8) 50%, rgba(255,77,184,0.75))' }}
             >
               <span
-                className={`flex items-center gap-1.5 rounded-[7px] px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide ${
+                /* matches the range pills' touch floor (measured 103×25) */
+                className={`flex min-h-[34px] items-center gap-1.5 rounded-[7px] px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide sm:min-h-0 ${
                   under ? 'bg-cyan text-void' : 'bg-panel/95 text-ink'
                 }`}
               >
@@ -240,7 +247,10 @@ export function BasketChart({
               key={r}
               type="button"
               onClick={() => setRange(r)}
-              className={`press rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-wide ${
+              /* 36px thumb target below sm (mobile sweep 2026-08-06: measured
+                 35×23). Desktop keeps the compact pill — the target only grows
+                 where fingers are the pointer. */
+              className={`press inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-md px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide sm:min-h-0 sm:min-w-0 sm:px-2 ${
                 active === r ? 'bg-white/12 text-ink' : 'text-ink-faint hover:text-ink-dim'
               }`}
             >

@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { showName, showSymbol } from '../lib/spectrum/safe-copy'
 import brand from '../brand.config'
 import { pageEnabled } from '../theme/brand'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { basketHref } from '../lib/spectrum/short-url'
 
-// The teaching walkthrough (Colby 2026-07-29: on every good surface) — lazy,
+// The teaching walkthrough (the owner 2026-07-29: on every good surface) — lazy,
 // loads only on ask.
 const LearnWalkthrough = lazy(() =>
   import('../components/LearnWalkthrough').then((m) => ({ default: m.LearnWalkthrough })),
@@ -24,7 +25,25 @@ import { resolveCreator } from '../lib/spectrum/creator'
 import { basketSignatureColor } from '../lib/spectrum/signature'
 import { tokenVisual } from '../lib/spectrum/token-meta'
 import { formatPct, formatUsdCompact } from '../lib/spectrum/format'
-import { useFollows } from '../lib/spectrum/follows'
+import { getFollows, useFollows } from '../lib/spectrum/follows'
+import {
+  BASKET_ORDERS,
+  BASKET_ORDER_IDS,
+  filterByMinTvl,
+  hasLaunchTimes,
+  hasReturns,
+  launchTimeLookup,
+  orderBaskets,
+  tvlStepLabel,
+  tvlStepsFor,
+  tvlStepTitle,
+  type BasketOrder,
+} from '../lib/spectrum/basket-sort'
+import { heldPosition, type HeldPosition } from '../lib/spectrum/held-baskets'
+import { useHeldBaskets } from '../lib/spectrum/use-held-baskets'
+import { groupIntoTheses, thesisIsDiscoverable, type Thesis } from '../lib/spectrum/thesis'
+import { ThesisDoorCard } from '../components/ThesisCard'
+import { HeldMark } from '../components/BasketCard'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { AssetLogo } from '../components/AssetLogo'
 import { BasketBento } from '../components/BasketBento'
@@ -43,12 +62,17 @@ import { useWalletAssets } from '../lib/spectrum/use-wallet-assets'
 import { tagAllowed } from '../lib/spectrum/tags'
 import { DexSwapCard } from '../components/DexSwapCard'
 import { SWAP_ENABLED } from '../lib/config/features'
+import { IslandCta } from '../components/home/Spine'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { SpectralSearch } from '../components/SpectralSearch'
+import { isMacPlatform } from '../lib/search-focus'
+import { useAccount } from 'wagmi'
 import { BasketChart } from '../components/BasketChart'
 import { BlueprintBasket } from '../components/BlueprintBasket'
 import { BundleGrid } from '../components/BundleGrid'
+import { Carousel } from '../components/Carousel'
 import { useActiveChainId } from '../lib/chain/active-chain'
+import { pickBool, pickNumber, pickOne, readPrefs, writePrefs, type StoredPrefs } from '../lib/view-prefs'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /explore — the site's flagship social page. Three lenses on one catalogue:
@@ -66,7 +90,11 @@ import { useActiveChainId } from '../lib/chain/active-chain'
 // every chip filtered ALL baskets out and 4663 had no chip at all — owner's
 // live-site report 2026-07-31).
 type ChainFilter = 'all' | number
-type View = 'thesis' | 'baskets' | 'creators' | 'bundles'
+// 'thesis' is the Top-performers card lens (one basket, its creator's words);
+// 'theses' is the CROSS-CHAIN lens (one idea = one basket per chain, grouped).
+// Near-twin ids, deliberately: 'thesis' is a stored/linked id that must not
+// change meaning, and 'theses' is the honest name for the grouped surface.
+type View = 'thesis' | 'theses' | 'baskets' | 'creators' | 'bundles'
 
 function pctColor(p: number | null | undefined): string {
   return (p ?? 0) >= 0 ? 'var(--color-cyan)' : 'var(--color-magenta)'
@@ -110,27 +138,226 @@ export function Disclaimer() {
   )
 }
 
-function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+function Pill({
+  active,
+  onClick,
+  children,
+  className = '',
+  title,
+}: {
+  active: boolean
+  onClick: () => void
+  children: ReactNode
+  className?: string
+  /** States the window/meaning behind a figure-bearing pill (the Returns
+   *  order names its since-launch window here — honesty over brevity). */
+  title?: string
+  }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
+      // the chosen state was colour-only, which a screen reader cannot see (QOL
+      // round 2026-08-05, added with the sort pills — a chosen ORDER has to be
+      // announced, and every other pill on the page gains the same)
+      aria-pressed={active}
       className={`press inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
         active ? 'border-white/25 bg-white/10 text-ink' : 'border-white/10 text-ink-faint hover:text-ink-dim'
-      }`}
+      } ${className}`}
     >
       {children}
     </button>
   )
 }
 
-// ── masthead headline stats (owner ask: larger, better presented) ────────────
-function HeadlineStat({ value, label, divider = false, accent = false }: { value: string; label: string; divider?: boolean; accent?: boolean }) {
+/** The sort control (QOL round 2026-08-05) — the page's OWN pills where the row
+ *  has width for them, ONE compact select below sm (the 2026-08-12 one-row
+ *  ruling: the whole control row must wrap to about two phone lines, and four
+ *  sort pills alone would eat one). Options come from the page either way
+ *  (Newest only where launch dates are known), so both faces render choices
+ *  they can actually run. */
+function SortRow({
+  options,
+  order,
+  onChange,
+}: {
+  options: readonly { id: BasketOrder; label: string; title?: string }[]
+  order: BasketOrder
+  onChange: (o: BasketOrder) => void
+}) {
   return (
-    <div className={`text-right ${divider ? 'ml-5 border-l border-white/10 pl-5 sm:ml-7 sm:pl-7' : ''}`}>
-      <div className={`font-num text-2xl leading-none tabular-nums sm:text-3xl ${accent ? 'text-cyan' : 'text-ink'}`}>{value}</div>
+    <>
+      <span className="hidden sm:contents">
+        {options.map((o) => (
+          <Pill key={o.id} active={order === o.id} onClick={() => onChange(o.id)} title={o.title}>
+            {o.label}
+          </Pill>
+        ))}
+      </span>
+      <select
+        value={order}
+        onChange={(e) => onChange(e.target.value as BasketOrder)}
+        aria-label="Sort baskets"
+        className="min-h-[36px] shrink-0 rounded-full border border-white/10 bg-void px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.12em] text-ink-dim outline-none focus:border-cyan/50 sm:hidden"
+      >
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+/** ── one folded filter (the owner 2026-08-12: "way way too much info on the
+ *  /explore page just make it one filter/sort row") — a row pill that opens a
+ *  small panel holding the chips that used to be a full-width strip. The
+ *  ACTIVE selection becomes the pill's own label with its own ✕, so a live
+ *  filter stays visible and clearable from the row without opening anything
+ *  (the old asset row's law: a filter you cannot see is a filter you cannot
+ *  clear). Dismissal is Nav's More-menu pair — outside tap + Escape — and the
+ *  panel is the same search-pop card; a layout pass shifts it left when a pill
+ *  late in the wrapped row would push it past the viewport edge. ── */
+function FilterPill({
+  label,
+  activeLabel,
+  onClear,
+  clearLabel,
+  wallet = false,
+  glow = false,
+  children,
+}: {
+  label: ReactNode
+  /** Replaces `label` while the filter is on — loud, in the row. */
+  activeLabel?: ReactNode | null
+  onClear: () => void
+  clearLabel: string
+  /** The wallet pill keeps the old band's cyan cast so it still reads as a
+   *  fact about YOUR wallet, not another catalogue filter. */
+  wallet?: boolean
+  /** The search names something inside (the tag-hit treatment, surfaced). */
+  glow?: boolean
+  children: (close: () => void) => ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const [shift, setShift] = useState(0)
+  const rootRef = useRef<HTMLSpanElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const close = useCallback(() => setOpen(false), [])
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  useLayoutEffect(() => {
+    if (!open) {
+      setShift(0)
+      return
+    }
+    const r = panelRef.current?.getBoundingClientRect()
+    if (!r) return
+    const over = r.right - (window.innerWidth - 8)
+    if (over > 0) setShift(Math.min(over, Math.max(0, r.left - 8)))
+  }, [open])
+  const on = activeLabel != null
+  return (
+    <span ref={rootRef} className="relative inline-flex shrink-0">
+      <span
+        className={`inline-flex items-center rounded-full border font-mono text-[11px] uppercase tracking-[0.12em] transition-all ${
+          on
+            ? 'border-cyan/50 bg-cyan/10 text-cyan'
+            : glow
+              ? 'border-cyan/60 bg-cyan/[0.08] text-cyan shadow-[0_0_16px_-4px_rgba(53,224,255,0.8)]'
+              : wallet
+                ? 'border-cyan/25 bg-cyan/[0.03] text-cyan/80'
+                : 'border-white/10 text-ink-faint'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-haspopup="true"
+          className={`press inline-flex min-h-[36px] items-center gap-1.5 py-1.5 pl-3 transition-colors sm:min-h-0 ${on ? 'pr-1' : 'pr-3'} ${
+            on || glow ? '' : wallet ? 'hover:text-cyan' : 'hover:text-ink-dim'
+          }`}
+        >
+          {on ? activeLabel : label}
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden
+            className={`h-3 w-3 shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+        {on && (
+          <button
+            type="button"
+            onClick={onClear}
+            aria-label={clearLabel}
+            title={clearLabel}
+            className="press inline-flex min-h-[36px] items-center py-1.5 pl-1 pr-2.5 transition-opacity hover:opacity-70 sm:min-h-0"
+          >
+            ✕
+          </button>
+        )}
+      </span>
+      {open && (
+        <div
+          ref={panelRef}
+          className="absolute left-0 top-full z-40 pt-2"
+          style={shift ? { transform: `translateX(-${shift}px)` } : undefined}
+        >
+          <div className="search-pop w-[19rem] max-w-[calc(100vw-16px)] rounded-xl border border-white/12 bg-void/95 p-3.5 shadow-2xl backdrop-blur">
+            {children(close)}
+          </div>
+        </div>
+      )}
+    </span>
+  )
+}
+
+// ── masthead headline stats (owner ask: larger, better presented) ────────────
+/** With `onClick` the stat is a DOOR to the lens it counts (QOL round
+ *  2026-08-06): "26 baskets" answers "show me them" in one tap. Without it the
+ *  markup is exactly what it always was — TVL counts nothing openable. */
+function HeadlineStat({ value, label, divider = false, accent = false, onClick }: { value: string; label: string; divider?: boolean; accent?: boolean; onClick?: () => void }) {
+  const body = (
+    <>
+      <div className={`font-num text-xl leading-none tabular-nums sm:text-3xl ${accent ? 'text-cyan' : 'text-ink'} ${onClick ? 'transition-colors group-hover/stat:text-cyan' : ''}`}>{value}</div>
       <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.2em] text-ink-faint">{label}</div>
-    </div>
+    </>
+  )
+  // THREE ROWS ON A PHONE (owner 2026-08-06 23:13: "you should have the three
+  // rows below that: 11 creators, the baskets, and then the TVL"). The masthead
+  // wrapped mid-row at 390px — "how this works · 19 creators" on one line and
+  // "27 baskets | $6,638 TVL" on the next, which reads as a broken row rather
+  // than a list. Stacked and centred below sm; the vertical rule belongs to the
+  // horizontal row, so it leaves with it.
+  const cls = `text-right max-sm:text-center ${divider ? 'ml-5 border-l border-white/10 pl-5 max-sm:ml-0 max-sm:border-l-0 max-sm:pl-0 sm:ml-7 sm:pl-7' : ''}`
+  if (!onClick) return <div className={cls}>{body}</div>
+  return (
+    <button type="button" onClick={onClick} title={`See the ${label}`} className={`${cls} press group/stat`}>
+      {body}
+    </button>
   )
 }
 
@@ -138,31 +365,89 @@ function Interactive({ children }: { children: ReactNode }) {
   return <span className="pointer-events-auto relative z-10">{children}</span>
 }
 
-function Empty({ children }: { children: ReactNode }) {
-  return <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-ink-faint">{children}</div>
+function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-ink-faint">
+      {children}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  )
+}
+
+/** The way out of a filtered dead end (QOL round 2026-08-06): every lens's
+ *  zero state used to just STATE the emptiness and leave the reader to hunt
+ *  down which of search/asset/tag/following caused it. One tap resets them
+ *  all; the chain scope stays — it is a shelf, not a search. */
+function ClearFiltersBtn({ onClear }: { onClear: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      className="press rounded-lg border border-white/15 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
+    >
+      Clear filters ✕
+    </button>
+  )
+}
+
+/** "No baskets yet" is the DEFAULT first-run state of a fresh operator's most
+ *  important page, so it must not be a dead end: the one thing to do from here
+ *  is launch the first one. Only shown when the emptiness is the chain's, not a
+ *  filter's — a search that matches nothing wants clearing, not a launch. */
+function LaunchFirst() {
+  // Never a dead door (QOL 2026-08-07): /launch is page-gated in App.tsx and
+  // redirects to the homepage when an operator turns it off, so on those builds
+  // an empty catalogue's only next action bounced you out with no explanation.
+  if (!pageEnabled(brand.pages, 'launch')) return null
+  return (
+    <Link
+      to="/create"
+      className="press inline-block rounded-lg border border-cyan/40 bg-cyan/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-cyan hover:border-cyan"
+    >
+      Launch the first one →
+    </Link>
+  )
 }
 
 // ── asset filter row (clickable icons of every asset on the page) ────────────
+/** FIVE SUGGESTIONS, NOT AN INDEX (owner 2026-08-06 23:4x: "way way way too
+ *  many pills across sectors/tickers, we need like 5 suggested max and people
+ *  have the search bar above it anyways"). This row listed EVERY asset on the
+ *  page — around sixty chips — which is a directory, and the page already has
+ *  a real one in the search field above. The five are the page's own order
+ *  (most-held first, from collectAssets); a SELECTED asset outside the five is
+ *  always appended, or choosing one would make its own chip disappear and
+ *  leave no way to unselect it. */
+const ASSET_SUGGESTIONS = 5
 function AssetFilterRow({ assets, selected, onSelect }: { assets: AssetRef[]; selected: string | null; onSelect: (a: string | null) => void }) {
-  if (assets.length === 0) return null
+  const shown = (() => {
+    const top = assets.slice(0, ASSET_SUGGESTIONS)
+    if (!selected || top.some((a) => a.address.toLowerCase() === selected)) return top
+    const picked = assets.find((a) => a.address.toLowerCase() === selected)
+    return picked ? [...top, picked] : top
+  })()
+  if (shown.length === 0) return null
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">Filter by asset</span>
-      {assets.map((a) => {
+    // A rail below sm, wrapping above it — with five chips it rarely needs
+    // either, but a long ticker set still must not stack into a wall.
+    <div className="no-scrollbar rail-fade -mx-1 flex items-center gap-2 overflow-x-auto px-1 sm:flex-wrap sm:overflow-visible">
+      {shown.map((a) => {
         const on = selected === a.address.toLowerCase()
         return (
           <button
             key={a.address.toLowerCase()}
             type="button"
             onClick={() => onSelect(on ? null : a.address.toLowerCase())}
-            title={on ? `Showing baskets with ${a.symbol}` : `Only baskets with ${a.symbol}`}
+            title={on ? `Showing baskets with ${showSymbol(a.symbol)}` : `Only baskets with ${showSymbol(a.symbol)}`}
             aria-pressed={on}
-            className={`press inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 transition-colors ${
+            /* 36px thumb target below sm (measured 25-28px) — shrink-0 so the
+               chips keep their size inside the rail instead of compressing */
+            className={`press inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 transition-colors sm:min-h-0 ${
               on ? 'border-cyan/50 bg-cyan/10' : 'border-white/10 hover:border-white/30'
             }`}
           >
             <AssetLogo address={a.address} symbol={a.symbol} chainId={a.chainId} size={18} />
-            <span className={`font-mono text-[10px] uppercase tracking-[0.1em] ${on ? 'text-cyan' : 'text-ink-dim'}`}>{a.symbol}</span>
+            <span className={`font-mono text-[10px] uppercase tracking-[0.1em] ${on ? 'text-cyan' : 'text-ink-dim'}`}>{showSymbol(a.symbol)}</span>
           </button>
         )
       })}
@@ -229,7 +514,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
               assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
               navPerToken={ix.navPerToken}
               ageSec={null}
-              symbol={`$${ix.symbol}`}
+              symbol={`$${showSymbol(ix.symbol)}`}
               fallback={ix.navSeries}
               underlyingAssets={ix.top.map((t) => ({ address: t.address, symbol: t.symbol }))}
               heightClass={compact ? 'h-40 sm:h-48' : 'h-48 sm:h-64'}
@@ -273,9 +558,9 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
                  with the View-basket button (owner 18:04) ── */}
           <div className={`min-w-0 ${nav ? 'flex flex-col' : ''}`}>
             <Link to={basketHref(ix)} className="block">
-              <span className="font-display text-4xl font-bold leading-none tracking-tight text-ink sm:text-5xl">${ix.symbol}</span>
+              <span className="font-display text-4xl font-bold leading-none tracking-tight text-ink sm:text-5xl">${showSymbol(ix.symbol)}</span>
             </Link>
-            <div className="mt-2.5 truncate text-base text-ink-dim">{ix.name?.trim() || ix.symbol}</div>
+            <div className="mt-2.5 truncate text-base text-ink-dim">{ix.name?.trim() ? showName(ix.name) : showSymbol(ix.symbol)}</div>
             {ix.deployer && (
               <Link to={`/creator/${ix.deployer}`} className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] py-1 pl-1 pr-3 transition-colors hover:border-white/25">
                 <BasketAvatar address={ix.deployer} symbol={avatarSymbol} imageUrl={meta?.avatarUrl ?? undefined} size={20} />
@@ -413,8 +698,12 @@ export function BasketSpotlight({ baskets, compact = false }: { baskets: BasketS
 
       {/* header row: label left · dots + arrows right (compact drops the whole
           strip — the card opens straight onto the bento) */}
+      {/* flex-wrap (mobile sweep 2026-08-06): the row needed ~415px in a 390px
+          box, so the play/PAUSE control — the stop for a 6.5s auto-advance —
+          sat entirely off-screen and the next arrow was half-cut. Wrapping
+          drops the control group to its own line where it is all reachable. */}
       {!compact && (
-      <div className="flex items-center justify-between gap-3 px-5 pb-2.5 pt-4 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 pb-2.5 pt-4 sm:flex-nowrap sm:px-6">
         <FaceToggle face={face} onChange={setFace} />
         {n > 1 && (
           <div className="flex items-center gap-3">
@@ -424,7 +713,7 @@ export function BasketSpotlight({ baskets, compact = false }: { baskets: BasketS
                   key={`${b.chainId}:${b.address}`}
                   type="button"
                   onClick={() => setIdx(i)}
-                  aria-label={`Show $${b.symbol}`}
+                  aria-label={`Show $${showSymbol(b.symbol)}`}
                   aria-current={i === idx}
                   className="press grid h-6 place-items-center px-0.5"
                 >
@@ -497,11 +786,23 @@ export function CreatorLine({ entry, rank, w = 'value' }: { entry: CreatorEntry;
       <Link to={`/creator/${entry.address}`} aria-label={identity.label} className="absolute inset-0 z-0 rounded-2xl" />
       {/* pointer-events-none: every non-interactive pixel falls through to the
           profile link above; Interactive children opt back in (owner note) */}
-      <div className="pointer-events-none relative flex items-center gap-3 sm:gap-4">
+      {/* THE SAME SQUEEZE THE BASKETS ROWS HAD (carried from the 2026-08-06
+          mobile sweep, found while fixing those and stated rather than
+          dropped): at 390px the identity block was left ~90px, so a label that
+          is ALREADY shortened to "0x5462…Bbbe" got truncated a second time to
+          "0x5462…" and the standout line to "TOP…" — twelve rows of the same
+          non-word. Every gap and the avatar stand down below sm to buy the
+          identity its room back; from sm up the row is untouched. */}
+      <div className="pointer-events-none relative flex items-center gap-2 sm:gap-4">
         <span className="w-5 shrink-0 text-center font-mono text-xs tabular-nums text-ink-faint">{rank}</span>
 
-        <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-3">
-          <BasketAvatar address={entry.address} symbol={avatarSymbol} imageUrl={meta?.avatarUrl ?? undefined} size={40} />
+        <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <span className="shrink-0 sm:hidden">
+            <BasketAvatar address={entry.address} symbol={avatarSymbol} imageUrl={meta?.avatarUrl ?? undefined} size={32} />
+          </span>
+          <span className="hidden shrink-0 sm:block">
+            <BasketAvatar address={entry.address} symbol={avatarSymbol} imageUrl={meta?.avatarUrl ?? undefined} size={40} />
+          </span>
           <div className="min-w-0">
             {/* the Signed chip is gone from the rows (owner 13:46) — the badge
                 still lives on the creator/token pages where it explains itself */}
@@ -510,10 +811,11 @@ export function CreatorLine({ entry, rank, w = 'value' }: { entry: CreatorEntry;
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint">
               <span className="line-clamp-1">
-                top ${best.symbol}
+                top ${showSymbol(best.symbol)}
                 {perfMeasurable(best) && (
                   <>
-                    {' '}· <span style={{ color: pctColor(perf) }}>{perf >= 1000 ? `${Math.round(perf).toLocaleString()}%` : formatPct(perf)}</span> since launch
+                    {' '}· <span style={{ color: pctColor(perf) }}>{perf >= 1000 ? `${Math.round(perf).toLocaleString()}%` : formatPct(perf)}</span>
+                    <span className="hidden sm:inline"> since launch</span>
                   </>
                 )}
               </span>
@@ -523,7 +825,7 @@ export function CreatorLine({ entry, rank, w = 'value' }: { entry: CreatorEntry;
         </div>
 
         {/* value + holders: LARGE, adjacent (owner ask) — no asset logos */}
-        <div className="pointer-events-none relative flex shrink-0 items-end gap-5 text-right sm:gap-7">
+        <div className="pointer-events-none relative flex shrink-0 items-end gap-3 text-right sm:gap-7">
           <div>
             <div className="font-num text-lg leading-none tabular-nums text-ink sm:text-xl">{formatUsdCompact(entry.combinedTvl)}</div>
             <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint">TVL</div>
@@ -559,11 +861,82 @@ export function CreatorLine({ entry, rank, w = 'value' }: { entry: CreatorEntry;
   )
 }
 
+// ── THE BUNDLE BAND (the owner 2026-08-11: "do we show the bundles on the basket
+//    explore page?" · then: "the bundles need to show like baskets with the
+//    bento and shared price") — published bundles lead the basket-browsing
+//    lenses wearing the FULL BasketCard-grade face: the combined-value chart,
+//    the composite bento of every leg's assets, the combined price + 24h +
+//    TVL, inside the bundle dress (violet edge + BUNDLE chip). Same layout
+//    grammar as the basket grid they sit above — one card per screen swiped
+//    on phones, the two-up grid from lg — so a bundle reads as a first-class
+//    peer of the baskets, not a teaser chip. Capped at four; the header link
+//    opens the full tab. Hidden under tag/asset filters — bundles carry
+//    neither, so the band would ignore a filter the reader just applied. ─────
+function BundleBand({ theses, total, onAll }: { theses: Thesis[]; total: number; onAll: () => void }) {
+  if (theses.length === 0) return null
+  return (
+    <div className="enter space-y-3" style={{ '--enter-i': 3 } as CSSProperties}>
+      <div className="flex items-baseline justify-between px-1">
+        <span className="inline-flex items-center gap-2 font-display text-sm font-bold uppercase tracking-[0.14em] text-ink">
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-violet-bright" />
+          Bundles
+        </span>
+        <button
+          type="button"
+          onClick={onAll}
+          className="press font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-violet-bright"
+        >
+          {total > theses.length ? `All ${total} →` : 'The Bundles tab →'}
+        </button>
+      </div>
+      {/* the basket slideshow's own responsive idiom (one full card per
+          screen on phones, two-up grid from lg) so the band and the grid
+          below move as one surface */}
+      <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:grid lg:snap-none lg:grid-cols-2 lg:overflow-visible lg:px-0 lg:pb-0">
+        {theses.map((t) => (
+          <ThesisDoorCard
+            key={`${t.deployer}::${t.name}`}
+            thesis={t}
+            size="md"
+            className="min-w-0 shrink-0 basis-[86%] snap-start sm:basis-[62%] lg:basis-auto lg:shrink"
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── the THESIS tab (recording 2026-07-06 12:08): the page's main lens — a
 //    what-are-you-looking-for search, tags beneath, then every launched index
 //    as bento + thesis + creator + view. Thesis-less baskets show the honest
 //    asset-count line; ranking is the same measurable-first perf order. ──────
-export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; chain?: BasketSummary[]; face?: 'bento' | 'chart' }) {
+/** Phone cards get a wider (therefore shorter) picture. Read once per mount
+ *  from matchMedia rather than on resize: it only matters at first paint. */
+function useShortBento(): number {
+  const [narrow] = useState(() => {
+    try {
+      return window.matchMedia('(max-width: 639px)').matches
+    } catch {
+      return false
+    }
+  })
+  return narrow ? 3.4 : 2.3
+}
+
+export function ThesisCard({
+  ix,
+  chain,
+  face = 'bento',
+  held,
+}: {
+  ix: BasketSummary
+  chain?: BasketSummary[]
+  face?: 'bento' | 'chart'
+  /** The viewer's position in THIS basket, resolved by the page from ONE portfolio
+   *  read (see the page below). Same prop, same marker, same rules as BasketCard:
+   *  a card never reads the wallet itself. */
+  held?: HeldPosition | null
+}) {
   const { data: meta } = useCreatorMeta(ix.address, ix.chainId)
   const identity = resolveCreator({ handle: meta?.handle, name: meta?.name, deployer: ix.deployer ?? undefined })
   const avatarSymbol = identity.kind === 'address' ? 'x' : identity.label.replace(/^@/, '')
@@ -572,6 +945,7 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
   // The thesis body collapses behind its title (owner 13:46 — the wall of
   // content thinned; the full read is one tap, right on the card).
   const [openThesis, setOpenThesis] = useState(false)
+  const aspectByViewport = useShortBento()
 
   return (
     <div className="relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025] p-5 transition-colors hover:border-white/20 sm:p-6">
@@ -587,25 +961,51 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
             assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
             navPerToken={ix.navPerToken}
             ageSec={null}
-            symbol={`$${ix.symbol}`}
+            symbol={`$${showSymbol(ix.symbol)}`}
             fallback={ix.navSeries}
             underlyingAssets={ix.top.map((t) => ({ address: t.address, symbol: t.symbol }))}
-            heightClass="h-36 sm:h-40"
+            heightClass="h-24 sm:h-40"
           />
         </div>
       ) : (
       <Link to={basketHref(ix)} className="relative block overflow-hidden rounded-xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25">
         {/* …and unmasked BEHIND the bento — the colors bleed through the grid's gaps */}
         <BasketWash ix={ix} side="full" opacity={0.32} />
-        <BasketBento items={bentoItems(ix)} aspect={2.3} />
+        {/* SHORTER ON PHONES (mobile audit 2026-08-05: each card ran ~1.7
+            screens tall, so twelve baskets was twenty screens of scrolling).
+            A wider aspect is a shorter picture at the same width; the desktop
+            face is unchanged from sm up. */}
+        <BasketBento items={bentoItems(ix)} aspect={aspectByViewport} />
+        {/* THE GRAPH (owner 2106 #11: "as on the homepage, not just
+            %-to-date") — the homepage card's own mount, same component, same
+            real reconstructed history. pointer-events opt back in for hover. */}
+        <div className="pointer-events-auto mt-3 h-12">
+          <BasketSpark
+            chainId={ix.chainId}
+            assets={ix.top.map((t) => ({ address: t.address, weight: t.weightPct }))}
+            navPerToken={ix.navPerToken}
+            fallback={ix.navSeries}
+            range="24H"
+            address={ix.address}
+            symbol={ix.symbol}
+            legs={ix.top}
+          />
+        </div>
       </Link>
       )}
 
       <div className="relative mt-4 flex min-w-0 items-center justify-between gap-3">
-        <Link to={basketHref(ix)} className="min-w-0">
-          <span className="font-display text-xl font-bold leading-tight text-ink">${ix.symbol}</span>
-          <span className="ml-2.5 truncate text-sm text-ink-dim">{ix.name?.trim() || ''}</span>
-        </Link>
+        {/* identity, with the held marker beside it (QOL round 2026-08-05) — the
+            same HeldMark the BasketCard uses, so the two card faces state the
+            fact identically. Outside the link: it is a fact about your wallet,
+            not part of the basket's name. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+          <Link to={basketHref(ix)} className="min-w-0">
+            <span className="font-display text-xl font-bold leading-tight text-ink">${showSymbol(ix.symbol)}</span>
+            <span className="ml-2.5 truncate text-sm text-ink-dim">{ix.name?.trim() ? showName(ix.name) : ''}</span>
+          </Link>
+          {held && <HeldMark position={held} />}
+        </div>
         {ix.deployer && (
           <Link to={`/creator/${ix.deployer}`} className="inline-flex max-w-[45%] shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] py-1 pl-1 pr-2.5 transition-colors hover:border-white/25">
             <BasketAvatar address={ix.deployer} symbol={avatarSymbol} imageUrl={meta?.avatarUrl ?? undefined} size={18} />
@@ -672,9 +1072,12 @@ export function ThesisCard({ ix, chain, face = 'bento' }: { ix: BasketSummary; c
             </span>
           </span>
         </div>
+        {/* ml-auto is the wrap case (owner 2026-08-11: "needs to go bottom
+            right"): on narrow mounts the flex-wrap drops this to its own line,
+            and without it the link parked bottom-LEFT under the stats. */}
         <Link
           to={basketHref(ix)}
-          className="press rounded-lg border border-white/15 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
+          className="press ml-auto rounded-lg border border-white/15 px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
         >
           View basket →
         </Link>
@@ -743,7 +1146,46 @@ function useTypingPlaceholder(phrases: string[], active: boolean, fallback: stri
   return animate ? `${shown}|` : fallback
 }
 
-// ── the bento ⇄ graph face toggle (R+C 18:26) — one pill, two lenses ─────────
+// ── the page's ONE segmented pill (R+C 18:26 as the bento ⇄ graph face
+//    toggle; generalised 2026-08-06 23:13 so the Baskets lens's slideshow ⇄
+//    list switch is the same control rather than new chrome) ─────────────────
+function SegToggle<T extends string>({
+  value,
+  onChange,
+  options,
+  compact = false,
+}: {
+  value: T
+  onChange: (v: T) => void
+  options: readonly (readonly [T, string])[]
+  compact?: boolean
+}) {
+  return (
+    <span className={`inline-flex items-center gap-0.5 rounded-full border border-white/10 ${compact ? 'bg-black/35 p-0.5 backdrop-blur-sm' : 'bg-white/[0.03] p-0.5'}`}>
+      {options.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          aria-pressed={value === id}
+          /* 36px thumb target below sm (the full-size pill measured 28px);
+             the corner-riding compact variant keeps its own size */
+          className={`press rounded-full font-mono uppercase tracking-[0.12em] transition-colors ${
+            compact ? 'px-2.5 py-1 text-[10px]' : 'min-h-[36px] px-4 py-1.5 text-xs sm:min-h-0'
+          } ${value === id ? 'bg-white/15 text-ink' : 'text-ink-faint hover:text-ink-dim'}`}
+        >
+          {label}
+        </button>
+      ))}
+    </span>
+  )
+}
+
+const FACE_OPTIONS = [
+  ['bento', 'Basket'],
+  ['chart', 'Graph'],
+] as const
+
 function FaceToggle({
   face,
   onChange,
@@ -753,25 +1195,19 @@ function FaceToggle({
   onChange: (f: 'bento' | 'chart') => void
   compact?: boolean
 }) {
-  const seg = (id: 'bento' | 'chart', label: string) => (
-    <button
-      type="button"
-      onClick={() => onChange(id)}
-      aria-pressed={face === id}
-      className={`press rounded-full font-mono uppercase tracking-[0.12em] transition-colors ${
-        compact ? 'px-2.5 py-1 text-[10px]' : 'px-4 py-1.5 text-xs'
-      } ${face === id ? 'bg-white/15 text-ink' : 'text-ink-faint hover:text-ink-dim'}`}
-    >
-      {label}
-    </button>
-  )
-  return (
-    <span className={`inline-flex items-center gap-0.5 rounded-full border border-white/10 ${compact ? 'bg-black/35 p-0.5 backdrop-blur-sm' : 'bg-white/[0.03] p-0.5'}`}>
-      {seg('bento', 'Basket')}
-      {seg('chart', 'Graph')}
-    </span>
-  )
+  return <SegToggle value={face} onChange={onChange} options={FACE_OPTIONS} compact={compact} />
 }
+
+/** How the Baskets lens draws its catalogue. */
+type BasketLayout = 'slides' | 'list'
+const BASKET_LAYOUTS = [
+  ['slides', 'Slideshow'],
+  ['list', 'List'],
+] as const
+
+// (TrendingToggle, the phone-only tag disclosure of owner 2026-08-06 23:13, is
+// gone: the 2026-08-12 one-row ruling folds the tag chips behind the #tags
+// FilterPill on EVERY viewport, which is that ruling generalised.)
 
 // ── tab button (bigger — owner call; exported: Home's toggle reuses it) ─────
 export function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -780,7 +1216,11 @@ export function TabBtn({ active, onClick, children }: { active: boolean; onClick
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`press rounded-xl px-5 py-2.5 font-display text-sm font-semibold uppercase tracking-[0.14em] transition-colors sm:px-6 sm:text-base ${
+      /* whitespace-nowrap: inside the scrolling rail "Top performers" broke to
+         two lines, doubling the row's height and misaligning it against the
+         one-line tabs (mobile sweep 2026-08-06). A rail scrolls; it never
+         wraps its own items. */
+      className={`press whitespace-nowrap rounded-xl px-5 py-2.5 font-display text-sm font-semibold uppercase tracking-[0.14em] transition-colors sm:px-6 sm:text-base ${
         active ? 'bg-white/10 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]' : 'text-ink-faint hover:text-ink-dim'
       }`}
     >
@@ -789,20 +1229,136 @@ export function TabBtn({ active, onClick, children }: { active: boolean; onClick
   )
 }
 
+// ── the remembered view (QOL round 2026-08-05) ────────────────────────────────
+// Nothing here remembered where you were: the lens, the chain chip, the tag and
+// the card face reset on every visit, so whoever only cares about Base re-picked
+// it twice a day. The page's view state now survives in one small blob
+// (`lib/view-prefs.ts`, under the house `spectrum:` namespace) — invisible, no UI
+// and no "saved" message anywhere.
+// Deliberately NOT remembered:
+//   • the search box — a query typed yesterday quietly filtering today's page
+//     reads as a broken site, and a search isn't a preference,
+//   • the asset filter — the "In your wallet" row sets that same state, and
+//     nothing derived from a wallet's holdings is written to storage.
+// A remembered chain or tag is only applied while it is still one of the LIVE
+// options (see the restore pass inside the page): a chain with no baskets or
+// last week's tag would show an empty page, which reads as a broken deployment.
+// The sort choice (`order`) joins them on the same terms: it is remembered by id,
+// and clamped at render to the orders this page can actually run — Newest only
+// exists where launch dates are known (basket-sort.ts).
+const PREFS = 'explore'
+const LB_WINDOWS: readonly LbWindow[] = ['value', 'day', 'week', 'month']
+const FACES: readonly ('bento' | 'chart')[] = ['bento', 'chart']
+/** The lenses this operator actually renders — a remembered (or linked) tab that
+ *  has been switched off must fall back to the default, never open a dead one. */
+function lensOptions(): View[] {
+  // 'theses' is always a VALID id (a link or a stored choice must survive the
+  // async catalogue); whether the tab RENDERS is a data question — with no
+  // multi-chain theses discovered, the render clamps it back to the default,
+  // exactly as a remembered Newest order falls back where launch dates are
+  // unknown.
+  // 'bundles' is likewise always a valid id: the tab renders when the OLD
+  // hand-picked product is enabled OR published cross-chain bundles exist
+  // (the new system is not page-gated anywhere else — home shelf, creator
+  // strip, the composer's publish ceremony all ship it), so a stored or
+  // linked choice must survive here too.
+  const lenses: View[] = ['thesis', 'theses', 'baskets', 'creators', 'bundles']
+  return lenses
+}
+
+interface Boot {
+  view: View
+  lbWindow: LbWindow
+  cardFace: 'bento' | 'chart'
+  onlyFollowing: boolean
+  /** How the basket lists are ordered. Validated by id here; whether the order can
+   *  RUN is a render-time question (Newest needs launch dates). */
+  order: BasketOrder
+  /** URL-named only — the REMEMBERED chain and tag need the live catalogue, so
+   *  they land in the restore pass rather than at mount. */
+  chain: ChainFilter
+  tag: string | null
+  /** The URL named a view: honour it for this visit and remember nothing (an
+   *  explicit link is an instruction, not a new default for this browser). */
+  fromUrl: boolean
+  stored: StoredPrefs
+}
+
+/** What the page opens on: the URL first, then what this browser remembers, then
+ *  the defaults. Runs once per visit. */
+function bootView(): Boot {
+  let params: URLSearchParams | null = null
+  try {
+    params = new URLSearchParams(window.location.search)
+  } catch {
+    /* no DOM — the defaults still apply */
+  }
+  const lenses = lensOptions()
+  const urlView = pickOne(params?.get('view'), lenses)
+  const urlChainRaw = params?.get('chain')
+  const urlChain: ChainFilter | null = urlChainRaw === 'all' ? 'all' : pickNumber(Number(urlChainRaw), SUPPORTED_CHAIN_IDS)
+  const urlTagRaw = (params?.get('tag') ?? '').trim().replace(/^#/, '').toLowerCase().slice(0, 40)
+  const urlTag = urlTagRaw && tagAllowed(urlTagRaw) ? urlTagRaw : null
+  // `?sort=` is a shareable ordering ("here is the list by holders") and wins over
+  // storage for this visit like every other named piece of state.
+  const urlOrder = pickOne(params?.get('sort'), BASKET_ORDER_IDS)
+  const fromUrl = urlView != null || urlChain != null || urlTag != null || urlOrder != null
+  // A link that specifies state wins outright: blending its tab with a
+  // remembered chain would open a page neither the sender nor the reader chose.
+  const stored = fromUrl ? {} : readPrefs(PREFS)
+  return {
+    view: urlView ?? pickOne(stored.view, lenses) ?? 'thesis',
+    lbWindow: pickOne(stored.lbWindow, LB_WINDOWS) ?? 'value',
+    cardFace: pickOne(stored.cardFace, FACES) ?? 'bento',
+    order: urlOrder ?? pickOne(stored.order, BASKET_ORDER_IDS) ?? 'top',
+    // Following-only with nobody followed is an empty Creators list, so that
+    // filter only comes back while this browser follows someone.
+    onlyFollowing: (pickBool(stored.onlyFollowing) ?? false) && getFollows().length > 0,
+    chain: urlChain ?? 'all',
+    tag: urlTag,
+    fromUrl,
+    stored,
+  }
+}
+
 // ── page ─────────────────────────────────────────────────────────────────────
 export function Explore() {
   const { data, isLoading, isError } = useAllBaskets()
-  const [view, setView] = useState<View>('thesis')
-  const [lbWindow, setLbWindow] = useState<LbWindow>('value')
-  const [q, setQ] = useState('')
-  const [chain, setChain] = useState<ChainFilter>('all')
-  const [onlyFollowing, setOnlyFollowing] = useState(false)
+  const boot = useMemo(bootView, []) // one read per visit
+  const [view, setView] = useState<View>(boot.view)
+  const [lbWindow, setLbWindow] = useState<LbWindow>(boot.lbWindow)
+  const [q, setQ] = useState('') // never remembered (see the note above)
+  const [chain, setChain] = useState<ChainFilter>(boot.chain)
+  const [onlyFollowing, setOnlyFollowing] = useState(boot.onlyFollowing)
   const [asset, setAsset] = useState<string | null>(null)
-  const [tag, setTag] = useState<string | null>(null)
+  const [tag, setTag] = useState<string | null>(boot.tag)
+  const [order, setOrder] = useState<BasketOrder>(boot.order)
+  // ── the TVL minimum (the owner 2026-08-13: "a filter for total tvl") ───────────
+  //    0 = Any. Deliberately NOT remembered and not in the URL: a threshold
+  //    silently carried into tomorrow's visit hides most of the catalogue with
+  //    nothing typed, which reads as a broken site (the search box's own rule).
+  const [minTvl, setMinTvl] = useState(0)
   const [learnOpen, setLearnOpen] = useState(false)
+  // The Baskets lens opens as a slideshow (owner 2026-08-06 23:13); the dense
+  // list is one tap away. Deliberately NOT remembered — it is a way of looking
+  // at one lens for one visit, not a preference the page should carry back.
+  const [basketLayout, setBasketLayout] = useState<BasketLayout>('slides')
   const activeChainId = useActiveChainId()
   const { follows, count: followCount } = useFollows()
   const searchRef = useRef<HTMLInputElement>(null)
+  // THE SELECTED LENS MUST BE VISIBLE (mobile sweep 2026-08-06): the rail
+  // scrolls but never followed the selection, so tapping Creators left
+  // "CREATO[RS]" half off the right edge — the one tab you cannot see is the
+  // one you are on. Scrolls the RAIL's own scrollLeft (never scrollIntoView,
+  // which would drag the page vertically too).
+  const lensRailRef = useRef<HTMLDivElement>(null)
+  const [mac] = useState(() => isMacPlatform())
+  // YOUR OWN BASKETS ARE ALWAYS LISTABLE TO YOU (the owner 2026-08-06 23:2x, off a
+  // live user losing his freshly-deployed basket to the $10 browse floor). The
+  // floor keeps dust out of a stranger's view; it must never hide the thing you
+  // just made from the person who made it.
+  const { address: viewer } = useAccount()
+  const mineListable = useCallback((x: BasketSummary) => listable(x, viewer ?? null), [viewer])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -815,6 +1371,13 @@ export function Explore() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  useEffect(() => {
+    const rail = lensRailRef.current
+    const el = rail?.querySelector<HTMLElement>('[aria-pressed="true"]')
+    if (!rail || !el) return
+    rail.scrollTo({ left: el.offsetLeft - (rail.clientWidth - el.offsetWidth) / 2, behavior: 'smooth' })
+  }, [view])
 
   const all = useMemo(() => data ?? [], [data])
   const chainScoped = useMemo(() => (chain === 'all' ? all : all.filter((b) => b.chainId === chain)), [all, chain])
@@ -831,12 +1394,62 @@ export function Explore() {
   const qTerms = useMemo(() => (ql ? parseQueryTerms(ql) : []), [ql])
   const [searchFocused, setSearchFocused] = useState(false)
   // one global bento⇄graph toggle for the card grid (R+C: 'toggle all of them')
-  const [cardFace, setCardFace] = useState<'bento' | 'chart'>('bento')
+  const [cardFace, setCardFace] = useState<'bento' | 'chart'>(boot.cardFace)
 
   // assets present on the page (current baskets, chain-scoped) — the filter row
   const assets = useMemo(() => collectAssets(chainScoped.filter((b) => !b.supersededBy)), [chainScoped])
   // assets the CONNECTED wallet holds ≥$100 of (R+C: surface their baskets)
   const heldAssets = useWalletAssets(assets)
+  // ── the baskets you already HOLD (QOL round 2026-08-05) ────────────────────
+  //    Discovery was disconnected from your own book: a basket in your wallet
+  //    looked exactly like one you had never touched. ONE portfolio read for the
+  //    whole page (the linked-wallet group's, so a basket held by a linked wallet
+  //    counts) and every card gets its own position resolved out of it — a card
+  //    must never open its own query. Nothing here is written to storage: it is
+  //    the viewer's wallet, not a view preference.
+  const heldIndex = useHeldBaskets()
+
+  // ── THESES — one idea a creator shipped, which the chain forced into several
+  //    baskets (the owner 2026-08-09: "have thesis as a tab on the explore page").
+  //    Grouped over ALL chains' heads on purpose: a thesis is cross-chain by
+  //    nature, so the chain chips never scope this lens — each card wears its
+  //    own chain badges instead. No launchedAt handed in: the join lane made
+  //    the launch window advisory, so (deployer, name) is the grouping key.
+  //    Multi-chain groups only (the grouper's default) — a single-chain basket
+  //    is already fully described by its own card on the other lenses. ──
+  //    Discovery floor (owner 2026-08-16): unseeded / sub-$100 bundles stay
+  //    off Explore — thesis.ts owns the rule, the homepage applies the same
+  //    one. Their own pages / the creator page still show them.
+  const theses = useMemo(
+    () => groupIntoTheses(all.filter((b) => !b.supersededBy)).filter(thesisIsDiscoverable),
+    [all],
+  )
+  // The tab renders only while theses EXIST (a tab over an empty surface is a
+  // lie about the product), so a linked or remembered 'theses' with none
+  // discovered clamps back to the default lens — the activeOrder posture, one
+  // shelf over. Every render decision below reads `lens`, never `view`.
+  // 'theses' is a RETIRED lens id (the system is called Bundles now, and one
+  // name means one tab): saved views and shared ?view=theses links land on the
+  // bundles lens, which hosts the cross-chain cards.
+  const lens: View = view === 'theses' ? 'bundles' : view
+  // RAW haystack like the three tab haystacks below — matched, never rendered
+  // (safe-copy is a display law; see the note on the thesis-lens filter).
+  const searchedTheses = useMemo(
+    () =>
+      qTerms.length
+        ? theses.filter((t) =>
+            matchesTerms(`${t.name} ${t.deployer} ${t.legs.map((l) => `${l.symbol} ${l.name}`).join(' ')}`, qTerms),
+          )
+        : theses,
+    [theses, qTerms],
+  )
+  // The bundle band's slice: the four biggest, search-filtered like the tab.
+  // Tag/asset filters hide the band entirely — bundles carry neither, so it
+  // would ignore a filter the reader just applied.
+  const bandTheses = useMemo(
+    () => [...searchedTheses].sort((a, b) => b.totalAumUsd - a.totalAumUsd).slice(0, 4),
+    [searchedTheses],
+  )
 
   // ── creator-invented tags (signed `sectors`), ranked by frequency × TVL —
   //    "theses and trends" (R+C walkthrough): the trending rail + tag filter.
@@ -849,7 +1462,7 @@ export function Explore() {
     // Count only LISTABLE baskets: clicking a tag filters lists that hide
     // sub-floor baskets, so a badge counting them promised results the click
     // couldn't show ("#ai 3" → 1 result — audit)
-    for (const b of heads.filter(listable)) {
+    for (const b of heads.filter(mineListable)) {
       for (const t of sectorsByBasket.get(keyOfB(b)) ?? []) {
         if (!tagAllowed(t)) continue // creator tags are free-form; the site won't render banned ones
         const k = t.toLowerCase()
@@ -859,9 +1472,53 @@ export function Explore() {
         score.set(k, cur)
       }
     }
-    return [...score.values()].sort((a, b) => b.n - a.n || b.tvl - a.tvl).slice(0, 10)
+    // FIVE, NOT TEN (owner 2026-08-06 23:4x: "way way way too many pills across
+    // sectors/tickers, we need like 5 suggested max and people have the search
+    // bar above it anyways"). These are SUGGESTIONS, not an index — the search
+    // is the complete surface and it sits directly above them.
+    return [...score.values()].sort((a, b) => b.n - a.n || b.tvl - a.tvl).slice(0, 5)
   }, [heads, sectorsByBasket])
   const basketHasTag = (b: BasketSummary) => !tag || (sectorsByBasket.get(keyOfB(b)) ?? []).some((t) => t.toLowerCase() === tag)
+
+  // ── restore, then remember (QOL round 2026-08-05; the note above bootView) ──
+  //    The chain chip and the tag can only be checked once their options exist:
+  //    the catalogue arrives async and tags come per basket from creator meta. So
+  //    each is applied on the first render that HAS its list, and only while it
+  //    is still in it — a remembered chain with no baskets, or last week's tag,
+  //    would filter the page down to nothing. One shot each: after that the
+  //    person's clicks own the state and the pass never fights them.
+  const chainRestored = useRef(boot.fromUrl) // a linked visit restores nothing
+  const tagRestored = useRef(boot.fromUrl)
+  useEffect(() => {
+    let restoring = false
+    if (!chainRestored.current && chainsPresent.length > 0) {
+      chainRestored.current = true
+      const id = pickNumber(boot.stored.chain, chainsPresent)
+      if (id != null) {
+        setChain(id)
+        restoring = true
+      }
+    }
+    if (!tagRestored.current && trendingTags.length > 0) {
+      tagRestored.current = true
+      const remembered = pickOne(
+        boot.stored.tag,
+        trendingTags.map((t) => t.label.toLowerCase()),
+      )
+      if (remembered) {
+        setTag(remembered)
+        restoring = true
+      }
+    }
+    // Writing is merge-only, so a value we cannot validate yet is left in
+    // storage rather than erased by this visit's default — and a pass that just
+    // restored something writes on the NEXT one, with the real values.
+    if (boot.fromUrl || restoring) return
+    const patch: StoredPrefs = { view, lbWindow, cardFace, onlyFollowing, order }
+    if (hasBoth) patch.chain = chain // one chain = no chip row, nothing to remember
+    if (trendingTags.length > 0) patch.tag = tag
+    writePrefs(PREFS, patch)
+  }, [boot, chainsPresent, trendingTags, hasBoth, view, lbWindow, cardFace, chain, tag, onlyFollowing, order])
 
   // Inspiration the idle search bar types out — PLAIN search words (R+C 18:26:
   // people search a token, a tag, a chain — not sentences): live trending tags
@@ -881,31 +1538,94 @@ export function Explore() {
   )
   const typedPlaceholder = useTypingPlaceholder(
     searchIdeas,
-    view === 'thesis' && !searchFocused && q === '',
+    lens === 'thesis' && !searchFocused && q === '',
     'What are you interested in?',
   )
+
+  // ── the sort (QOL round 2026-08-05) ────────────────────────────────────────
+  //    Filters narrowed the catalogue but nothing ordered it, so "which is the
+  //    biggest" meant reading every card. The three questions people rank by are
+  //    value, holders and age; the page's own ranking stays the default and the
+  //    tie-break, so choosing nothing changes nothing (basket-sort.ts).
+  //
+  //    NEWEST IS CONDITIONAL, not decorative: a basket summary carries no launch
+  //    date, so the order reads the launch index the basket pages already build
+  //    (no query, no RPC). Where that index cannot answer, the pill is not offered
+  //    — a Newest that quietly reorders nothing would be a claim about knowledge
+  //    this site does not have. Same reason the chain chips render from the chains
+  //    that actually have baskets.
+  //    Keyed on the chain SET, not the array: the catalogue query hands back a
+  //    fresh array on every render, and this reads (and parses) stored blobs — it
+  //    should happen once per set of chains, not once per render.
+  const chainsKey = chainsPresent.join(',')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const launchAt = useMemo(() => launchTimeLookup(chainsPresent), [chainsKey])
+  const canOrderByAge = useMemo(() => hasLaunchTimes(heads, launchAt), [heads, launchAt])
+  // Returns is conditional on the same terms as Newest (the owner 2026-08-13: "add
+  // baskets order by top returns"): the window is since-launch NAV, and under
+  // two honest figures — dust and unreadable NAVs carry none — the order can
+  // express nothing, so the pill is not offered (basket-sort.ts returnsToDate).
+  const canOrderByReturns = useMemo(() => hasReturns(heads), [heads])
+  const orderOptions = useMemo(
+    () =>
+      BASKET_ORDERS.filter(
+        (o) => (o.id !== 'newest' || canOrderByAge) && (o.id !== 'returns' || canOrderByReturns),
+      ),
+    [canOrderByAge, canOrderByReturns],
+  )
+  // ── the TVL minimum's own options (the owner 2026-08-13) — rungs this catalogue
+  //    can actually use: satisfiable (never empties the grid) and discriminating
+  //    (actually filters). Derived from the chain-scoped heads so the steps and
+  //    the chain chips describe the same shelf; a picked step that stops being
+  //    offered (chain switch) falls back to Any, the activeOrder posture. ──────
+  const tvlSteps = useMemo(() => tvlStepsFor(heads.filter(mineListable)), [heads, mineListable])
+  const activeMinTvl = tvlSteps.includes(minTvl) ? minTvl : 0
+  // A remembered or linked order the page cannot run falls back to its ranking,
+  // and storage keeps the choice for a visit that CAN run it.
+  const activeOrder: BasketOrder = orderOptions.some((o) => o.id === order) ? order : 'top'
 
   // Thesis tab — best-performing, asset-filtered, searchable
   const baskets = useMemo(() => {
     let list = rankBaskets(chainScoped, { sort: 'perf', asset })
     if (tag) list = list.filter(basketHasTag)
+    // the TVL minimum composes with everything (the owner 2026-08-13) — and unlike
+    // the ambient listing floor it is explicit intent, so search does NOT
+    // reach under it
+    if (activeMinTvl > 0) list = filterByMinTvl(list, activeMinTvl)
+    // ⚠ RAW ON PURPOSE — safe-copy is a DISPLAY law and this string is MATCHED,
+    // never rendered (confirmed with specallocator, 2026-08-07). Bounding here
+    // buys nothing and costs two real things: showSymbol returns the literal
+    // "unnamed token" for a symbol that sanitises away, so every symbol-less
+    // basket would gain the searchable English words "unnamed" and "token" in
+    // its corpus, and the clip appends "…" which then matches over-long
+    // symbols. A matcher must not be fed a display placeholder. All three tab
+    // haystacks below are raw for this reason and must stay in step.
     if (qTerms.length) list = list.filter((b) => matchesTerms(`${b.symbol} ${b.name} ${b.address} ${b.top.map((t) => t.symbol).join(' ')} ${(sectorsByBasket.get(keyOfB(b)) ?? []).join(' ')}`, qTerms))
     // sub-floor baskets browse hidden (LISTING_TVL_FLOOR_USD), search reachable (R+C listing floor)
-    if (!qTerms.length) list = list.filter(listable)
+    if (!qTerms.length) list = list.filter(mineListable)
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainScoped, asset, qTerms, tag, sectorsByBasket])
+  }, [chainScoped, asset, qTerms, tag, sectorsByBasket, activeMinTvl])
 
   // Baskets tab — the performance list (owner 12:34): TVL⊕perf rank-sum, so
   // "big and performing" beats "merely big" and dust never surfaces
   const weightedBaskets = useMemo(() => {
     let list = rankBaskets(chainScoped, { sort: 'weighted', asset })
     if (tag) list = list.filter(basketHasTag)
+    if (activeMinTvl > 0) list = filterByMinTvl(list, activeMinTvl)
     if (qTerms.length) list = list.filter((b) => matchesTerms(`${b.symbol} ${b.name} ${b.address} ${b.top.map((t) => t.symbol).join(' ')} ${(sectorsByBasket.get(keyOfB(b)) ?? []).join(' ')}`, qTerms))
-    if (!qTerms.length) list = list.filter(listable)
+    if (!qTerms.length) list = list.filter(mineListable)
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainScoped, asset, qTerms, tag, sectorsByBasket])
+  }, [chainScoped, asset, qTerms, tag, sectorsByBasket, activeMinTvl])
+
+  // The chosen order, applied on top of the ranked+filtered lists — one choice for
+  // both basket lenses (they answer the same question about the same catalogue).
+  const orderedBaskets = useMemo(() => orderBaskets(baskets, activeOrder, launchAt), [baskets, activeOrder, launchAt])
+  const orderedWeighted = useMemo(
+    () => orderBaskets(weightedBaskets, activeOrder, launchAt),
+    [weightedBaskets, activeOrder, launchAt],
+  )
 
   // Spotlight — the UNFILTERED top three by performance (search/asset filters
   // scope the rows below, never the page's headline truth).
@@ -940,6 +1660,38 @@ export function Explore() {
   if (isError) return <div className="py-6"><Empty>Couldn't load Explore, the public RPC may be rate-limiting. An origin-restricted key or read proxy makes it reliable.</Empty></div>
 
   const showAssetRow = assets.length > 0
+  // Only the basket lenses take an order: Creators has its own timeframe pills and
+  // Bundles is a different catalogue (QOL round 2026-08-05).
+  const sortable = lens === 'thesis' || lens === 'baskets'
+  // ── the filter footprint, in one place (QOL round 2026-08-06) ──────────────
+  //    Any of these narrows what the lenses show; the count line + every
+  //    zero-state's Clear button read from the same fact so they cannot
+  //    disagree about whether the reader is filtered.
+  // the TVL minimum only narrows the basket lenses, so on Creators it neither
+  // counts as a filter, nor shows on the pill, nor hides the intro/spotlight —
+  // a surface claiming a filter the lens does not read is the exact lie the
+  // count-line law forbids. ONE scoped fact for all of them.
+  const tvlFilterOn = sortable && activeMinTvl > 0
+  const filtersOn = !!ql || !!asset || !!tag || tvlFilterOn || (lens === 'creators' && onlyFollowing)
+  const clearFilters = () => {
+    setQ('')
+    setAsset(null)
+    setTag(null)
+    setMinTvl(0)
+    setOnlyFollowing(false)
+  }
+  // ── what the two folded pills claim (the one-row ruling, the owner 2026-08-12) ──
+  //    `asset` is ONE state set from two places, so exactly one pill wears it:
+  //    the wallet pill when the selection is a held asset ("holds WETH ✕"),
+  //    the #tags pill otherwise — never both, never neither. The TVL rung
+  //    (2026-08-13) rides the #tags pill too, third in its composition.
+  const assetHeld = !!asset && heldAssets.some((a) => a.address.toLowerCase() === asset)
+  const assetMeta = asset ? assets.find((a) => a.address.toLowerCase() === asset) : undefined
+  const tagsPillOn = !!tag || (!!asset && !assetHeld) || tvlFilterOn
+  // the query names a tag the reader could apply (owner: "im interested in
+  // agents" lights up #agents) — with the chips folded, the PILL carries the
+  // glow so the affordance survives the fold
+  const tagsPillHit = !tagsPillOn && qTerms.length > 0 && trendingTags.some((t) => termsHitLabel(t.label, qTerms))
 
   return (
     <div className="space-y-5 py-3">
@@ -949,23 +1701,50 @@ export function Explore() {
       <div className="enter" style={{ '--enter-i': 0 } as CSSProperties}>
       <PageHeader
         size="md"
+        /* the title takes the middle of its own line on a phone (owner
+           2026-08-06 23:13: "the Explore needs to be centered in the middle");
+           the actions row already claims the full width below it */
+        className="max-sm:justify-center"
         title="Explore"
         actions={
-          <div className="flex items-end gap-6">
-            <button
-              type="button"
-              onClick={() => setLearnOpen(true)}
-              className="press mb-1 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-4 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
-            >
-              <span aria-hidden className="grid h-3.5 w-3.5 place-items-center rounded-full border border-current text-[8px] leading-none">?</span>
-              How this works
-            </button>
-            <HeadlineStat value={String(creatorCount)} label="creators" />
-            <HeadlineStat value={String(basketTotal)} label="baskets" divider />
-            <HeadlineStat value={formatUsdCompact(tvlTotal)} label="TVL" divider accent />
+          /* 525px inside a 390px viewport (mobile audit 2026-08-05): the pill
+             plus three stats cannot fit a phone. Wrap and tighten below sm,
+             where the stats become a second line instead of running off.
+             ONE COLUMN below sm (owner 2026-08-06 23:13): "how this works"
+             centred under the title, then creators · baskets · TVL as three
+             centred rows under that. */
+          /* ⚠ SUPERSEDED, and the contradiction is stated rather than buried:
+             at 23:13 the owner asked for "the three rows below that — 11 creators,
+             the baskets, and then the TVL", which is what I built. At ~00:05
+             (relayed by R) he said of the same trio "on mobile this needs to be
+             ONE ROW not one column". Most-recent wins: the three stats are one
+             nested nowrap unit that drops below the How-this-works pill as a
+             group and stays a row there. Tighter dividers and a smaller figure
+             below sm are what make three fit a 390px line. */
+          <div className="flex flex-wrap items-end justify-center gap-x-4 gap-y-3 sm:gap-6">
+            <div className="flex w-full flex-nowrap items-end justify-center gap-x-4 sm:w-auto sm:gap-x-6">
+              <HeadlineStat value={String(creatorCount)} label="creators" onClick={() => setView('creators')} />
+              <HeadlineStat value={String(basketTotal)} label="baskets" divider onClick={() => setView('baskets')} />
+              <HeadlineStat value={formatUsdCompact(tvlTotal)} label="TVL" divider accent />
+            </div>
           </div>
         }
       />
+      {/* BELOW THE TITLE, not beside the stats (the owner 2026-08-09: "move this
+          button to below the explore title"). It sat inside the actions row
+          competing with creators · baskets · TVL, so the row read as four
+          peers when three of them are figures and one is a door. Centred on a
+          phone to match the title's own max-sm:justify-center. */}
+      <div className="mt-3 flex max-sm:justify-center">
+        <button
+          type="button"
+          onClick={() => setLearnOpen(true)}
+          className="press inline-flex min-h-[36px] items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-4 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan sm:min-h-0"
+        >
+          <span aria-hidden className="grid h-3.5 w-3.5 place-items-center rounded-full border border-current text-[8px] leading-none">?</span>
+          How this works
+        </button>
+      </div>
       </div>
 
       {learnOpen && (
@@ -974,29 +1753,110 @@ export function Explore() {
         </Suspense>
       )}
 
+      {/* ── THE INTRO (owner 1826, rebalanced on his live note same evening:
+             "button kept in line with content and moved to left, description
+             two lines, basket in line with the style of baskets at the bottom
+             of the page"). LEFT is the whole act — eyebrow, head, a two-line
+             description, and the create door under them, one left-aligned
+             column. RIGHT is the most-held live basket wearing the page's OWN
+             ThesisCard — the exact card the grid below renders, so the intro's
+             example and the catalogue cannot read as two languages. Hidden
+             while searching or filtering, same rule as the spotlight. ── */}
+      {!ql && !asset && !tag && !tvlFilterOn && (
+        <div className="enter" style={{ '--enter-i': 1 } as CSSProperties}>
+          <div className="grid items-center gap-8 py-4 lg:grid-cols-2 lg:gap-12">
+            {/* CENTRED, AND NARROWER, ON A PHONE ONLY (owner 2026-08-06 23:13:
+                "'a whole thesis, one token' needs to be centered as well … so
+                does the 'create your own' button … and to use less width on
+                mobile. ONLY on mobile because there's just not enough
+                space"). Every rule below reverts at sm, so the left-aligned
+                desktop act he signed off on 1826 is untouched. */}
+            <div>
+              {/* the eyebrow goes on a phone (owner 23:13: "you can remove
+                  'spectrum baskets', that pill") — the headline is the
+                  opening line there, and the pill was one more thing between
+                  the masthead and it */}
+              <span className="hidden sm:inline-flex">
+              </span>
+              <h2
+                className="mt-4 text-center font-display font-semibold leading-[1.06] tracking-tight text-ink [text-wrap:balance] sm:mt-6 sm:text-left"
+                style={{ fontSize: 'clamp(1.75rem, 1.2rem + 2.4vw, 3rem)' }}
+              >
+                A whole thesis, <span className="spectral-text">one token.</span>
+              </h2>
+              {/* two lines at this measure (owner's note) — the fee story
+                  lives on the homepage's loop and the card's own numbers.
+                  The em dash is a comma per the house rule on shown copy. */}
+              <p className="mx-auto mt-4 max-w-[34ch] text-center text-[14px] leading-relaxed text-ink-dim sm:mx-0 sm:mt-6 sm:max-w-[46ch] sm:text-left">
+                A basket is a portfolio published as a token, a whole thesis you can buy in one
+                click.
+              </p>
+              {pageEnabled(brand.pages, 'launch') && (
+                <div className="mt-6 flex justify-center sm:mt-8 sm:block">
+                  <IslandCta to="/create">Create your own</IslandCta>
+                </div>
+              )}
+            </div>
+            {(() => {
+              const flagship = [...heads.filter(mineListable).filter((x) => (x.top?.length ?? 0) >= 2)].sort(
+                (x, y) => (y.holdersCount ?? 0) - (x.holdersCount ?? 0) || y.aumUsd - x.aumUsd,
+              )[0]
+              if (!flagship) return null
+              return (
+                /* min-w-0: same grid-item flooring as the card grid below —
+                   without it the card's min-content widens the column and the
+                   card clips itself (mobile sweep 2026-08-06). */
+                <div className="min-w-0">
+                  <ThesisCard
+                    ix={flagship}
+                    held={heldPosition(heldIndex, flagship)}
+                    chain={versionChain(flagship.address, all.filter((x) => x.deployer && flagship.deployer && x.deployer.toLowerCase() === flagship.deployer!.toLowerCase()))}
+                  />
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* ── the top-three slideshow (hidden on the leaderboard + while filtering);
              when NO basket clears the criteria the blueprint ghost holds the
              slot instead (owner 2026-07-07 14:1x) ── */}
-      {!ql && !asset && !tag && (
+      {!ql && !asset && !tag && !tvlFilterOn && (
         <div className="enter" style={{ '--enter-i': 1 } as CSSProperties}>
           {spotlightBaskets.length > 0 ? <BasketSpotlight baskets={spotlightBaskets} /> : <BlueprintBasket />}
         </div>
       )}
 
       {/* ── tabs (big, left) + search (right) — one row, saves vertical space ── */}
-      <div className="enter flex flex-wrap items-center justify-between gap-3 border-y border-white/10 py-2.5" style={{ '--enter-i': 2 } as CSSProperties}>
+      {/* pt-6 below sm (owner 2026-08-06 23:13: "there needs to be a little bit
+          more padding above the performers/baskets/creators") — the tabs sat
+          14px under the slideshow's bottom edge and read as part of it */}
+      <div className="enter flex flex-wrap items-center justify-between gap-3 border-y border-white/10 pb-2.5 pt-6 sm:pt-2.5" style={{ '--enter-i': 2 } as CSSProperties}>
         {/* one scrollable row on phone (tab-like), never a two-line wrap; the
             rail-fade edge hints at the off-screen tabs (mobile UX review 10) */}
-        <div className="no-scrollbar rail-fade -mx-1 flex min-w-0 items-center gap-1 overflow-x-auto px-1">
-          <TabBtn active={view === 'thesis'} onClick={() => setView('thesis')}>Top performers</TabBtn>
-          <TabBtn active={view === 'baskets'} onClick={() => setView('baskets')}>Baskets</TabBtn>
-          <TabBtn active={view === 'creators'} onClick={() => setView('creators')}>Creators</TabBtn>
-          {/* bundles: several baskets held as one allocation (owner 2026-07-29) */}
-          {pageEnabled(brand.pages, 'bundle') && (
-            <TabBtn active={view === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
+        <div ref={lensRailRef} className="no-scrollbar rail-fade -mx-1 flex min-w-0 items-center gap-1 overflow-x-auto px-1">
+          <TabBtn active={lens === 'thesis'} onClick={() => setView('thesis')}>Top performers</TabBtn>
+          <TabBtn active={lens === 'baskets'} onClick={() => setView('baskets')}>Baskets</TabBtn>
+          {/* theses: one idea published across chains — only while any exist
+              (a tab over an empty surface is a lie about the product) */}
+
+          <TabBtn active={lens === 'creators'} onClick={() => setView('creators')}>Creators</TabBtn>
+          {/* bundles: the tab hosts TWO products — published cross-chain
+              bundles (ungated, like every other surface of the new system)
+              and the OLD hand-picked allocations (page-gated since the owner
+              2026-08-01; that toggle now scopes to them alone). It renders
+              when either has something to show. */}
+          {(pageEnabled(brand.pages, 'bundle') || theses.length > 0) && (
+            <TabBtn active={lens === 'bundles'} onClick={() => setView('bundles')}>Bundles</TabBtn>
           )}
         </div>
-        {view !== 'thesis' && (
+        {/* SUPERSEDED (2026-08-11): the 2026-08-06 rule hid this on Bundles
+            because the hand-picked catalogue took no query — but published
+            bundles are searched (searchedTheses filters by q), and a hidden
+            box turned a stale query from another tab into an INVISIBLE filter
+            on the bundle grid. The box shows wherever the query binds. */}
+        {lens !== 'thesis' && (
         <label className="relative flex min-w-0 flex-1 items-center sm:max-w-xs">
           <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 h-4 w-4 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
@@ -1005,17 +1865,58 @@ export function Explore() {
             ref={searchRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search creators or baskets…"
+            /* same Escape law as SpectralSearch: a query clears, empty blurs */
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return
+              if (q) {
+                e.stopPropagation()
+                setQ('')
+              } else {
+                e.currentTarget.blur()
+              }
+            }}
+            placeholder={lens === 'bundles' ? 'Search bundles…' : 'Search creators or baskets…'}
             spellCheck={false}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.02] py-2 pl-9 pr-3 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-cyan/50"
+            className="w-full rounded-xl border border-white/10 bg-white/[0.02] py-2 pl-9 pr-3 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-cyan/50 sm:pr-14"
           />
+          {/* the ⌘K the page already honors, made visible (the hint IS the
+              feature — SpectralSearch's own rule, same chip). sm+: no keyboard
+              below it. */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute right-2.5 hidden select-none items-center gap-0.5 rounded-md border border-white/12 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-ink-faint sm:inline-flex"
+          >
+            {mac ? '⌘' : 'Ctrl'} K
+          </span>
         </label>
         )}
       </div>
 
-      {/* ── secondary filters: chain · following · (leaderboard) timeframe ──── */}
-      {(hasBoth || followCount > 0 || onlyFollowing || view === 'creators') && (
-        <div className="no-scrollbar rail-fade flex items-center gap-2 overflow-x-auto">
+      {/* ── THE control row — chain · sort · (creator pills) · #tags · wallet ·
+             view toggle, ONE wrapping band (the owner 2026-08-12: "way way too much
+             info on the /explore page just make it one filter/sort row"). What
+             stacked here before — the chain+sort strip, the trending-tag row
+             (R+C "theses and trends"), the asset suggestions, the full-width
+             "In your wallet" band — is now one row: the tag + asset chips fold
+             into the #tags popover, the wallet chips into the wallet popover,
+             and the lens's view toggle docks at the row's right end. Nothing
+             is deleted, everything folded; helper copy lives INSIDE the
+             popovers, never in the row; an active tag/asset filter is loud on
+             its pill without opening anything.
+             NOT ON BUNDLES, for the same reason the search box above is not
+             (QOL round 2026-08-06, extended 2026-08-07): BundleGrid takes only
+             a chainId off the nav — no tag, no asset, and not this row's chain
+             state — so each of these lit up on tap and filtered NOTHING. A
+             control that reads as broken is worse than no control. That law
+             now covers the wallet pill too: its chips set `asset`, which the
+             bundle surfaces ignore — the old band rendered there and filtered
+             nothing; the fold fixes that.
+             NOT ON THESES either, same law: a thesis is cross-chain by nature,
+             so a chain chip scoping it would amputate its own legs, and none
+             of sort/following/timeframe read that lens. */}
+      {lens !== 'bundles' &&
+        (hasBoth || sortable || lens === 'creators' || followCount > 0 || onlyFollowing || trendingTags.length > 0 || heldAssets.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2">
           {hasBoth && (
             <>
               <Pill active={chain === 'all'} onClick={() => setChain('all')}>All</Pill>
@@ -1026,101 +1927,301 @@ export function Explore() {
               ))}
             </>
           )}
-          {view === 'creators' && (followCount > 0 || onlyFollowing) && (
+          {/* which chain scopes the list, then what orders it — one choice, shared
+              by both basket lenses (QOL round 2026-08-05) */}
+          {sortable && <SortRow options={orderOptions} order={activeOrder} onChange={setOrder} />}
+          {/* the TVL minimum (the owner 2026-08-13: "a filter for total tvl")
+              lives INSIDE the #tags popover below, not as its own pill: with
+              the Returns pill added, a separate TVL pill measurably wrapped
+              this band's right-docked toggle onto a second line at 1440
+              (988px of controls in a 952px row), and the one-row ruling says
+              nothing gets a second row back — so the threshold joins the
+              existing disclosure instead of adding width. */}
+          {lens === 'creators' && (followCount > 0 || onlyFollowing) && (
             <Pill active={onlyFollowing} onClick={() => setOnlyFollowing((v) => !v)}>
               Following{followCount > 0 ? ` · ${followCount}` : ''}
             </Pill>
           )}
-          {view === 'creators' &&
+          {lens === 'creators' &&
             (['value', 'day', 'week', 'month'] as LbWindow[]).map((w) => (
               <Pill key={w} active={lbWindow === w} onClick={() => setLbWindow(w)}>
                 {w === 'value' ? 'Value' : w === 'day' ? 'Day' : w === 'week' ? 'Week' : 'Month'}
               </Pill>
             ))}
-        </div>
-      )}
-
-      {/* ── trending tags — creator-invented, ranked by adoption (R+C: "theses
-             and trends"); click to filter both tabs ── */}
-      {view !== 'thesis' && trendingTags.length > 0 && (
-        <div className="enter flex flex-wrap items-center gap-2" style={{ '--enter-i': 3 } as CSSProperties}>
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">Trending</span>
-          {trendingTags.map((t) => {
-            const on = tag === t.label.toLowerCase()
-            const hit = !on && termsHitLabel(t.label, qTerms)
-            return (
-              <button
-                key={t.label.toLowerCase()}
-                type="button"
-                onClick={() => setTag(on ? null : t.label.toLowerCase())}
-                aria-pressed={on}
-                className={`press rounded-full border px-3 py-1 font-mono text-[11px] transition-all ${
-                  on
-                    ? 'border-cyan/50 bg-cyan/10 text-cyan'
-                    : hit
-                      ? 'border-cyan/60 bg-cyan/[0.08] text-cyan shadow-[0_0_16px_-4px_rgba(53,224,255,0.8)]'
-                      : 'border-white/10 text-ink-dim hover:border-white/30 hover:text-ink'
-                }`}
-              >
-                #{t.label.toLowerCase().replace(/\s+/g, '')}
-                <span className={`ml-1.5 ${on || hit ? 'text-cyan/70' : 'text-ink-faint'}`}>{t.n}</span>
-              </button>
-            )
-          })}
-          {tag && (
-            <button type="button" onClick={() => setTag(null)} className="press font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-cyan">
-              Clear ✕
-            </button>
+          {/* #tags — the trending chips + counts, BENEATH THEM the asset
+              suggestions, and beneath those the TVL minimum: all the catalogue
+              filters share one disclosure (the owner 2026-08-09: "this is a mess,
+              can we make it simpler over less lines" — two disclosures for one
+              job was that complaint; one popover is the 2026-08-12 shape of
+              the same rule, and the 2026-08-13 TVL rungs join it under the
+              one-row law, see the note above). The pill wears every active
+              piece ("#defi · $100k+ ✕") so a live filter stays visible and
+              clearable without opening anything; on a site with no tags yet
+              the pill honestly renames itself TVL rather than vanishing with
+              them. */}
+          {(trendingTags.length > 0 || (sortable && tvlSteps.length > 0)) && (
+            <FilterPill
+              label={trendingTags.length > 0 ? '#tags' : 'TVL'}
+              activeLabel={
+                tagsPillOn ? (
+                  <span className="normal-case">
+                    {[
+                      tag ? `#${tag.replace(/\s+/g, '')}` : null,
+                      asset && !assetHeld ? `$${assetMeta ? showSymbol(assetMeta.symbol) : '…'}` : null,
+                      tvlFilterOn ? tvlStepLabel(activeMinTvl) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                ) : null
+              }
+              glow={tagsPillHit}
+              onClear={() => {
+                setTag(null)
+                if (!assetHeld) setAsset(null)
+                setMinTvl(0)
+              }}
+              clearLabel="Clear the tag, asset and TVL filters"
+            >
+              {(close) => (
+                <div className="space-y-3.5">
+                  {trendingTags.length > 0 && (
+                  <div>
+                    {/* creator-invented, ranked by adoption; counts promise only
+                        LISTABLE results (audit); click filters every lens that
+                        reads tags */}
+                    <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">Trending</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {trendingTags.map((t) => {
+                        const on = tag === t.label.toLowerCase()
+                        // the query names this tag → flag it (owner: "im interested
+                        // in agents" lights up #agents)
+                        const hit = !on && termsHitLabel(t.label, qTerms)
+                        return (
+                          <button
+                            key={t.label.toLowerCase()}
+                            type="button"
+                            onClick={() => {
+                              setTag(on ? null : t.label.toLowerCase())
+                              close()
+                            }}
+                            aria-pressed={on}
+                            className={`press min-h-[36px] rounded-full border px-3 py-1 font-mono text-[11px] transition-all sm:min-h-0 ${
+                              on
+                                ? 'border-cyan/50 bg-cyan/10 text-cyan'
+                                : hit
+                                  ? 'border-cyan/60 bg-cyan/[0.08] text-cyan shadow-[0_0_16px_-4px_rgba(53,224,255,0.8)]'
+                                  : 'border-white/10 text-ink-dim hover:border-white/30 hover:text-ink'
+                            }`}
+                          >
+                            #{t.label.toLowerCase().replace(/\s+/g, '')}
+                            <span className={`ml-1.5 ${on || hit ? 'text-cyan/70' : 'text-ink-faint'}`}>{t.n}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  )}
+                  {showAssetRow && (
+                    <div>
+                      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">By asset</div>
+                      <AssetFilterRow
+                        assets={assets}
+                        selected={asset}
+                        onSelect={(a) => {
+                          setAsset(a)
+                          close()
+                        }}
+                      />
+                    </div>
+                  )}
+                  {/* the TVL minimum's rungs (the owner 2026-08-13) — this
+                      catalogue's own satisfiable-and-discriminating steps
+                      (basket-sort.ts tvlStepsFor); the sortable gate keeps a
+                      threshold the Creators lens does not read from being
+                      offered there. Compact labels, full figure on title. */}
+                  {sortable && tvlSteps.length > 0 && (
+                    <div>
+                      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">Minimum TVL</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {[0, ...tvlSteps].map((min) => {
+                          const on = activeMinTvl === min
+                          return (
+                            <button
+                              key={min}
+                              type="button"
+                              onClick={() => {
+                                setMinTvl(min)
+                                close()
+                              }}
+                              aria-pressed={on}
+                              title={min === 0 ? 'No minimum' : tvlStepTitle(min)}
+                              className={`press min-h-[36px] rounded-full border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors sm:min-h-0 ${
+                                on ? 'border-cyan/50 bg-cyan/10 text-cyan' : 'border-white/10 text-ink-dim hover:border-white/30 hover:text-ink'
+                              }`}
+                            >
+                              {min === 0 ? 'Any' : tvlStepLabel(min)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <p className="mt-2 font-mono text-[10px] leading-relaxed text-ink-faint">
+                        the basket&rsquo;s measured value, as on its card. One whose value can&rsquo;t be read right now
+                        only shows under Any: it can&rsquo;t prove it clears a minimum.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </FilterPill>
+          )}
+          {/* the wallet pill — the old full-width "In your wallet" band, folded
+              (one tap surfaces the baskets holding an asset, the same as a
+              search would; R+C 18:26 — facts about the viewer's own wallet,
+              never a recommendation). Active = "holds WETH ✕" on the pill. */}
+          {heldAssets.length > 0 && (
+            <FilterPill
+              wallet
+              label={
+                <>
+                  <span className="max-sm:hidden">In your wallet</span>
+                  <span className="sm:hidden">Wallet</span>
+                </>
+              }
+              activeLabel={assetHeld ? `holds ${showSymbol(heldAssets.find((a) => a.address.toLowerCase() === asset)!.symbol)}` : null}
+              onClear={() => setAsset(null)}
+              clearLabel="Stop filtering by this wallet asset"
+            >
+              {(close) => (
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {heldAssets.map((a) => {
+                      const on = asset === a.address.toLowerCase()
+                      return (
+                        <button
+                          key={a.address.toLowerCase()}
+                          type="button"
+                          onClick={() => {
+                            setAsset(on ? null : a.address.toLowerCase())
+                            close()
+                          }}
+                          aria-pressed={on}
+                          title={`Show baskets holding ${showSymbol(a.symbol)}`}
+                          className={`press inline-flex min-h-[36px] items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 transition-colors sm:min-h-0 ${
+                            on ? 'border-cyan/60 bg-cyan/15' : 'border-white/12 bg-white/[0.03] hover:border-cyan/40'
+                          }`}
+                        >
+                          <AssetLogo address={a.address} symbol={a.symbol} chainId={a.chainId} size={18} />
+                          <span className={`font-mono text-[10px] uppercase tracking-[0.1em] ${on ? 'text-cyan' : 'text-ink-dim'}`}>{showSymbol(a.symbol)}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="font-mono text-[10px] text-ink-faint">tap one to see the baskets that hold it</p>
+                </div>
+              )}
+            </FilterPill>
+          )}
+          {/* the lens's view toggle, right-docked in the same band — still the
+              first control ABOVE the bundle band (owner 2026-08-11: "the
+              slideshow/list button needs to go above the bundle"; the face
+              toggle leads the thesis lens likewise): the 2026-08-12 one-row
+              ruling moves both INTO this row, which sits above the band, so
+              both rulings hold. Same render gates they had down there. */}
+          {lens === 'thesis' && orderedBaskets.length > 0 && (
+            <span className="ml-auto">
+              <FaceToggle face={cardFace} onChange={setCardFace} />
+            </span>
+          )}
+          {lens === 'baskets' && orderedWeighted.length > 0 && (
+            <span className="ml-auto">
+              <SegToggle value={basketLayout} onChange={setBasketLayout} options={BASKET_LAYOUTS} />
+            </span>
           )}
         </div>
       )}
 
-      {/* ── asset filter icon row (Baskets + Creators) ───────────────────────── */}
-      {view !== 'thesis' && showAssetRow && (
-        <div className="enter" style={{ '--enter-i': 3 } as CSSProperties}>
-          <AssetFilterRow assets={assets} selected={asset} onSelect={setAsset} />
-        </div>
-      )}
-
-      {/* ── you hold these — one tap surfaces the baskets holding them, the
-             same as a search would (R+C 18:26; facts about the viewer's own
-             wallet, never a recommendation) ── */}
-      {heldAssets.length > 0 && (
-        <div className="enter flex flex-wrap items-center gap-2 rounded-2xl border border-cyan/20 bg-cyan/[0.03] px-4 py-3" style={{ '--enter-i': 3 } as CSSProperties}>
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan">In your wallet</span>
-          {heldAssets.map((a) => {
-            const on = asset === a.address.toLowerCase()
-            return (
-              <button
-                key={a.address.toLowerCase()}
-                type="button"
-                onClick={() => setAsset(on ? null : a.address.toLowerCase())}
-                aria-pressed={on}
-                title={`Show baskets holding ${a.symbol}`}
-                className={`press inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 transition-colors ${
-                  on ? 'border-cyan/60 bg-cyan/15' : 'border-white/12 bg-white/[0.03] hover:border-cyan/40'
-                }`}
-              >
-                <AssetLogo address={a.address} symbol={a.symbol} chainId={a.chainId} size={18} />
-                <span className={`font-mono text-[10px] uppercase tracking-[0.1em] ${on ? 'text-cyan' : 'text-ink-dim'}`}>{a.symbol}</span>
-              </button>
-            )
-          })}
-          <span className="font-mono text-[10px] text-ink-faint">tap one to see the baskets that hold it</span>
-        </div>
+      {/* ── the filtered count, said out loud (QOL round 2026-08-06): while any
+             filter is on, the page states how many survived it and offers the
+             way back — the grid changing size silently made "did that filter
+             do anything?" a scroll-and-count question. aria-live so a screen
+             reader hears the answer the moment it changes. ── */}
+      {/* on the theses lens only the SEARCH narrows the list (its other filter
+          rows are hidden above), so the line keys on the query alone — a
+          leftover asset/tag from another lens must not summon a count claiming
+          filters this lens does not read */}
+      {filtersOn && lens !== 'bundles' && (
+        <p aria-live="polite" className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+          {lens === 'creators'
+            ? `${creators.length} creator${creators.length === 1 ? '' : 's'} match`
+              : `${(lens === 'thesis' ? baskets : weightedBaskets).length} basket${(lens === 'thesis' ? baskets : weightedBaskets).length === 1 ? '' : 's'} match`}
+          <button type="button" onClick={clearFilters} className="press text-ink-faint underline decoration-white/25 underline-offset-4 transition-colors hover:text-cyan">
+            clear filters
+          </button>
+        </p>
       )}
 
       {/* ── content — keyed by tab so each switch replays the row cascade ── */}
-      <div key={view}>
-      {view === 'bundles' ? (
-        <div className="space-y-4">
-          <p className="max-w-2xl text-sm leading-relaxed text-ink-dim">
-            A bundle is several baskets, across chains, held as one allocation. Following one means
-            buying each basket on its own chain, into your own wallet — it is not a new token.
-          </p>
-          <BundleGrid chainId={activeChainId} />
+      <div key={lens}>
+      {lens === 'bundles' ? (
+        /* ── BUNDLES — one tab, one name (the owner 2026-08-10: the multichain
+              multi-basket system is called Bundle again). PUBLISHED bundles
+              lead: one creator's idea shipped as a basket token per network,
+              each card the door to its own page. The hand-picked allocations
+              the tab already hosted keep their grid below. ── */
+        <div className="space-y-8">
+          {/* a direct ?view= link can land here with nothing to show (the tab
+              itself hides then) — say so instead of rendering a blank */}
+          {theses.length === 0 && !pageEnabled(brand.pages, 'bundle') && (
+            <Empty action={pageEnabled(brand.pages, 'launch') ? <IslandCta to="/create">Compose a bundle</IslandCta> : null}>
+              No bundles live yet. Pick assets on several networks in the create flow and they publish as one
+              bundle — a basket per network under one name.
+            </Empty>
+          )}
+          {theses.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+                <p className="text-base leading-relaxed text-ink-dim sm:text-lg">
+                  One idea, published across networks. Each card opens the bundle&rsquo;s own page.
+                </p>
+                {pageEnabled(brand.pages, 'launch') && (
+                  <Link
+                    to="/create"
+                    className="press shrink-0 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-violet-bright"
+                  >
+                    + Compose your own
+                  </Link>
+                )}
+              </div>
+              {searchedTheses.length === 0 ? (
+                <Empty action={<ClearFiltersBtn onClear={clearFilters} />}>
+                  Nothing matches, try another search.
+                </Empty>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {[...searchedTheses].sort((a, b) => b.totalAumUsd - a.totalAumUsd).map((t, i) => (
+                    /* min-w-0 for the same grid-item flooring reason as the
+                       card grids on the other lenses; keyed by the grouper's
+                       own (deployer, name) — this grid holds MANY creators */
+                    <div key={`${t.deployer}::${t.name}`} className="enter min-w-0" style={{ '--enter-i': 3 + Math.min(i, 9) } as CSSProperties}>
+                      <ThesisDoorCard thesis={t} size="md" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {pageEnabled(brand.pages, 'bundle') && (
+            <div className="space-y-4">
+              <p className="max-w-2xl text-sm leading-relaxed text-ink-dim">
+                Hand-picked collections: several baskets, across chains, held as one allocation. Following one means
+                buying each basket on its own chain, into your own wallet — it is not a new token.
+              </p>
+              <BundleGrid chainId={activeChainId} />
+            </div>
+          )}
         </div>
-      ) : view === 'thesis' ? (
+      ) : lens === 'thesis' ? (
         <div className="space-y-8">
           {/* the search hero: search + tags LEFT, quick swap RIGHT (owner
               15:1x), the search and the swap card sharing ONE grid row so
@@ -1141,7 +2242,11 @@ export function Explore() {
                 Quick search
               </span>
             </div>
-            {/* the glossy spectral search — stretched to the swap card's height */}
+            {/* the search at its NATURAL height (owner ~16:4x: "less
+                height/thick, move the pills up so both … fit the same vertical
+                height as the quick swap card") — no longer stretched to the
+                card; the search + pills together are the left column and the
+                CARD spans their two rows, so the pair shares its height. */}
             <div className="lg:col-start-1 lg:row-start-2">
               <SpectralSearch
                 value={q}
@@ -1150,36 +2255,15 @@ export function Explore() {
                 onBlur={() => setSearchFocused(false)}
                 placeholder={typedPlaceholder}
                 size="lg"
-                stretch={SWAP_ENABLED}
               />
             </div>
-            {trendingTags.length > 0 && (
-              <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2 lg:col-start-1 lg:row-start-3 lg:justify-start">
-                {trendingTags.map((t) => {
-                  const on = tag === t.label.toLowerCase()
-                  // the query names this tag → flag it (owner: "im interested
-                  // in agents" lights up #agents)
-                  const hit = !on && termsHitLabel(t.label, qTerms)
-                  return (
-                    <button
-                      key={t.label.toLowerCase()}
-                      type="button"
-                      onClick={() => setTag(on ? null : t.label.toLowerCase())}
-                      aria-pressed={on}
-                      className={`press rounded-full border px-3.5 py-1.5 font-mono text-[11px] transition-all ${
-                        on
-                          ? 'border-cyan/50 bg-cyan/10 text-cyan'
-                          : hit
-                            ? 'border-cyan/60 bg-cyan/[0.08] text-cyan shadow-[0_0_16px_-4px_rgba(53,224,255,0.8)]'
-                            : 'border-white/10 text-ink-dim hover:border-white/30 hover:text-ink'
-                      }`}
-                    >
-                      #{t.label.toLowerCase().replace(/\s+/g, '')}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            {/* the tag rail that lived in this third grid row (owner 2106 #11
+                one-row rail; 23:13 phone disclosure) folded into the control
+                row's #tags popover with the rest of the filter chrome (the owner
+                2026-08-12 one-row ruling) — one control per state, and the
+                page's default lens opens on one filter band like the others.
+                The swap card still spans the now-empty row, which is what
+                keeps the search at its NATURAL height (owner ~16:4x). */}
 
             {/* the quick swap, IN LINE with the search (owner 15:1x): its
                 "Quick swap" header + the strip; the full console stays on
@@ -1200,7 +2284,9 @@ export function Explore() {
                     Full console →
                   </Link>
                 </div>
-                <div className="lg:col-start-2 lg:row-start-2">
+                {/* spans the search AND pills rows — the card sets the pair's
+                    shared height instead of inflating the search to its own */}
+                <div className="lg:col-start-2 lg:[grid-row:2/span_2]">
                   {/* On "All chains" this followed DEFAULT_CHAIN_ID (Base)
                       rather than the network the site is on, so the rows beside
                       it listed every chain's baskets while the picker listed
@@ -1214,21 +2300,37 @@ export function Explore() {
             )}
           </div>
 
-          {baskets.length === 0 ? (
-            <Empty>{tag || ql ? 'Nothing matches, try another tag or search.' : 'No baskets launched yet on this network.'}</Empty>
+          {/* the face toggle (owner 2026-08-11: the control above the bundle
+              band) now rides the control row's right end — see up there */}
+          {/* the TVL minimum hides the band on the same law as tag/asset:
+              bundles are not filtered by it, so it would ignore the filter */}
+          {!tag && !asset && !tvlFilterOn && (
+            <BundleBand theses={bandTheses} total={searchedTheses.length} onAll={() => setView('bundles')} />
+          )}
+
+          {orderedBaskets.length === 0 ? (
+            <Empty action={filtersOn ? <ClearFiltersBtn onClear={clearFilters} /> : <LaunchFirst />}>
+              {filtersOn ? 'Nothing matches, try another filter or search.' : 'No baskets launched yet on this network.'}
+            </Empty>
           ) : (
             /* ALL baskets in the card format (R+C 18:26: the Baskets tab IS
                the list; this lens stays cards end to end) */
             <div className="space-y-3">
-              <div className="flex justify-start">
-                <FaceToggle face={cardFace} onChange={setCardFace} />
-              </div>
               <div className="grid gap-4 lg:grid-cols-2">
-                {baskets.map((b, i) => (
-                  <div key={`${b.chainId}:${b.address}`} className="enter" style={{ '--enter-i': 4 + Math.min(i, 8) } as CSSProperties}>
+                {orderedBaskets.map((b, i) => (
+                  /* min-w-0 IS LOAD-BEARING (mobile sweep 2026-08-06): a grid
+                     item defaults to min-width:auto, so the column floored at
+                     the card's min-content (~450px) and every card was
+                     silently amputated ~60-80px by its own overflow-hidden —
+                     creator chip, View basket, the right bento tiles, all
+                     losing their right edge with no scrollbar to say so. */
+                  <div key={`${b.chainId}:${b.address}`} className="enter min-w-0" style={{ '--enter-i': 4 + Math.min(i, 8) } as CSSProperties}>
                     <ThesisCard
                       ix={b}
                       face={cardFace}
+                      /* resolved from the page's ONE portfolio read, never a
+                         per-card query (QOL round 2026-08-05) */
+                      held={heldPosition(heldIndex, b)}
                       chain={versionChain(b.address, all.filter((x) => x.deployer && b.deployer && x.deployer.toLowerCase() === b.deployer!.toLowerCase()))}
                     />
                   </div>
@@ -1238,31 +2340,81 @@ export function Explore() {
           )}
           <Disclaimer />
         </div>
-      ) : view === 'baskets' ? (
-        weightedBaskets.length === 0 ? (
-          <Empty>{asset ? 'No baskets hold that asset on this network.' : ql ? 'No baskets match your search.' : 'No baskets launched yet on this network.'}</Empty>
+      ) : lens === 'baskets' ? (
+        orderedWeighted.length === 0 ? (
+          <Empty action={filtersOn ? <ClearFiltersBtn onClear={clearFilters} /> : <LaunchFirst />}>
+            {asset ? 'No baskets hold that asset on this network.' : ql ? 'No baskets match your search.' : filtersOn ? 'Nothing matches these filters.' : 'No baskets launched yet on this network.'}
+          </Empty>
         ) : (
           <div className="space-y-4">
-            <div className="space-y-2">
-              {weightedBaskets.map((b, i) => (
-                <div key={`${b.chainId}:${b.address}`} className="enter" style={{ '--enter-i': 3 + Math.min(i, 9) } as CSSProperties}>
-                  <BasketListRow
-                    ix={b}
-                    rank={i + 1}
-                    stats
-                    chain={versionChain(b.address, all.filter((x) => x.deployer && b.deployer && x.deployer.toLowerCase() === b.deployer!.toLowerCase()))}
-                  />
-                  {/* the launch funnel, planted mid-flow (owner pick #7) */}
-                  {i === 4 && <div className="enter mt-2" style={{ '--enter-i': 8 } as CSSProperties}><LaunchCta /></div>}
-                </div>
-              ))}
-              {weightedBaskets.length <= 4 && <LaunchCta />}
-            </div>
+            {/* the layout toggle (owner 2026-08-11: "the slideshow/list button
+                needs to go above the bundle") now rides the control row's
+                right end, still above this band — see up there */}
+            {!tag && !asset && !tvlFilterOn && (
+              <BundleBand theses={bandTheses} total={searchedTheses.length} onAll={() => setView('bundles')} />
+            )}
+            {/* ── THE SLIDESHOW IS THIS LENS'S FACE (owner 2026-08-06 23:13:
+                   "show the baskets on the explore page a bit like the
+                   slideshow / carousel that we have on the main homepage …
+                   with LIST as just a separate toggle"). It is the homepage's
+                   own Carousel primitive and this page's own ThesisCard, so
+                   the two surfaces are one language rather than two.
+                   ⚠ THE SLIDESHOW IS THE PHONE FACE ONLY (owner 2026-08-06
+                   23:4x, correcting the first build: "on desktop the explore
+                   baskets should be the ROWS of the beautiful bento/chart
+                   cards, not a slideshow"). gridFrom="lg" gives exactly that —
+                   a swipeable rail where width is scarce, the two-column card
+                   grid where it is not — and it is the same Carousel prop the
+                   homepage already uses for the same reason. Its toggle sits
+                   ABOVE the bundle band (owner 2026-08-11). ── */}
+            {basketLayout === 'slides' ? (
+              <Carousel
+                label="Baskets, ranked"
+                gridFrom="lg"
+                gridClassName="lg:grid-cols-2"
+                peek="min(86%, 26rem)"
+                arrows
+                /* a filter change has to land on the FIRST basket of the new
+                   set, not leave the reader parked where item four used to be */
+                resetKey={`${chain}|${activeOrder}|${ql}|${asset ?? ''}|${tag ?? ''}`}
+              >
+                {orderedWeighted.map((b) => (
+                  /* grid + h-full: the rail stretches every stop to the
+                     tallest card, and this passes that height to the card
+                     itself so the shelf has one bottom edge */
+                  <div key={`${b.chainId}:${b.address}`} className="grid h-full min-w-0">
+                    <ThesisCard
+                      ix={b}
+                      held={heldPosition(heldIndex, b)}
+                      chain={versionChain(b.address, all.filter((x) => x.deployer && b.deployer && x.deployer.toLowerCase() === b.deployer!.toLowerCase()))}
+                    />
+                  </div>
+                ))}
+              </Carousel>
+            ) : (
+              <div className="space-y-2">
+                {orderedWeighted.map((b, i) => (
+                  <div key={`${b.chainId}:${b.address}`} className="enter" style={{ '--enter-i': 3 + Math.min(i, 9) } as CSSProperties}>
+                    <BasketListRow
+                      ix={b}
+                      rank={i + 1}
+                      stats
+                      chain={versionChain(b.address, all.filter((x) => x.deployer && b.deployer && x.deployer.toLowerCase() === b.deployer!.toLowerCase()))}
+                    />
+                    {/* the launch funnel, planted mid-flow (owner pick #7) */}
+                    {i === 4 && <div className="enter mt-2" style={{ '--enter-i': 8 } as CSSProperties}><LaunchCta /></div>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* a short catalogue never reaches the mid-list plant, so the
+                funnel rides under either face */}
+            {orderedWeighted.length <= 4 && <LaunchCta />}
             <Disclaimer />
           </div>
         )
       ) : creators.length === 0 ? (
-        <Empty>
+        <Empty action={filtersOn && !(onlyFollowing && followCount === 0) ? <ClearFiltersBtn onClear={clearFilters} /> : null}>
           {onlyFollowing && followCount === 0
             ? 'Not following any creators yet. Open a creator and tap Follow.'
             : asset

@@ -13,6 +13,22 @@ export function usePrefersReducedMotion(): boolean {
   return reduced
 }
 
+// True from the given CSS min-width up, live across resizes. For the rare prop
+// that must change per breakpoint (a component API takes `size`, not classes) —
+// prefer responsive classes everywhere CSS can decide. First paint says false
+// (mobile-first), then the media query answers before anything visible settles.
+export function useMinWidth(px: number): boolean {
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${px}px)`)
+    const fn = () => setOn(mq.matches)
+    fn()
+    mq.addEventListener?.('change', fn)
+    return () => mq.removeEventListener?.('change', fn)
+  }, [px])
+  return on
+}
+
 // Fires once when the element first scrolls into view (then stops observing).
 // Used to gate entrance reveals + count-ups so they only play on first sight.
 export function useInViewOnce<T extends Element>(

@@ -32,7 +32,7 @@ import { getAddress, parseAbi, parseAbiItem, parseEventLogs, type Address, type 
 // NOT WASH-PROOF, and copy must not say so: streaming removed the snipe-the-pot
 // exposure, but a season boundary still zeroes every score while the crown
 // persists, so one wei can flip the crown at the boundary (audit W-2, open with
-// R/Colby). The leaderboard is honest — raw fees, linear — but "fair" and
+// R/the owner). The leaderboard is honest — raw fees, linear — but "fair" and
 // "wash-proof" are not backed today.
 //
 // Honesty seam (audit H5): logs are used ONLY to discover the roster (you

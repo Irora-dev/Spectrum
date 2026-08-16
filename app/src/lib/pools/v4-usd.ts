@@ -129,7 +129,6 @@ async function hubPoolId(chainId: number): Promise<`0x${string}` | null> {
   const inflight = hubInflight.get(chainId)
   if (inflight) return inflight
   const run = (async (): Promise<`0x${string}` | null> => {
-    if (!hasPrivateRpc(chainId) && publicWideLogsRisky(chainId)) return cached?.id ?? null
     // Logs-free candidate set FIRST (owner sweep 2026-07-29): the hub key shape
     // is fully known ({ETH, settlement} hookless at a handful of tiers), so a
     // direct storage probe finds it on ANY endpoint — the full-range Initialize
@@ -151,6 +150,16 @@ async function hubPoolId(chainId: number): Promise<`0x${string}` | null> {
       if (pick.incomplete) return cached?.id ?? pick.id ?? null
       if (pick.id) cacheSet(cacheKey, { id: pick.id, pickedAt: Date.now() } satisfies HubPoolCache, 0)
       return pick.id ?? cached?.id ?? null
+    }
+    // Keyless on a chain whose PUBLIC endpoint chokes on wide logs: never the
+    // scan — but the probe is a handful of storage reads and works on ANY
+    // endpoint, which is why it exists. The old early-return here PREDATED
+    // the probe and starved keyless Base/mainnet of the ETH anchor entirely
+    // (owner report 2026-08-03: every asset on both chains priced '—' while
+    // RH, which permits the scan, priced fine).
+    if (!hasPrivateRpc(chainId) && publicWideLogsRisky(chainId)) {
+      const probed = await probeBest().catch(() => ({ id: null, incomplete: true }))
+      return settle(probed)
     }
     try {
       const client = clientFor(chainId)

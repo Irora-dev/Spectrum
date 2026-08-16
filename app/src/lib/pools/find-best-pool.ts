@@ -33,6 +33,7 @@ import {
   type PoolCandidate,
 } from './types'
 import { probeTransferFee, screenTokenIdentity } from './token-screen'
+import { V2_REJECTED_MESSAGE as V2_ONLY_SENTENCE, V2_REJECTION_CLAUSE, chainRejectsV2 } from './v2-legs'
 
 type Client = ReturnType<typeof clientFor>
 
@@ -45,6 +46,23 @@ const V3_FEE_TIERS: { fee: number; tickSpacing: number }[] = [
 ]
 
 const SHALLOW_USD_THRESHOLD = 10_000
+
+/** The V2 law lives in ONE module (v2-legs.ts) so no surface can render a
+ *  softer variant — the detector is only its first enforcement point.
+ *  Re-exported here because this is where importers already look for it. */
+export { V2_REJECTED_MESSAGE, V2_REJECTION_CLAUSE } from './v2-legs'
+
+/** The venue's own ordering: every Uniswap pool sorts its sides by numeric
+ *  address, so a pool found by asking a factory for (a, b) has a KNOWN pair
+ *  without reading it back. That is what keeps `token0`/`token1` free on the
+ *  candidate rather than an extra multicall per pool.
+ *
+ *  Compared lowercased because address CASE is EIP-55 checksum information, not
+ *  value — comparing mixed-case hex would sort two spellings of one address
+ *  differently and silently swap the sides. */
+export function sortedPair(a: Address, b: Address): { token0: Address; token1: Address } {
+  return a.toLowerCase() < b.toLowerCase() ? { token0: a, token1: b } : { token0: b, token1: a }
+}
 
 // Upper bound on pairs read from any one DexScreener response (mirrors
 // token-search.ts MAX_PAIRS_PER_RESPONSE): a glitchy/hostile payload degrades
@@ -99,6 +117,12 @@ async function findV2(
         poolAddress: pair,
         poolId: null,
         ethPoolKey: null,
+        // the AUTHORITATIVE pair: token0 is read from the pool itself above (to
+        // pick the right reserve), so this side does not rely on the sort
+        // convention at all — the other side is whichever of the two we asked
+        // the factory for is left
+        token0,
+        token1: token0.toLowerCase() === cfg.weth.toLowerCase() ? asset : cfg.weth,
         depthEth,
         depthUsd: null,
       },
@@ -150,6 +174,9 @@ async function findV3(
         poolAddress: pool,
         poolId: null,
         ethPoolKey: null,
+        // the factory was asked for exactly (asset, weth) at this tier, so the
+        // pool's sides are those two in the venue's sort order
+        ...sortedPair(asset, cfg.weth),
         depthEth,
         depthUsd: null,
       }
@@ -307,7 +334,7 @@ async function findV4(
   client: Client,
   cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address },
   asset: Address,
-): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap; depthCheckFailed?: boolean }> {
+): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap; depthCheckFailed?: boolean; hookedDepthEth?: number }> {
   const scan = await scanV4Initialize(
     client,
     cfg.chainId,
@@ -325,15 +352,23 @@ async function findV4(
   // Concurrent depth reads: many-pool memecoins meant dozens of sequential
   // round-trips against rate-limited public RPCs (a visible stall); the batching
   // client coalesces them into Multicall3 instead of N sequential round-trips.
+  const hookedIds: `0x${string}`[] = []
   const eligible = inits.filter((init) => {
     if (seen.has(init.id)) return false
     seen.add(init.id)
-    if (init.hooks.toLowerCase() !== zeroAddress) return false // only no-hook pools can be routed
+    if (init.hooks.toLowerCase() !== zeroAddress) {
+      hookedIds.push(init.id) // rejected as a ROUTE — but its depth still tells the venue story
+      return false
+    }
     if (init.fee === DYNAMIC_FEE_FLAG) return false // reject dynamic-fee pools
     return true
   })
-  const depths = await Promise.all(eligible.map((i) => v4DepthEth(client, cfg.poolManager, i.id)))
+  const [depths, hookedDepths] = await Promise.all([
+    Promise.all(eligible.map((i) => v4DepthEth(client, cfg.poolManager, i.id))),
+    Promise.all(hookedIds.slice(0, 6).map((id) => v4DepthEth(client, cfg.poolManager, id))),
+  ])
   const depthCheckFailed = depths.some((d) => d === -1)
+  const hookedDepthEth = hookedDepths.reduce((m, d) => Math.max(m, d > 0 ? d : 0), 0)
   const out: PoolCandidate[] = []
   eligible.forEach((init, idx) => {
     const depthEth = depths[idx]
@@ -352,11 +387,14 @@ async function findV4(
         tickSpacing: init.tickSpacing,
         hooks: zeroAddress,
       },
+      // straight off the key this pool IS — no derivation, no read
+      token0: NATIVE_ETH,
+      token1: asset,
       depthEth,
       depthUsd: null,
     })
   })
-  return { candidates: out, partial, depthCheckFailed }
+  return { candidates: out, partial, depthCheckFailed, hookedDepthEth }
 }
 
 // ── V4Q (settlement-quoted hookless V4 — the stocks-fork lineage) ─────────────
@@ -445,6 +483,9 @@ export async function findV4Q(
       poolAddress: null,
       poolId: init.id,
       ethPoolKey: { ...pair, fee: init.fee, tickSpacing: init.tickSpacing, hooks: zeroAddress },
+      // the quote-paired key already holds both sides in venue order
+      token0: pair.currency0,
+      token1: pair.currency1,
       depthEth: 0, // not ETH-comparable by construction; ranking rides depthUsd
       depthUsd: usd,
     })
@@ -475,10 +516,18 @@ async function wethUsdPrice(slug: string, weth: Address): Promise<number | null>
     let best: number | null = null
     let bestLiq = -1
     for (const p of (Array.isArray(pairs) ? pairs : []).slice(0, MAX_DEX_PAIRS)) {
-      const liq = p?.liquidity?.usd ?? 0
-      if (liq > bestLiq && p?.priceUsd) {
+      // THE PRICE GETS THE SAME TREATMENT AS THE LIQUIDITY. My earlier pass
+      // routed liquidity through finiteUsd and left `parseFloat(priceUsd)`
+      // bare, which is a half-landed fix of exactly the class it was fixing:
+      // a non-numeric priceUsd makes this NaN, every unlisted candidate's
+      // `depthEth * ethUsd` becomes NaN, and BOTH the partial-scan refusal and
+      // the shallow-pool warning below stop firing — so a dust pool is crowned
+      // silently. Found by the 2026-08-07 audit round.
+      const liq = finiteUsd(p?.liquidity?.usd) ?? 0
+      const price = finiteUsd(p?.priceUsd)
+      if (liq > bestLiq && price != null && price > 0) {
         bestLiq = liq
-        best = parseFloat(p.priceUsd)
+        best = price
       }
     }
     return best
@@ -491,6 +540,24 @@ async function wethUsdPrice(slug: string, weth: Address): Promise<number | null>
 // CONTRACT address, V4 pool id (DexScreener uses the 32-byte poolId as `pairAddress`
 // for v4). This is the cross-venue-consistent depth metric (pool TVL, the same way
 // for every DEX version) and matches what users see in the asset search.
+/** A USD figure from an UNTRUSTED API is not a number just because the cast
+ *  says so. DexScreener's responses are `as`-cast, never validated, and
+ *  `?? 0` only defends against null/undefined — a string, an empty string or
+ *  anything else arrives intact and turns the first arithmetic that touches it
+ *  into NaN. That matters more than it sounds downstream: NaN passes a
+ *  `!= null` guard and then fails EVERY `<` comparison, so a depth of unknown
+ *  shape reads as "no problem" rather than "unreadable" (the class
+ *  specallocator hit in pool-safety's own gate, 2026-08-07). Finite and
+ *  non-negative, or nothing. */
+function finiteUsd(v: unknown): number | null {
+  // `Number('')` is 0, not NaN — the empty-string coercion is the exact shape
+  // the finding named, and it would enter here as a confident zero. A blank
+  // field is an absent reading, so it is rejected before the numeric parse.
+  if (typeof v === 'string' && v.trim() === '') return null
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
 async function fetchPoolLiquidity(slug: string, asset: Address): Promise<Map<string, number>> {
   const map = new Map<string, number>()
   if (!slug) return map // chain not indexed by DexScreener — on-chain depth ranks instead
@@ -502,7 +569,7 @@ async function fetchPoolLiquidity(slug: string, asset: Address): Promise<Map<str
     const pairs = (await r.json()) as { pairAddress?: string; liquidity?: { usd?: number } }[]
     for (const p of (Array.isArray(pairs) ? pairs : []).slice(0, MAX_DEX_PAIRS)) {
       const key = p.pairAddress?.toLowerCase()
-      if (key) map.set(key, p.liquidity?.usd ?? 0)
+      if (key) map.set(key, finiteUsd(p.liquidity?.usd) ?? 0)
     }
   } catch {
     /* DexScreener unavailable → caller falls back to on-chain depth */
@@ -524,7 +591,24 @@ function toRoute(c: PoolCandidate): BasketRoute {
  * Rejects dynamic-fee and hooked V4 pools; throws if none (noting an Aerodrome-only
  * asset). Returns the chosen route ready for a `deployBasket` basket entry + all
  * candidates (deepest-first) + warnings.
+ *
+ * On a chain configured `rejectsV2Legs` (deployments.ts), V2 is not a venue at
+ * all: it is excluded from the ranking, and a token whose ONLY route is a V2
+ * pair is REFUSED here — `V2_ONLY`. This is the single choke point every add
+ * surface goes through (picker, builder, reshape, bundle union all resolve via
+ * findBestPool), so the ruling lands on all of them from this one place.
  */
+/** Does the hooked market DOMINATE the best routable pool? ≥2× = the hooked
+ *  pool is the token's real market and a basket leg would ride a side pool
+ *  (the FWA class). Threshold MEASURED, not guessed: FWA hooked 261.5 ETH vs
+ *  its pinned side pool ~40 (6.5× — a 20× gate MISSED it, owner caught the
+ *  live basket); PRISM v2 hooked ~67 ETH vs v3 dust (~19×). 2× keeps tokens
+ *  whose open market genuinely dominates addable. */
+export function hookedMarketDominates(hookedDepthEth: number, bestRoutableDepthEth: number): boolean {
+  if (!(hookedDepthEth > 0)) return false
+  return hookedDepthEth >= Math.max(bestRoutableDepthEth, 0.01) * 2
+}
+
 export async function findBestPool(asset: Address, chainId: number): Promise<BestPoolResult> {
   const cfg = chainCfg(chainId)
   // Honest failure, not silent degradation. The V4 PoolManager is the baseline —
@@ -539,6 +623,14 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   const v23Ready = isPoolReady(cfg) // weth + BOTH factories (full coverage)
   const v2Ready = isV2Ready(cfg)
   const v3Ready = isV3Ready(cfg) // V3 alone (Robinhood: canonical V3, no V2)
+  // THE V2 REJECTION (per-chain lineage — `rejectsV2Legs`, deployments.ts). On a
+  // chain whose factory reverts InvalidEthPool on venue 2, a V2 route is not a
+  // slower route: CREATE2 swallows the reason, so the leg mines, prices, and
+  // then bricks the deploy at simulate under a CREATE2Failed that names no
+  // cause. The V2 sweep below still RUNS unchanged — a found pair is the whole
+  // difference between "this token routes somewhere else" and "this token has
+  // nowhere to go on this deployment", and only one of those sentences is true.
+  const v2Rejected = chainRejectsV2(chainId)
   const client = clientFor(chainId)
 
   const lower = asset.toLowerCase()
@@ -576,7 +668,16 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   // Incomplete V2/V3 coverage is a HARD stop, not a shrug: ranking without a
   // venue silently routes the leg into whatever survived (MOG once landed on an
   // $11k V3 pool while its $4.6M V2 pair sat unchecked). Retry beats wrong.
-  if (v2.checkFailed || v3s.checkFailed || v4.depthCheckFailed || v4q.depthCheckFailed) {
+  //
+  // …with ONE narrowing, and only where V2 cannot win anyway: on a rejecting
+  // chain an unread V2 pair can no longer mis-route a leg, so it blocks only
+  // when nothing else answered — there it would decide between the V2-only
+  // refusal and "no pool at all", and an unchecked venue may not pick between
+  // two verdicts. Otherwise a transient V2 hiccup would stall an add for a
+  // venue this deployment cannot use.
+  const otherVenuesFound = v3s.candidates.length + v4.candidates.length + v4q.candidates.length > 0
+  const v2CheckBlocks = v2.checkFailed && (!v2Rejected || !otherVenuesFound)
+  if (v2CheckBlocks || v3s.checkFailed || v4.depthCheckFailed || v4q.depthCheckFailed) {
     throw new PoolDetectionError(
       'Could not check every Uniswap venue for this token (RPC error) — refusing to pick a pool from an incomplete sweep. Add the token again to retry.',
       'VENUE_CHECK_FAILED',
@@ -584,10 +685,20 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   }
 
   const candidates: PoolCandidate[] = []
-  if (v2.candidate) candidates.push(v2.candidate)
+  // A rejected venue never enters the ranking, so the sort below cannot crown
+  // it: a leg that would have taken V2 on its USD liquidity takes its best
+  // non-V2 pool instead. Flag off, this line is the old one exactly.
+  if (v2.candidate && !v2Rejected) candidates.push(v2.candidate)
   candidates.push(...v3s.candidates, ...v4.candidates, ...v4q.candidates)
 
   if (candidates.length === 0) {
+    // Named BEFORE the generic sentences below, because with a V2 pair sitting
+    // right there neither of them is true — not "no Uniswap pool found", not
+    // "only an Aerodrome pool exists" — and the user's next move depends on
+    // knowing which wall they hit.
+    if (v2Rejected && v2.candidate) {
+      throw new PoolDetectionError(V2_ONLY_SENTENCE, 'V2_ONLY')
+    }
     if (aero) {
       throw new PoolDetectionError(
         "Only an Aerodrome pool exists for this asset — Aerodrome can't host Spectrum's V4 hook. Choose a token with a Uniswap v2/v3/v4 pool.",
@@ -611,6 +722,17 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   if (fee.verdict === 'fee-on-transfer') {
     throw new PoolDetectionError(
       `This token takes a fee on transfer (${((10_000 - fee.receivedBps) / 100).toFixed(2)}% measured) — basket legs would under-fill on every mint.`,
+      'FEE_ON_TRANSFER',
+    )
+  }
+  // THE FWA CLASS (SpectrumContracts w-59 R1 + the live TEST10006 seed
+  // failure): a token that REFUSES plain transfers can be bought into a
+  // basket and then strand it — transfer gating is the one hole in the
+  // in-kind exit story, so it is a hard stop at add time, measured, never
+  // inferred. Inconclusive still adds nothing rather than crying wolf.
+  if (fee.verdict === 'transfer-refused') {
+    throw new PoolDetectionError(
+      'This token refused a plain wallet-to-wallet transfer in simulation — it gates transfers with its own rule, so a basket holding it could not exit in kind. Pick a different asset.',
       'FEE_ON_TRANSFER',
     )
   }
@@ -675,6 +797,15 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
   const best = candidates[0]
 
   const warnings: string[] = []
+  // The excluded venue, said out loud and FIRST: the leg is not routing through
+  // this token's V2 pair, and (often) not through its deepest pool either — the
+  // creator should hear why before they weigh it, not infer it from a depth
+  // figure that looks lower than the one the token search showed them.
+  if (v2Rejected && v2.candidate) {
+    warnings.push(
+      `A Uniswap V2 pair exists for this token but was excluded — ${V2_REJECTION_CLAUSE}, so the leg routes through ${best.label} instead.`,
+    )
+  }
   // Only meaningful where DexScreener SHOULD have answered: on settlement-hub
   // chains (no slug) the depth figures are exact on-chain settlement-side reads.
   const allUnpriced = candidates.length > 1 && candidates.every((c) => c.depthUsd == null)
@@ -682,6 +813,21 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
     warnings.push(
       'Live pool-depth data was unavailable — venues were ranked by on-chain reserves for this add (V4 depth is virtual and can over-rank).',
     )
+  }
+  // THE HOOKED-MARKET WARNING (measured live 2026-08-15, TEST10006's FWA leg:
+  // the token's REAL $944k market is a HOOKED v4 pool — baskets cannot route
+  // hooks by design — so the detector pinned a $15k hookless side pool, and
+  // the token's own contract then refused trades through it at seed time.
+  // The creator must hear this at ADD time, not at the seed wall. A warning
+  // rather than a refusal: some hook-launched tokens trade fine through their
+  // hookless/v3 side pools — the ratio is what says which story this is.)
+  {
+    const hookedEthW = (v4 as { hookedDepthEth?: number }).hookedDepthEth ?? 0
+    if (hookedMarketDominates(hookedEthW, best.depthEth)) {
+      warnings.push(
+        `This token's main market is a hooked pool baskets cannot route — the leg would ride a far smaller side pool, and some hook-launched tokens refuse trades outside their own market. If the seed or buys revert with the token's own error, this is why.`,
+      )
+    }
   }
   if (best.depthUsd != null && best.depthUsd < SHALLOW_USD_THRESHOLD) {
     warnings.push(
@@ -708,5 +854,15 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
     )
   }
 
-  return { asset, chainId, decimals, best, route: toRoute(best), candidates, warnings }
+  const hookedEth = (v4 as { hookedDepthEth?: number }).hookedDepthEth ?? 0
+  return {
+    asset,
+    chainId,
+    decimals,
+    best,
+    route: toRoute(best),
+    candidates,
+    warnings,
+    hookedMarket: hookedEth > 0 ? { hookedDepthEth: hookedEth, bestHooklessDepthEth: best.depthEth } : null,
+  }
 }

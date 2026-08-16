@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { useAllBundles, publishedBundleHref, type DiscoveredBundle } from '../lib/spectrum/notes-social'
 import { BundleBento } from './BundleBento'

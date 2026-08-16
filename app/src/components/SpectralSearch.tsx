@@ -1,3 +1,6 @@
+import { useEffect, useRef, useState } from 'react'
+import { consumeSearchFocusRequest, isMacPlatform, SEARCH_FOCUS_EVENT } from '../lib/search-focus'
+
 // The glossy spectral search — a soft gradient halo behind, a gradient
 // hairline ring around, glass + top sheen inside; the halo breathes brighter
 // while focused. Born on Explore's thesis hero (owner ask 2026-07-06), now
@@ -24,6 +27,30 @@ export function SpectralSearch({
   stretch?: boolean
 }) {
   const lg = size === 'lg'
+  // THE KEYBOARD SHORTCUT LANDS HERE (QOL #18, 2026-08-05). Two arrivals, one
+  // behaviour: a live input CLAIMS the event (preventDefault, so the shell
+  // learns it needs no navigation), and an input that mounts because of the
+  // gesture consumes the standing request once. Focus, never a value change —
+  // the shortcut opens the field, it never types in it.
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const take = () => {
+      const el = inputRef.current
+      if (!el) return false
+      el.focus()
+      el.select()
+      return true
+    }
+    if (consumeSearchFocusRequest()) take()
+    const onRequest = (e: Event) => {
+      if (take()) e.preventDefault()
+    }
+    window.addEventListener(SEARCH_FOCUS_EVENT, onRequest)
+    return () => window.removeEventListener(SEARCH_FOCUS_EVENT, onRequest)
+  }, [])
+  // The hint is the feature: a shortcut nobody can see does not exist. Hidden
+  // on touch-first widths, where there is no keyboard to press it with.
+  const [mac] = useState(() => isMacPlatform())
   return (
     <div className={`group/search relative ${stretch ? 'h-full' : ''}`}>
       <div
@@ -55,16 +82,40 @@ export function SpectralSearch({
             <path d="M21 21l-4.3-4.3" />
           </svg>
           <input
+            ref={inputRef}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onFocus={onFocus}
             onBlur={onBlur}
+            /* Escape backs out the way it went in (QOL round 2026-08-06): a
+               typed query clears (stopPropagation — the clear IS the escape,
+               so a host overlay must not also close), an empty field blurs. */
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return
+              if (value) {
+                e.stopPropagation()
+                onChange('')
+              } else {
+                e.currentTarget.blur()
+              }
+            }}
             placeholder={placeholder}
             spellCheck={false}
+            /* LEFT-ALIGNED ON A PHONE (mobile sweep 2026-08-06): the centred
+               display face put the caret, the typed placeholder and the query
+               mid-field, behind a ~120px dead gap after the magnifier. The
+               centred composition is a desktop hero treatment; at 390w a
+               search field should start where the icon says it does. */
             className={`relative w-full bg-transparent outline-none placeholder:text-ink-faint ${
-              lg ? `${stretch ? 'py-0' : 'py-4.5'} pl-12 pr-4 text-center font-display text-lg text-ink` : 'py-2.5 pl-10 pr-3 text-sm text-ink'
+              lg ? `${stretch ? 'py-0' : 'py-4.5'} pl-12 pr-4 text-left font-display text-lg text-ink sm:text-center` : 'py-2.5 pl-10 pr-3 text-sm text-ink'
             }`}
           />
+          <span
+            aria-hidden
+            className={`pointer-events-none absolute ${lg ? 'right-4 top-1/2 -translate-y-1/2' : 'right-2.5 top-1/2 -translate-y-1/2'} hidden select-none items-center gap-0.5 rounded-md border border-white/12 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-ink-faint sm:inline-flex`}
+          >
+            {mac ? '⌘' : 'Ctrl'} K
+          </span>
         </label>
       </div>
     </div>

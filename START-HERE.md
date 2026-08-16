@@ -42,6 +42,17 @@ in plain words (the app decodes reverts onto the failing step — read its error
 never hand over a hex code), and what you will do about it next. Never report a bare
 "it failed."
 
+**The browser extension (optional stage, offer it once the site is live):** the kit ships a
+read-only portfolio lens the site distributes itself. You run all of it:
+`cd extension && npm install && npm run package -- --into-site`, then rebuild + redeploy —
+the install page appears at `/extension`, serving files the site hosts. **Bind only to
+`node extension/scripts/status.mjs --json`** (append-only keys) to know where the operator
+is and what to offer next — it returns a `next` array of the exact commands in order.
+Store publishing is optional (Unlisted CWS recommended for white-label; the one-time ritual
+is in the /setup studio's Extension panel and `extension/README.md` § Distribution). Red
+lines: the lens never connects a wallet, never signs, never asks for a seed phrase — never
+change that posture; and never publish to a store without the user's explicit go.
+
 **Red lines (load-bearing — do not cross):**
 - **Never fabricate, guess, or autofill a contract or wallet address.** Blank is always
   valid (blank = the canonical deployment; blank fee wallet = the share isn't taken).

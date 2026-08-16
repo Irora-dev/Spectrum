@@ -68,7 +68,8 @@ Flags: --name --tagline --style(${STYLES.join('|')})
        --no-stocks         hide every tokenized-stock surface
        --no-starter-tokens drop the curated launch starter suggestions
        --no-prism-credit   remove the "Powered by Prism" banner
-       --no-setup-studio   lock the deployed site (drops /setup + Customize)
+       --setup-studio      serve /setup on the DEPLOYED site (off by default;
+                           dev always serves it regardless)
        --default-chain-id <id>  first-visit network (8453 Base · 1 Ethereum · 4663 Robinhood)
 Contracts are the shipped canonical Spectrum deployment (Base, Ethereum + Robinhood Chain).
 Writes app/src/brand.config.ts + app/src/site.config.json + app/.env.local.`

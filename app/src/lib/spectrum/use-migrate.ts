@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { showSymbol } from './safe-copy'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { encodeFunctionData, parseAbi, parseEventLogs, type Address, type Hex } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
@@ -797,7 +798,7 @@ export function useMigrate(fromAddr: string, toAddr: string, chainId: number, op
                       : encodeV3Path([s.leg.asset, weth, b.leg.asset], [s.fee!, b.fee!])
                 const quoted = await quoteExactInPath(client, quoter, path, amountIn)
                 if (quoted == null || quoted === 0n) {
-                  throw new Error(`No fill quoted for ${s.leg.symbol} → ${b.leg.symbol} — trade it manually, then resume.`)
+                  throw new Error(`No fill quoted for ${showSymbol(s.leg.symbol)} → ${showSymbol(b.leg.symbol)} — trade it manually, then resume.`)
                 }
                 subSwaps.push({ path, amountIn, minOut: minOutFor(quoted), outAsset: b.leg.asset })
               }
@@ -832,7 +833,7 @@ export function useMigrate(fromAddr: string, toAddr: string, chainId: number, op
               continue
             }
             const q = await bestExactInTier(client, quoter, s.leg.asset, weth, s.amount)
-            if (!q) throw new Error(`No V3/WETH route for ${s.leg.symbol} — sell it manually, then resume.`)
+            if (!q) throw new Error(`No V3/WETH route for ${showSymbol(s.leg.symbol)} — sell it manually, then resume.`)
             sellTier.set(s.leg.asset.toLowerCase(), q.fee)
             potEstimate += q.amount
           }
@@ -842,7 +843,7 @@ export function useMigrate(fromAddr: string, toAddr: string, chainId: number, op
             if (legJ.asset.toLowerCase() === wethLow) continue
             const probe = budgets[j] > 0n ? budgets[j] : potEstimate
             const q = await bestExactInTier(client, quoter, weth, legJ.asset, probe)
-            if (!q) throw new Error(`No V3/WETH route for ${legJ.symbol} — buy it manually, then resume.`)
+            if (!q) throw new Error(`No V3/WETH route for ${showSymbol(legJ.symbol)} — buy it manually, then resume.`)
             buyTier.set(legJ.asset.toLowerCase(), q.fee)
           }
 
@@ -865,7 +866,7 @@ export function useMigrate(fromAddr: string, toAddr: string, chainId: number, op
                     : encodeV3Path([s.leg.asset, weth, legJ.asset], [sellTier.get(cLow)!, buyTier.get(dLow)!])
               const quoted = await quoteExactInPath(client, quoter, path, amountIn)
               if (quoted == null || quoted === 0n) {
-                throw new Error(`No fill quoted for ${s.leg.symbol} → ${legJ.symbol} — trade it manually, then resume.`)
+                throw new Error(`No fill quoted for ${showSymbol(s.leg.symbol)} → ${showSymbol(legJ.symbol)} — trade it manually, then resume.`)
               }
               subSwaps.push({ path, amountIn, minOut: minOutFor(quoted), outAsset: legJ.asset })
             }

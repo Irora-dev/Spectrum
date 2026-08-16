@@ -277,6 +277,46 @@ npmLoud('dependency install', ['install'], UNDO)
 npmLoud('doctor (config + live chain + version)', ['run', 'doctor'], UNDO)
 npmLoud('production build', ['run', 'build'], UNDO)
 
+// ── 4b · what's new (advisory only — a failure here must never fail an update) ──
+try {
+  if (local.version && remote.version && local.version !== remote.version) {
+    const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8')
+    const sections = [...log.matchAll(/^## (\S+)[^\n]*\n([\s\S]*?)(?=^## |(?![\s\S]))/gm)]
+    const crossed = []
+    let sawBaseline = false
+    for (const [, ver, body] of sections) {
+      if (ver === local.version) { sawBaseline = true; break } // newest-first: stop at where you were
+      crossed.push({ ver, heads: [...body.matchAll(/^### (.+)$/gm)].map((m) => m[1]) })
+    }
+    // Unknown baseline (your version's heading missing from the changelog):
+    // claiming you crossed everything would be misinformation — skip the recap.
+    if (crossed.length && sawBaseline) {
+      step("what's new in the versions you just crossed")
+      for (const s of crossed.slice(0, 4)) {
+        console.log(`  ${c('bold', s.ver)}`)
+        for (const h of s.heads.slice(0, 5)) console.log(`    · ${h}`)
+      }
+      if (crossed.length > 4) console.log(c('dim', `  … and ${crossed.length - 4} more versions`))
+      console.log(c('dim', '  full notes: CHANGELOG.md'))
+    }
+  }
+  // The extension announcement: this checkout ships the browser extension but
+  // the site is not hosting it yet — say so once, at the moment it appears.
+  const extStatusScript = join(ROOT, 'extension', 'scripts', 'status.mjs')
+  if (existsSync(extStatusScript)) {
+    const probe = spawnSync(process.execPath, [extStatusScript, '--json'], { cwd: join(ROOT, 'extension'), encoding: 'utf8', timeout: 10_000 })
+    const ext = probe.status === 0 ? JSON.parse(probe.stdout) : null
+    if (ext && !ext.packaged?.intoSite) {
+      step('new: your site can ship a browser extension')
+      console.log('  A read-only portfolio lens in your visitors’ toolbars, branded like your site,')
+      console.log('  hosted by your site at /extension. It never connects a wallet and never signs.')
+      console.log(`  Package it:   ${c('bold', 'cd extension && npm install && npm run package -- --into-site')}`)
+      console.log('  Then rebuild + redeploy; the walkthrough lives in the /setup studio’s Extension')
+      console.log('  panel and extension/README.md.')
+    }
+  }
+} catch { /* advisory only */ }
+
 // ── 5 · redeploy (the only step that touches your live site) ──
 step('5 · redeploy')
 console.log(c('green', '✓ ') + `updated to ${remote.version ?? 'the latest kit'} and built. Your LIVE site still runs the old build.`)

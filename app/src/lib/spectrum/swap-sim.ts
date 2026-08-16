@@ -1,6 +1,7 @@
 import { encodeAbiParameters, keccak256, encodePacked, pad, toHex, zeroAddress } from 'viem'
 import type { Address, PublicClient } from 'viem'
 import { swapRouterAbi } from './abis-v2'
+import { packLegMin } from './hook-data'
 import type { Side } from './use-basket-swap'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,22 +60,44 @@ export interface SwapSimInput {
   holder: Address
   /** true when the router's allowance for tokenIn already covers amountIn */
   allowanceCovers: boolean
+  /** BUY only — the payload's per-leg funding split (bps), from `factory.bareLegMins`
+   *  via mint-funding.ts. A D-R1 basket funds legs from these bits, so a probe without
+   *  them acquires nothing and reverts NoOutput: the measurement then silently degrades
+   *  to the frictionless estimate, which is the floor basis this module exists to
+   *  replace. Absent ⇒ the pre-packing shape (plain 1-wei floors), unchanged. */
+  fundingSplitBps?: readonly number[] | null
 }
 
 /** Realised tokenOut for this trade (shares on a buy, settlement on a sell), or null. */
 export async function simulateSwapOut(
   client: PublicClient,
-  { side, basket, settlement, router, amountIn, legCount, holder, allowanceCovers }: SwapSimInput,
+  { side, basket, settlement, router, amountIn, legCount, holder, allowanceCovers, fundingSplitBps }: SwapSimInput,
 ): Promise<bigint | null> {
   if (amountIn <= 0n || legCount <= 0) return null
   const tokenIn = side === 'buy' ? settlement : basket
+  // A split describing a different basket would measure the wrong trade.
+  const split = side === 'buy' && fundingSplitBps?.length === legCount ? fundingSplitBps : null
 
-  // 1-wei aggregate floor + zero per-leg floors: we want the realised number, not a
-  // pass/fail. Zero legMins are legal on any non-first mint (SpectrumBasket mandates
-  // non-zero only on the very FIRST mint) and on every sell.
+  // 1-wei floors BOTH aggregate and per-leg: we want the realised number, not a
+  // pass/fail. Per-leg was zero here, which is legal on a non-first mint but
+  // REVERTS FirstMintLegMinRequired on a first one (SpectrumBasket.sol:527,
+  // proven on-chain 2026-08-02) — so on any never-bought basket this probe
+  // always failed, `realisedOutRaw` came back undefined, and the caller fell
+  // back to FRICTIONLESS per-leg floors that the two-hop acquisition can never
+  // reach. That is the LegMinNotMet a real user hit on their first buy. 1 wei
+  // is non-zero (satisfies the first-mint rule) and below any real fill, so it
+  // measures reality on every basket, first mint or not.
+  //
+  // The SPLIT rides the same words on a D-R1 basket: a probe without it funds no leg
+  // and reverts NoOutput (contracts' KitZeroSplitProbe, 2026-08-05), so the probe would
+  // report "unpriceable" on every healthy basket. A leg the split funds with 0 must
+  // carry NO floor — the acquire loop skips it and a floor there reverts LegMinNotMet.
+  const legWords = split
+    ? split.map((s) => (s === 0 ? 0n : packLegMin(s, 1n)))
+    : new Array<bigint>(legCount).fill(1n)
   const hookData = encodeAbiParameters(
     [{ type: 'uint256' }, { type: 'uint256[]' }, { type: 'address' }],
-    [1n, new Array(legCount).fill(0n), zeroAddress],
+    [1n, legWords, zeroAddress],
   )
   const args = [basket, tokenIn, amountIn, 1n, hookData, holder] as const
 
@@ -137,6 +160,10 @@ export interface MaxSafeInput {
   feeFrac: number
   basketDecimals: number
   slippageBps: number
+  /** BUY only — the payload's funding split (see SwapSimInput). Read ONCE for the cap
+   *  and reused across the search: the split is a property of the basket's current
+   *  composition, and re-reading it per probe would double an already chatty search. */
+  fundingSplitBps?: readonly number[] | null
 }
 
 /** Largest amountIn ≤ capRaw whose realised output ≥ frictionless × (1 − slip).
@@ -166,6 +193,7 @@ export async function findMaxSafe(client: PublicClient, input: MaxSafeInput): Pr
       legCount: input.legCount,
       holder: input.holder,
       allowanceCovers: false,
+      fundingSplitBps: input.fundingSplitBps,
     })
     if (out == null || out <= 0n) return false
     return out >= (frictionlessOut(amtRaw) * bps) / 10_000n

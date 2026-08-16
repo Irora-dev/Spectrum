@@ -16,3 +16,25 @@ export function readBrandRgb(
 ): [number, number, number] | null {
   return hexToRgb01(getComputedStyle(el).getPropertyValue(varName))
 }
+
+/** The same bridge for the mounts that want a COLOUR STRING rather than a
+ *  uniform. The palette shaders take `string[]`, and handing one
+ *  `var(--color-violet)` makes it log "Unsupported color format" and drop that
+ *  entry — the Token hero's pre-data warp palette did exactly that on every
+ *  basket page load (found by the console smoke, 2026-08-07).
+ *
+ *  Falls back to a literal rather than returning null, because a decorative
+ *  palette must never carry a hole: one wrong colour is a far better failure
+ *  than a gap in the array or a throw. Guarded for a non-DOM caller (the unit
+ *  tests and any node-side render) so it degrades to the fallback there. */
+export function readBrandHex(
+  varName: string,
+  fallback: string,
+  el?: HTMLElement,
+): string {
+  const root = el ?? (typeof document !== 'undefined' ? document.documentElement : null)
+  if (!root || typeof getComputedStyle !== 'function') return fallback
+  const raw = getComputedStyle(root).getPropertyValue(varName).trim()
+  if (!hexToRgb01(raw)) return fallback
+  return raw.startsWith('#') ? raw : `#${raw}`
+}

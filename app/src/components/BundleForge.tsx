@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { formatEther, type Address } from 'viem'
@@ -117,7 +118,7 @@ function PickerRow({
       <BasketAvatar address={b.address} symbol={b.symbol} size={44} />
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2">
-          <span className="font-display text-base font-bold text-ink">${b.symbol}</span>
+          <span className="font-display text-base font-bold text-ink">${showSymbol(b.symbol)}</span>
           <ChainBadge chainId={b.chainId} />
           <span className="font-mono text-[10px] text-ink-faint">
             {b.aumUsd > 0 ? formatUsdCompact(b.aumUsd) : '—'} · {b.basketLength} assets
@@ -133,7 +134,7 @@ function PickerRow({
                 className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] py-0.5 pl-0.5 pr-2"
               >
                 <AssetLogo address={t.address} symbol={t.symbol} chainId={b.chainId} size={16} />
-                <span className="font-mono text-[10px] text-ink-dim">{t.symbol}</span>
+                <span className="font-mono text-[10px] text-ink-dim">{showSymbol(t.symbol)}</span>
               </span>
             ))}
             {b.basketLength > 5 && (
@@ -257,7 +258,7 @@ export function BundleForge({
     setAssetPicks((prev) => prev.filter((p) => !(p.chainId === chainId && p.asset.address === address)))
 
   // Grouped by chain — this IS the deploy plan: one basket per chain, holding
-  // that chain's raw assets (Colby 2026-08-01, which is what makes this need no
+  // that chain's raw assets (the owner 2026-08-01, which is what makes this need no
   // contract change at all).
   const assetsByChain = useMemo(() => {
     const m = new Map<number, BuilderAsset[]>()
@@ -514,12 +515,17 @@ export function BundleForge({
                       <span className="font-display text-sm font-bold text-ink">${b?.symbol ?? shortAddr(l.address)}</span>
                       <ChainBadge chainId={l.chainId} />
                     </div>
+                    {/* 24px chip, 36px reach (mobile sweep 2026-08-07). Growing the
+                        chip itself would push the leg tile past the 72px the add
+                        slot below is pinned to, and these are secondary controls
+                        that shouldn't get louder — so the tap target is an inset
+                        halo, the same trick DexSwapCard uses on its amount chips. */}
                     <div className="mt-1 flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => setWeight(i, l.weight - 10)}
-                        aria-label={`Decrease ${b?.symbol ?? 'leg'} weight`}
-                        className="press grid h-6 w-6 place-items-center rounded-md border border-white/15 font-mono text-[12px] text-ink-dim hover:border-white/35 hover:text-ink"
+                        aria-label={`Decrease ${showSymbol(b?.symbol ?? 'leg')} weight`}
+                        className="press relative grid h-6 w-6 place-items-center rounded-md border border-white/15 font-mono text-[12px] text-ink-dim after:absolute after:-inset-1.5 hover:border-white/35 hover:text-ink"
                       >
                         −
                       </button>
@@ -529,18 +535,26 @@ export function BundleForge({
                       <button
                         type="button"
                         onClick={() => setWeight(i, l.weight + 10)}
-                        aria-label={`Increase ${b?.symbol ?? 'leg'} weight`}
-                        className="press grid h-6 w-6 place-items-center rounded-md border border-white/15 font-mono text-[12px] text-ink-dim hover:border-white/35 hover:text-ink"
+                        aria-label={`Increase ${showSymbol(b?.symbol ?? 'leg')} weight`}
+                        className="press relative grid h-6 w-6 place-items-center rounded-md border border-white/15 font-mono text-[12px] text-ink-dim after:absolute after:-inset-1.5 hover:border-white/35 hover:text-ink"
                       >
                         +
                       </button>
                     </div>
                   </div>
+                  {/* REVEAL ON HOVER ONLY WHERE HOVER EXISTS (mobile sweep
+                      2026-08-07). Tailwind v4 wraps hover: in @media (hover:
+                      hover), so this ✕ never appeared on a phone and a leg could
+                      not be removed at all. The other builder's ✕ (pages/Bundle)
+                      is always visible, which is what makes this an oversight
+                      rather than a choice. Same guard and 36px target the lead
+                      put on PortfolioFlow's list rows today; the glyph is
+                      unchanged, so the extra size is padding, not shouting. */}
                   <button
                     type="button"
                     onClick={() => remove(i)}
-                    aria-label={`Remove ${b?.symbol ?? 'leg'}`}
-                    className="press ml-1 grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-faint opacity-0 transition-opacity hover:text-magenta focus-visible:opacity-100 group-hover:opacity-100"
+                    aria-label={`Remove ${showSymbol(b?.symbol ?? 'leg')}`}
+                    className="press ml-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-faint transition-opacity hover:text-magenta focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
                   >
                     ✕
                   </button>
@@ -572,7 +586,7 @@ export function BundleForge({
           </div>
 
           {/* THE DEPLOY PLAN, made visible. Raw assets are grouped by chain and
-              each group becomes ONE basket — Colby's model, and the reason this
+              each group becomes ONE basket — the owner's model, and the reason this
               needs no contract change. Shown as pending because until the
               basket is deployed there is no address to put in the bundle, and
               the cost is stated rather than discovered at signing time. */}
@@ -594,11 +608,11 @@ export function BundleForge({
                         className="group inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] py-1 pl-1 pr-1.5"
                       >
                         <AssetLogo address={a.address} symbol={a.symbol} chainId={cid} size={20} />
-                        <span className="font-mono text-[11px] text-ink-dim">${a.symbol}</span>
+                        <span className="font-mono text-[11px] text-ink-dim">${showSymbol(a.symbol)}</span>
                         <button
                           type="button"
                           onClick={() => removeAsset(cid, a.address)}
-                          aria-label={`Remove ${a.symbol}`}
+                          aria-label={`Remove ${showSymbol(a.symbol)}`}
                           className="press grid h-5 w-5 place-items-center rounded-full text-ink-faint hover:text-magenta"
                         >
                           ✕
@@ -823,7 +837,7 @@ export function BundleForge({
                       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan/40 bg-cyan/[0.06] p-4">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-display text-lg font-bold text-ink">${tokenFound.asset.symbol}</span>
+                            <span className="font-display text-lg font-bold text-ink">${showSymbol(tokenFound.asset.symbol)}</span>
                             <ChainBadge chainId={tokenFound.chainId} />
                           </div>
                           <div className="mt-1 font-mono text-[11px] text-ink-dim">
@@ -858,7 +872,7 @@ export function BundleForge({
                               onClick={() => setQ(s.address)}
                               className="press rounded-full border border-white/12 bg-white/[0.03] px-4 py-2 font-mono text-[11px] text-ink-dim hover:border-cyan/50 hover:text-cyan"
                             >
-                              ${s.symbol}
+                              ${showSymbol(s.symbol)}
                             </button>
                           ))}
                         </div>

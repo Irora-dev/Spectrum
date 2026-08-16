@@ -56,7 +56,13 @@ export function PageHeader({
         </h1>
         {sub && <p className={`${t.subGap} max-w-2xl text-sm leading-relaxed text-ink-dim sm:text-base`}>{sub}</p>}
       </div>
-      {actions && <div className="shrink-0">{actions}</div>}
+      {actions && (
+        /* max-sm:w-full (mobile audit 2026-08-05): shrink-0 pinned this to its
+           content width, so a wrapping action row measured 501px inside a
+           390px viewport and ran off the screen. On phones it takes its own
+           full-width row and wraps inside that. */
+        <div className="min-w-0 shrink-0 max-sm:w-full">{actions}</div>
+      )}
     </div>
   )
 }

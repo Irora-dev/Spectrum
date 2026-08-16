@@ -235,3 +235,25 @@ npm run preview        # load it and confirm no module-load error in the console
 Going live with any transactional surface is **your own decision** — flipping a flag
 does not change that you are responsible for the contracts you connect to and how
 you operate them. See [`handover/03-IMPLEMENTATION.md`](handover/03-IMPLEMENTATION.md) §7.
+
+## 6 · The browser extension (optional)
+
+The kit ships a read-only portfolio lens as a browser extension, branded like your
+site and hosted BY your site: the packaging step copies the built files into
+`app/public/extension/`, so every deploy distributes them at `/extension`.
+
+```bash
+cd extension && npm install
+npm run package -- --into-site      # Chrome + Firefox zips (+ signed .xpi with AMO keys)
+```
+
+Then rebuild and redeploy the site. The `/setup` studio's Extension panel walks the
+whole path (build, package, store submission, credentials) with the exact next
+command at each step; `extension/README.md` has the full detail. Publishing to the
+Chrome Web Store is optional; Unlisted visibility is the recommended fit for a
+white-label site. Once your store listing is live, set `extensionStoreUrl` in
+`brand.config.ts` and `/extension` leads with the store button.
+
+The lens never connects to a wallet, never signs, and never asks for a seed phrase.
+Its alerts are checked on a timer while the browser is open, never in real time,
+and the copy says so.

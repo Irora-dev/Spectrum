@@ -6,7 +6,7 @@ import type { BasketSummary } from './basket-data'
 // forward").
 //
 //   /token?addr=0x2937…8088&chain=4663   62 chars   →   /t/r/T2       8 chars
-//   /creator/0xf4e6…6554                 51 chars   →   /c/colby.eth
+//   /creator/0xf4e6…6554                 51 chars   →   /c/creator.eth
 //   /bundle/0xf4e6…6554/1a2b3c4d         60 chars   →   /b/0xf4e6…/1a2b3c4d
 //
 // THE RULE THAT MATTERS IS STABILITY. Every long URL keeps working forever,
@@ -148,7 +148,7 @@ export function resolveBasketRef(ref: string, chainId: number | null, all: Baske
 /** The short path for a creator.
  *
  *  Deliberately ADDRESS-ONLY. An ENS name would be shorter and far more
- *  legible — `/c/colby.eth` — but the creator page resolves an address and
+ *  legible — `/c/creator.eth` — but the creator page resolves an address and
  *  nothing on it resolves a name, so minting a name here would produce links
  *  that 404. Adding it means teaching that page forward-ENS resolution first;
  *  until then this stays a trap nobody can fall into. */

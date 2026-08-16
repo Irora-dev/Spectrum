@@ -165,7 +165,7 @@ describe('probeTransferFee — empirical fee-on-transfer detection', () => {
     expect(await probeTransferFee(client, ASSET)).toEqual({ verdict: 'inconclusive' })
   })
 
-  it('reverting transfer → inconclusive (weird, but not a measured fee)', async () => {
+  it('reverting transfer → transfer-refused, the FWA class (supersedes the old inconclusive law — SpectrumContracts w-59 R1: with the balance premise PROVEN, a revert is the token\'s own rule)', async () => {
     const client = stubClient({
       balanceOf: slotAwareBalance,
       simulate: () => ({
@@ -175,7 +175,7 @@ describe('probeTransferFee — empirical fee-on-transfer detection', () => {
         ],
       }),
     })
-    expect(await probeTransferFee(client, ASSET)).toEqual({ verdict: 'inconclusive' })
+    expect(await probeTransferFee(client, ASSET)).toEqual({ verdict: 'transfer-refused' })
   })
 })
 

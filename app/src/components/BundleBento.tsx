@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { showSymbol } from '../lib/spectrum/safe-copy'
+import { Link } from 'react-router'
 import { BasketAvatar } from './BasketAvatar'
 import { BasketBento } from './BasketBento'
 import { BasketWash } from './BasketWash'
@@ -114,7 +115,7 @@ export function BundleBento({
                       compact ? 'text-[10px]' : 'text-sm sm:text-base'
                     }`}
                   >
-                    ${symbol}
+                    ${showSymbol(symbol)}
                   </span>
                 </div>
                 {!compact && <ChainBadge chainId={leg.chainId} />}

@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment2": "allocation.ts is EXCLUDED from mutation BY DESIGN: its supply-chain S-pins assert SIMULATED and the batcher address as SOURCE LITERALS by reading the file text, and instrumentation rewrites that text in the sandbox — the pin fails, and weakening a source-literal pin to accommodate a tool is backwards (threat-model 3c: the pin IS the mutation defense for that constant). Its draft ops are covered by the draft-lifecycle model test instead.",
+  "_comment": "EXOTIC PATH 3 (the owner's greenlit six, 2026-08-04): mutation testing over the MONEY MODULES — the only thing that measures whether the suites are load-bearing, given the audit series' recurring finding was suites green while the bug was live. Scoped to the money path first (the desk item's own order + the two modules born today); widen after the first report.",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts"
+  },
+  "mutate": [
+    "src/lib/spectrum/funding-plan.ts",
+    "src/lib/spectrum/plan-legs.ts",
+    "src/lib/spectrum/batcher.ts",
+    "src/lib/spectrum/position-intents.ts",
+    "src/lib/spectrum/publish-picks.ts",
+    "src/lib/spectrum/submission-store.ts",
+    "src/lib/spectrum/runner-effects.ts",
+    "src/lib/spectrum/assemble-batch.ts"
+  ],
+  "reporters": ["clear-text", "progress", "json"],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "coverageAnalysis": "perTest",
+  "concurrency": 4,
+  "timeoutMS": 30000,
+  "dryRunTimeoutMinutes": 5,
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true,
+  "_comment_thresholds": "BASELINE 2026-08-07: the first full run over the money path scored 81.21% (1543 killed / 302 survived / 22 timeout). `break` is set a couple of points under that so a change that WEAKENS the suites — the audit series' recurring failure, a green suite over a live bug — fails the gate, without the score's normal run-to-run jitter tripping it. Raise the floor as survivors are killed; never lower it to make a commit pass. The 302 survivors are triaged in workspace/spectrum-release/mutation-survivors.md, not chased all at once.",
+  "thresholds": { "high": 85, "low": 75, "break": 79 }
+}

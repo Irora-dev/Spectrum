@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { chainCfg } from '../lib/chain/chains'
 
 // Deployer-facing "get this basket listed & discoverable" helper (owner
@@ -78,7 +79,7 @@ export function ListingPipeline({
 
   const detailsBlob = [
     `Name: ${name}`,
-    `Symbol: ${symbol}`,
+    `Symbol: ${showSymbol(symbol)}`,
     `Contract: ${addr}`,
     `Chain: ${cfg.name} (chainId ${chainId})`,
     `Decimals: ${decimals}`,
@@ -101,7 +102,7 @@ export function ListingPipeline({
   return (
     <section className={`rounded-2xl border border-white/10 bg-white/[0.02] p-5 ${className}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-display text-lg font-bold uppercase tracking-tight text-ink">Get ${symbol} listed</h3>
+        <h3 className="font-display text-lg font-bold uppercase tracking-tight text-ink">Get ${showSymbol(symbol)} listed</h3>
         <button
           type="button"
           onClick={copyAll}
@@ -111,7 +112,7 @@ export function ListingPipeline({
         </button>
       </div>
       <p className="mt-1.5 text-sm leading-relaxed text-ink-dim">
-        ${symbol} trades through any Uniswap v4 router the moment it&rsquo;s live, so DEX aggregators pick
+        ${showSymbol(symbol)} trades through any Uniswap v4 router the moment it&rsquo;s live, so DEX aggregators pick
         it up on their own. These trackers need you to file them once, with the details below.
       </p>
 

@@ -3,8 +3,9 @@
 // mechanism-factual; every number here is a contract constant or a live read.
 // House style: no em dashes anywhere on this page, including code comments.
 import type { ReactNode } from 'react'
+import { showSymbol } from '../lib/spectrum/safe-copy'
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Callout, Checklist, CodeBlock, CopyChip, IC, InfoPop, Table } from '../components/DocKit'
 import { AddrChips } from '../components/AddrChips'
 import { BasketAvatar } from '../components/BasketAvatar'
@@ -44,9 +45,14 @@ swap(poolKey, { zeroForOne, amountSpecified: -amountIn, sqrtPriceLimitX96 }, "")
 const EARN = `// Tag your fills and the protocol pays you, per contract constant:
 hookData = abi.encode(
   uint256   minOut,     // your aggregate minimum (0 = your settlement check)
-  uint256[] legMins,    // per-leg floors, one per constituent
+  uint256[] legMins,    // (fundingSplitBps << 240) | perLegFloor, one per constituent
   address   frontend    // YOUR address: this is the fee attribution
 )
+// On a BUY the top 16 bits fund the legs. Read them from
+// factory.bareLegMins(basket, amountIn) and pass them through UNTOUCHED (already
+// packed): all-zero splits acquire nothing and revert NoOutput, and splits derived
+// from target weights are extractable on a basket with a starved leg. Prefer empty
+// hookData if you do not need the tag: the factory then supplies both.
 // INTERFACE_SHARE_BPS = 555: about 5% of every basket fee you route,
 // claimable permissionlessly from the basket. No agreement, no allowlist.`
 
@@ -120,7 +126,7 @@ function BentoShowcase() {
           <div className="flex items-center gap-3">
             <BasketAvatar address={SHOWCASE.address} symbol={SHOWCASE.symbol} size={44} />
             <div className="text-left">
-              <div className="font-display text-2xl font-bold leading-none text-ink">${SHOWCASE.symbol}</div>
+              <div className="font-display text-2xl font-bold leading-none text-ink">${showSymbol(SHOWCASE.symbol)}</div>
               <div className="mt-1 text-[13px] text-ink-dim">{SHOWCASE.name}</div>
             </div>
           </div>
@@ -169,30 +175,59 @@ export function Integrate() {
           <div className="font-mono text-sm font-semibold uppercase tracking-[0.25em] text-ink-dim sm:text-base">
             For aggregators, solvers, wallets and bots
           </div>
-          <h1 className="mt-6 font-display text-6xl font-bold uppercase leading-[0.92] tracking-tight text-ink sm:text-7xl md:text-8xl">
+          {/* Phone: 60px is wider than the 342px gutter, so "INTRODUCING" clipped and
+              "basket tokens" split, reading as three lines. 2.5rem is the "smaller" the
+              owner asked for (owner 2026-08-06 23:13) and holds BASKET TOKENS on one
+              line (303px measured), so the hand-set <br /> composition reads as the two
+              lines it was written to be. No ch cap here: it would re-wrap that break.
+              sm: and up are untouched. */}
+          <h1 className="mt-6 font-display text-[2.5rem] font-bold uppercase leading-[0.92] tracking-tight text-ink sm:text-7xl md:text-8xl">
             Introducing
             <br />
             <span className="spectral-text">basket tokens</span>
           </h1>
-          <p className="mx-auto mt-6 max-w-4xl text-balance text-lg leading-snug text-ink-dim sm:text-xl">
-            A new way to trade many assets through one token, built as a new onchain primitive on
-            Uniswap v4 hooks. Your router already speaks the language.
+          {/* Phone: this was five ragged lines (owner 2026-08-06 23:13: it should read
+              across two, not across all of them). Hand-set breaks at 12px, tracking
+              tightened, land it as three even lines of 49/46/47 characters, widest 329px
+              of the 342px gutter. Two lines is physically out at any legible size and
+              rewording is off the table: the body face is mono at 0.6em per character,
+              so 144 characters over two 342px lines needs ~8px type. Balance is off on
+              phone (it re-flows against hand-set breaks) and the breaks are sm:hidden,
+              so the desktop composition is unchanged. The breaks are also dropped below
+              380px, where the widest hand-set line no longer fits and would leave a
+              "token," orphan: there the text wraps itself into four even lines. */}
+          <p className="mx-auto mt-6 max-w-4xl text-wrap text-[12px] leading-snug tracking-[-0.04em] text-ink-dim sm:text-balance sm:text-xl sm:tracking-normal">
+            A new way to trade many assets through one token,{' '}
+            <br className="max-[379px]:hidden sm:hidden" />
+            built as a new onchain primitive on Uniswap v4{' '}
+            <br className="max-[379px]:hidden sm:hidden" />
+            hooks. Your router already speaks the language.
           </p>
         </div>
 
         {/* the 5% / <15 min / 0 stats used to sit here as their own tiles; blended
             into the WHY trio below (owner 19:15). */}
-        <div className="mx-auto mt-10 flex max-w-md items-center justify-center gap-3">
+        {/* Phone: at 14px/0.14em the pair needed 388px of a 342px row, so both pills
+            broke in half ("Integrate in 3 / steps" and "Full / docs"). The owner wants
+            each on one line (owner 2026-08-06 23:13). 12px with tracking tightened to
+            0.08em and px-4 puts the pair at 190 + 107 + the 12px gap = 309px, clearing
+            the 342px row on
+            a 390px phone and the 312px one on a 360px phone; nowrap makes the single
+            line a guarantee rather than a measurement, py-3 keeps the tap target at
+            42px, and flex-wrap drops the second pill onto its own row on a 320px phone
+            instead of letting a nowrap label spill. sm: restores the desktop pill byte
+            for byte. */}
+        <div className="mx-auto mt-10 flex max-w-md flex-wrap items-center justify-center gap-3">
           <a
             href="#steps"
-            className="press rounded-full px-5 py-2.5 font-display text-sm font-bold uppercase tracking-[0.14em] text-void transition-opacity hover:opacity-90"
+            className="press whitespace-nowrap rounded-full px-4 py-3 font-display text-[12px] font-bold uppercase tracking-[0.08em] text-void transition-opacity hover:opacity-90 sm:px-5 sm:py-2.5 sm:text-sm sm:tracking-[0.14em]"
             style={{ background: GRADIENT }}
           >
             Integrate in 3 steps ↓
           </a>
           <Link
-            to="/docs/valuation"
-            className="press rounded-full border border-white/20 bg-white/[0.05] px-5 py-2.5 font-display text-sm font-bold uppercase tracking-[0.14em] text-ink hover:bg-white/[0.09]"
+            to="/docs"
+            className="press whitespace-nowrap rounded-full border border-white/20 bg-white/[0.05] px-4 py-3 font-display text-[12px] font-bold uppercase tracking-[0.08em] text-ink hover:bg-white/[0.09] sm:px-5 sm:py-2.5 sm:text-sm sm:tracking-[0.14em]"
           >
             Full docs
           </Link>
@@ -261,7 +296,7 @@ export function Integrate() {
           {example && (
             <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink-dim">
               Live example on this deployment:
-              <IC>{example.symbol}</IC>
+              <IC>{showSymbol(example.symbol)}</IC>
               <CopyChip text={example.address} label={example.address} />
               <span className="text-ink-faint">chain {example.chainId}</span>
             </div>
@@ -408,7 +443,7 @@ export function Integrate() {
       </section>
 
       <div className="mt-16 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-ink-faint">
-        Deep mechanics: <Link className="text-cyan press" to="/docs/valuation">the basket docs</Link>
+        Deep mechanics: <Link className="text-cyan press" to="/docs">the basket docs</Link>
       </div>
     </div>
   )

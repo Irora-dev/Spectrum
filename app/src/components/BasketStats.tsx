@@ -67,7 +67,9 @@ export function BasketStats({ ix, chainId }: { ix: BasketData; chainId: number }
       {/* Four uniform tiles (owner call: Priced + Supply dropped; the partial-
           pricing honesty signal lives on as an accent when not fully priced). */}
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 lg:grid-cols-4">
-        <Stat label="AUM">{formatUsdCompact(aumUp)}</Stat>
+        {/* "Total in basket", not "AUM" (owner 2026-08-03: plain words on every
+            display surface — the contracts vocabulary stays in code). */}
+        <Stat label="Total in basket">{formatUsdCompact(aumUp)}</Stat>
         <Stat label="24h" accent={changeColor}>
           {formatPct(ix.change24hPct)}
         </Stat>

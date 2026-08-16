@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAccount } from 'wagmi'
 import { useQueries } from '@tanstack/react-query'
 import type { Address } from 'viem'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { readPendingFrontendFees } from '../lib/spectrum/use-fee-state'
 import { refLinkFor } from '../lib/spectrum/referral'
+import { creatorPath } from '../lib/spectrum/handle-registry'
+import { useHandleForAddress } from '../lib/spectrum/use-handles'
 import { frontendPotFlushable } from '../lib/spectrum/fee-model'
 import { TRADING_ENABLED } from '../lib/config/features'
 
@@ -16,6 +18,12 @@ export interface ReferralEarnings {
    *  mainnet pot at or under 10 USDC is refused by the contract). */
   claimableTotal: number
   items: { address: Address; chainId: number; usdc: number; symbol: string; flushable: boolean }[]
+  /** STILL COUNTING. `total` sums `q.data ?? 0`, so a read in flight is
+   *  indistinguishable from a zero balance — and /earn is a SHAREABLE page, so
+   *  a cold load told a referrer with real pending fees "$0.00 · nothing to
+   *  claim yet", confidently, for as long as the per-basket multicalls took.
+   *  A caller must not present the total as final while this is true. */
+  loading: boolean
 }
 
 // The connected address's total pending frontend-fee accrual across every basket
@@ -26,7 +34,7 @@ export interface ReferralEarnings {
 // would miss a pure referrer's interface earnings. Items feed the claim (flush).
 export function useReferralEarned(): ReferralEarnings {
   const { address } = useAccount()
-  const { data: allBaskets } = useAllBaskets()
+  const { data: allBaskets, isLoading: allBasketsLoading } = useAllBaskets()
   const results = useQueries({
     queries: (allBaskets ?? []).map((b) => ({
       queryKey: ['spectrum', 'pendingFrontend', b.chainId, b.address.toLowerCase(), address?.toLowerCase()],
@@ -51,9 +59,17 @@ export function useReferralEarned(): ReferralEarnings {
       }
     })
     items.sort((a, b) => b.usdc - a.usdc)
-    return { total, claimableTotal, items }
+    // The basket list has to land before a single per-basket read can start, so
+    // "no baskets yet" is still counting rather than an answer.
+    const loading = allBasketsLoading || results.some((q) => q.isPending)
+    return { total, claimableTotal, items, loading }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results.map((q) => q.data).join(','), allBaskets])
+  }, [
+    results.map((q) => q.data).join(','),
+    results.map((q) => q.isPending).join(','),
+    allBaskets,
+    allBasketsLoading,
+  ])
 }
 
 // Compact "Refer & earn" card for the Portfolio + creator dashboard: your link,
@@ -66,11 +82,26 @@ export function ReferralCard({ className = '', creatorAddress = null, bare = fal
   const { address, isConnected } = useAccount()
   const { total: earned } = useReferralEarned()
   const [copied, setCopied] = useState(false)
+  // The link a creator DISTRIBUTES prefers their claimed name — this copy
+  // button is where the URL system pays off. Address form when unnamed or
+  // unresolved; every old link keeps working. (Hooks above the early return.)
+  const { lookup: creatorHandle } = useHandleForAddress(creatorAddress)
+  // …and the REF ITSELF rides the sharer's own claimed name too (owner
+  // 2026-08-16: "surely the earn ref link can go through the creators name
+  // e.g ref=iroradevtest rather than wallet address"). resolveRefInput has
+  // resolved spectrum names since desk 202, so ?ref=<name> already captures;
+  // this is the builder half catching up. Address when unnamed — never broken.
+  const { lookup: myHandle } = useHandleForAddress(address)
   if (!isConnected || !address) return null
+  const refWord = myHandle.status === 'found' ? myHandle.owner.display : address
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const link = creatorAddress
-    ? refLinkFor(address, origin, `/creator/${creatorAddress}`)
-    : refLinkFor(address, origin)
+    ? refLinkFor(
+        refWord,
+        origin,
+        creatorPath(creatorAddress, creatorHandle.status === 'found' ? creatorHandle.owner : null),
+      )
+    : refLinkFor(refWord, origin)
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(link)

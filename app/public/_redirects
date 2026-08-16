@@ -4,11 +4,16 @@
 # Add a matching line whenever a new nested (multi-segment) route ships.
 /creator/assets/*  /assets/:splat  200
 /docs/assets/*     /assets/:splat  200
+# /portfolio/classic is nested (doc dir /portfolio/), added 2026-08-02 with the Yours rework.
+/portfolio/assets/*  /assets/:splat  200
 # /bundle/:creator/:slug is TWO segments deep: the document dir is /bundle/<creator>/,
 # so a refresh requests /bundle/<creator>/assets/* (bundles are default-ON and shared).
 /bundle/:creator/assets/*  /assets/:splat  200
 # /bundle/new is ONE segment (doc dir /bundle/), so the rule above cannot cover it.
 /bundle/assets/*   /assets/:splat  200
+# /thesis/:deployer/:slug is TWO segments deep (a creator's cross-chain idea), so a
+# refresh requests /thesis/<deployer>/assets/* — same shape as the bundle rule above.
+/thesis/:deployer/assets/*  /assets/:splat  200
 # The SHORT links (2026-08-01): /t/<chain>/<ref>, /c/<address>, /b/<creator>/<slug>.
 # These are the forms the app now MINTS, so every shared link lands here — without
 # these lines each one is a white screen on cold load while working perfectly in-app.

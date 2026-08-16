@@ -1,0 +1,71 @@
+{
+  "_doc": "THE ADVERSARIAL REVIEW LEDGER (R ruled 2026-08-07: make review structural, not episodic). Append-only. REQUIRED ROW SHAPE — every field is read by gate A10 and a missing one blocks the streak rather than being ignored: { at: 'YYYY-MM-DD' (chronological; rows must be non-decreasing, or a reorder could manufacture a streak), reviewer: a name on INDEPENDENT_REVIEWERS in go-live-interlock.test.ts (the authoring lane can never satisfy the bar; a 'self:' row RESETS it but never satisfies it), findings: THE NUMBER (not '3 (all fixed)', not 'three', not absent — a count that is not a number cannot be zero), moneyDigest: the money-core digest AS REVIEWED — run the interlock suite and copy the printed value; a clean row vouches for THAT tree and expires the moment any money-core file changes, scope: free text for humans, plus notes. ⚠ ROWS ARE PASSES OVER *THIS LANE'S* MONEY-PATH COMMITS. A pass this worker RUNS OVER ANOTHER LANE never belongs here: its row would count toward THIS lane's go-live bar — advancing our own bar by reviewing someone else's code, the correlated-observer trap wearing a different hat. ⚠⚠ THE FIRST CUT OF THIS MECHANISM WAS MEASURED TO PERMIT A FLIP FIVE WAYS (SpectrumContracts, 2026-08-07): an annotated findings count, an absent findings key, a self row with findings being DELETED rather than resetting, the authoring lane naming itself unprefixed, and one reviewer supplying both lenses via a trailing space. Every one is now a test. The rows below predate the moneyDigest requirement and therefore CANNOT satisfy the bar — which is correct: they reviewed a tree that has since moved.",
+  "rows": [
+    {
+      "at": "2026-08-07",
+      "reviewer": "UIGuy",
+      "scope": "the fee/gate/pool-safety round + the launch flow",
+      "findings": 3,
+      "notes": "four-reviewer audit: CSP /embed frame-ban, LimitTicket chainId x2, plan-legs NaN consent. All fixed (b7b3d73, 325cb55, a653403). A REAL pass — it found things, so the streak starts at zero."
+    },
+    {
+      "at": "2026-08-07",
+      "reviewer": "self:pipeline-harness",
+      "scope": "cross-module laws over assembleBatchBuy",
+      "findings": 1,
+      "notes": "the property harness caught assembleBatchBuy dropping the concentration fact at case 0. NOT AN INDEPENDENT PASS — self-authored tooling, logged for honesty and explicitly does NOT count toward the go-live streak (see _doc: reviewer must differ from the authoring lane)."
+    },
+    {
+      "at": "2026-08-07",
+      "reviewer": "UIGuy",
+      "scope": "bb62721..b4af7f8 — the ShownStepReview/displayed-vs-signed shape (the question I asked them to attack)",
+      "findings": 2,
+      "notes": "BOTH REAL, both confirmed by measurement here before fixing. (1) ShownLeg.minOutRaw was non-nullable while its documented source is nullable, so the idiomatic `?? 0n` FALSE-REFUSED every basket-containing batch at confirm, and reading the composed value — the f(x)===f(x) vacuity the brand exists to prevent — was the only path that compiled AND worked. (2) shownAtReviewSurface accepted that laundered 0n, pushing the review's own defect downstream to blame the batch. Fixed in 4c4ecb9 (nullable + branch + mint rejects 0n). A REAL pass: it found things, so the clean streak stays at ZERO — which is the point of logging the honest number."
+    },
+    {
+      "at": "2026-08-07",
+      "reviewer": "SpectrumContracts",
+      "scope": "bb62721..b4af7f8 (requested) — NOTE: branch tip is 3487d9a, 7 commits later; the interlock+ledger findings are against 3487d9a because precondition 5 does not exist at b4af7f8",
+      "findings": 35,
+      "notes": "Four-lens adversarial pass, R-greenlit. 35 findings: 1 CRITICAL, 8 HIGH. CRITICAL: gate A10's .exec() reads the FIRST regex match, so a commented-out old flag value above a real live flip makes the whole interlock a no-op — reproduced independently. HIGH: A10 never reads `scope` or `at`, so a clean streak is permanent and unbound to code; findings>0 fails open on \"3 (all fixed)\" and on an absent key; self: rows with findings are deleted rather than resetting the streak; no identity check at all. Credential gate A9: three exit-0 bypasses (a shipped JS chunk excluded by a committed NUL byte; a BIP-39 mnemonic passing as 'public-by-shape'; a symlinked source file bypassing all three source rules). M7 band stands aside with NO downstream guard on native funding + hubUsd:null, and its `>` misses every ±2-decimal slip. 4663 rehearsal cannot compose (feeBps 50 vs BATCH_FEE_BPS 40). One harness law cannot fail (7/7 tampered compositions pass, incl. 1-wei floors). One of three 'equivalent' mutation survivors was never equivalent (pool-safety.ts:412, -0). SURVIVED: concentrationOf arithmetic, the vendored-secret provenance rule, fail-closed-on-unreadable, and the mutation ledger's completeness. A REAL pass — it found things, so the streak stays at zero."
+    },
+    {
+      "at": "2026-08-07",
+      "reviewer": "self:four-module-audit",
+      "scope": "batcher · plan-legs · displayed-vs-signed · submission-store — the four modules with NO independent pass",
+      "findings": 3,
+      "notes": "SELF-AUDIT, NOT AN INDEPENDENT PASS — logged for honesty and structurally unable to satisfy the go-live bar, which is the point. Run against the seven failure classes the 35 real findings actually took. THREE REAL: (1) concentrationOf omitted composed legs whose consent was unreadable — measured 3 legs producing 1 row, realisedPct summing to 30, excludedCount saying 0, and worst.ratio reporting 0.30 APPARENT SAFETY while 70% of the batch sat in legs the fact could not see; the owner is about to set a policy threshold on that number. (2) submission-store validated atMs's TYPE but not its RANGE, so a LIVE claim stamped -1 or 0 was STOLEN by another tab — 'claimed' — the double buy the module exists to prevent; the asymmetry with the range-checked rung beside it was the tell. (3) composeLeg passed the thin-leg CONSENT flag through unvalidated, so undefined/null/'yes'/1/0 all rode into calldata deciding whether the contract may silently skip a leg. All three fixed and pinned; my own earlier test had pinned finding (1) as CORRECT."
+    },
+    {
+      "at": "2026-08-08",
+      "reviewer": "SpectrumContracts",
+      "scope": "0a82983 - the four never-independently-reviewed modules (batcher, plan-legs, displayed-vs-signed, submission-store) and the three e036ac6 fixes",
+      "findings": 26,
+      "moneyDigest": "3c9f307a",
+      "notes": "Four-lens independent pass over the four never-reviewed modules, attacking the three e036ac6 FIXES rather than re-finding the bugs. 26 findings: 2 CRITICAL, 1 CRITICAL-when-live, 6 HIGH. CRITICAL: renewClaim is the ONE writer with no assertWritable, so the 15s heartbeat poisons its own live claim and no in-product path recovers it (adding the guard leaves all 119 tests passing); and markClaimAmbiguous sits INSIDE recordSubmission's catch, so a clock that leaves the window after the wallet answered skips the whole recovery and the next run re-submits and reports done - the double-buy the module exists to prevent, with no attacker. I verified both structurally myself before relaying. CRITICAL-when-live: the shown and composed `optional` are the SAME property of the SAME object (assemble-batch.ts:301 and :363 both from planned.legs), so the strict gate cannot see a shared wrong value - measured, a planted plan-legs defect made two healthy legs skippable and the gate returned null while 132 of the author's tests passed. HIGH: the Infinity sentinel makes worst.ratio sort by INSERTION ORDER (Infinity-Infinity=NaN), so a 1% leg is named worst while an 80% unconsented leg hides at index 10 - the original harm re-created one layer up; Infinity serialises to null and reads back as 0, inverting a policy fail-open; and a submission-store test asserts `find(...)?.ambiguous` toBeUndefined, which is satisfied by DELETING the row - a planted delete survived all 1963 tests. Answering the author's own questions: Infinity is NOT the right sentinel; the two counters DO separate the two directions but rest on inconsistent definitions and different units; and the false-refusal side of reject-don't-clamp is worse than the theft it prevents. Also measured: worst.ratio on the module's own canonical case is 11.999999999999996, so a policy written as >= 12 does not fire on it. A REAL pass - the streak stays at zero."
+    },
+    {
+      "at": "2026-08-08",
+      "reviewer": "self:uiguy-four-lens",
+      "scope": "the MERGED line 544989a — four adversarial lenses over displayed-vs-signed, the double-buy store, both absorption merges, and the money arithmetic",
+      "findings": 28,
+      "notes": "SELF-AUTHORED and therefore cannot count toward A10's streak — I wrote a large share of what was reviewed, which is exactly why the rotation exists. Recorded because a ledger that logged only clean passes would measure nothing. 2 CRITICAL + 3 HIGH in submission-store/execution-runner and 3 HIGH in funding-plan are specallocator's and are on their desk unfixed. Fixed by me: my own displayed-vs-signed gate checked bq.minOutRaw while minShares is what reaches the contract (the module's headline defect reproduced inside its own fix), my sell gate refused EVERY non-USDC sell on a units error, and two wrong money figures on the portfolio review screen. The merge audit came back CLEAN across all four merges. A cold pass on this tree is still owed and is with R."
+    },
+    {
+      "at": "2026-08-14",
+      "reviewer": "SpectrumContracts",
+      "scope": "test/rh-deploy@54385dfd — the ARMING tree (interlock + portfolio path); full report workspace/spectrum-release/allocator-review-pass1B-armingtree-2026-08-14.md (the ops repo)",
+      "findings": 3,
+      "moneyDigest": "501d449e",
+      "notes": "MERGE-WITH-CHANGES: MED-1 A12 sweeps 7 of 12 digest modules (absence read as cleanliness) · LOW-2 fee-redirect pin dormant (INTERFACE_TAG_ADDRESS null on this deploy) · LOW-3 zero portfolio-batcher revert vocabulary. VERIFIED SOUND 19/19 probes: F1/F2/F4/F6 refuse at exact bounds, conservation exact, byte gate catches one appended byte, selector pins the deployed burn build, either flag alone turns the suite red in situ. Transcribed by UIGuy from the reviewer's desk delivery w-1786698616629-15 — a FINDINGS row: the streak stays at zero until a clean pass lands against the flip-candidate tree (the reviewer's own instruction)."
+    },
+    {
+      "at": "2026-08-14",
+      "reviewer": "SpectrumContracts",
+      "findings": 0,
+      "moneyDigest": "887a5fa6",
+      "scope": "test/rh-deploy 97499e9 flip candidate (bare 2e05d2f0 + the 2-line live-flip -> 887a5fa6). Final delta ef4f4e03->d676aa53->97499e9; money core PASS by shape (0 crit/high/med); LOW-1 skipped-leg pin + INFO-1 comment remedied and re-verified (survivor mutant now dies red-under-mutant). No money defect, no false-pass.",
+      "notes": "Independent cold pass, sole reviewer (the owner one-pass ruling 2026-08-14). 887a5fa6 = the reviewed money core + ONLY the two flip flags, reproduced independently. Full suite 3234 passed/33 skipped at 97499e9. Transcribed verbatim by UIGuy from the reviewer's desk verdict w-1786707272489-27; the owner cross-checks row-vs-desk at ack time per RELEASING.md."
+    }
+  ]
+}

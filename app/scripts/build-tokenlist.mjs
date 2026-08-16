@@ -78,12 +78,36 @@ if (existsSync(OUT)) {
   }
 }
 
+// THE LIST'S LOGO. Aggregator and wallet UIs show `logoURI` beside the list name,
+// and the token-list schema requires an ABSOLUTE url — so it can only be stamped
+// once a deployment knows its own origin. Resolved the way build-sitemap.mjs
+// resolves it, and with the same refusal: no origin configured → the key is
+// OMITTED rather than filled with somebody else's domain. That refusal matters
+// more here than in the sitemap, because this list is what a community operator
+// submits under their OWN name, and hardcoding Irora's host would make every one
+// of those submissions advertise our property. Each site points at its own copy
+// of the mark, which ships at public/spectrum-logo.svg on every deployment.
+const siteConfigPath = join(ROOT, 'src/site.config.json')
+let siteUrl = ''
+if (existsSync(siteConfigPath)) {
+  try {
+    siteUrl = String(JSON.parse(readFileSync(siteConfigPath, 'utf8')).siteUrl ?? '')
+  } catch {
+    /* unreadable config is not an origin */
+  }
+}
+const origin = (process.env.VITE_SITE_URL || siteUrl).trim().replace(/\/$/, '')
+
 const list = {
   name: 'Spectrum Baskets',
   timestamp: new Date().toISOString(),
   version,
   keywords: ['spectrum', 'basket', 'onchain index'],
+  ...(origin ? { logoURI: `${origin}/spectrum-logo.svg` } : {}),
   tokens,
+}
+if (!origin) {
+  console.log('no site origin (VITE_SITE_URL or src/site.config.json siteUrl) -> logoURI omitted, never another host')
 }
 writeFileSync(OUT, JSON.stringify(list, null, 2) + '\n')
 console.log(`wrote ${tokens.length} token${tokens.length === 1 ? '' : 's'} -> public/tokenlist.json (v${version.major}.${version.minor}.${version.patch})`)

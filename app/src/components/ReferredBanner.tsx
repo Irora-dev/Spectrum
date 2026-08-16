@@ -10,7 +10,8 @@ const DISMISS_KEY = 'spectrum:ref-banner-dismissed'
 // discloses who referred them and that the referrer earns a fee slice, at no
 // extra cost. Transparency (and the buyer-side §9 disclosure). Site-wide via
 // Layout; self-hides when there's no ref or the ref is the connected wallet.
-export function ReferredBanner() {
+/** Slide form — the BannerCarousel consumes this; the component wrapper stays for compatibility. */
+export function useReferredSlide() {
   const { address } = useAccount()
   const ref = getStoredRef(address)
   const { data: ensName } = useEnsName({ address: ref ?? undefined, chainId: MAINNET_CHAIN_ID })
@@ -54,4 +55,8 @@ export function ReferredBanner() {
       </div>
     </div>
   )
+}
+
+export function ReferredBanner() {
+  return <>{useReferredSlide()}</>
 }

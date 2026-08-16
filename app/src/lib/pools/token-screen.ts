@@ -26,7 +26,7 @@ type Client = ReturnType<typeof clientFor>
 // Every check mirrors an on-chain reality, not a curation opinion:
 //   • not-a-contract / decimals() reverts → the factory re-reads decimals at
 //     deploy (creators can't lie about them), so the deploy itself would revert.
-//     Fail here, before anyone mines a salt or pays auction price.
+//     Fail here, before anyone mines a salt or pays the launch fee.
 //   • ERC-777 → the basket constructor rejects via the ERC-1820 registry. Same
 //     probe, same registry, run early so the error is readable instead of a
 //     revert at broadcast.
@@ -285,6 +285,12 @@ async function findBalanceSlot(client: Client, asset: Address, holder: Address):
 export type TransferProbe =
   | { verdict: 'clean' }
   | { verdict: 'fee-on-transfer'; receivedBps: number }
+  /** The transfer itself REVERTED with a proven balance in place — the token
+   *  refuses plain transfers (the FWA class: venue/transfer gating). Distinct
+   *  from 'inconclusive' BY DESIGN (SpectrumContracts w-59 R1): token-level
+   *  transfer gating is the one hole in the basket exit story, and reading it
+   *  as "couldn't check" is how FWA sailed through the screen. */
+  | { verdict: 'transfer-refused' }
   | { verdict: 'inconclusive' }
 
 /**
@@ -322,7 +328,12 @@ export async function probeTransferFee(client: Client, asset: Address): Promise<
     })
 
     const [transferRes, balanceRes] = results
-    if (transferRes.status !== 'success' || balanceRes.status !== 'success') return { verdict: 'inconclusive' }
+    // The balance premise is PROVEN (findBalanceSlot verified the slot answers
+    // balanceOf), so a reverting transfer here is the token's own rule — the
+    // FWA class — never a harness gap. Only a failed balance READ stays
+    // inconclusive: it says the probe broke, not the token.
+    if (transferRes.status !== 'success') return { verdict: 'transfer-refused' }
+    if (balanceRes.status !== 'success') return { verdict: 'inconclusive' }
     const received = balanceRes.result as bigint
     if (received >= PROBE_AMOUNT) return { verdict: 'clean' }
     // Received less than sent — a transfer fee, measured, not inferred.

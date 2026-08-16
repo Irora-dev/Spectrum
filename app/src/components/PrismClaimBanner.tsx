@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useAccount } from 'wagmi'
 import { pageEnabled } from '../theme/brand'
@@ -22,7 +22,8 @@ const DISMISS_KEY = 'spectrum:prism-claim-banner'
 // the 53KB address index, never the 1.1MB proofs chunk. Dismissal is
 // per-SESSION on purpose: an unclaimed holder is re-reminded next visit until
 // the vault marks them paid.
-export function PrismClaimBanner() {
+/** Slide form — the BannerCarousel consumes this; the component wrapper stays for compatibility. */
+export function usePrismClaimSlide() {
   const { address } = useAccount()
   // DEV-only design preview: `?claimBanner=1` forces the PERSONAL variant
   // without a snapshot wallet (the generic variant already shows by default).
@@ -30,9 +31,13 @@ export function PrismClaimBanner() {
   const [forced] = useState(
     () => import.meta.env.DEV && new URLSearchParams(window.location.search).has('claimBanner'),
   )
+  // localStorage, NOT sessionStorage. The banner is default-visible to every
+  // visitor, so with a per-session dismissal anyone outside the 1,203-address
+  // snapshot — which is almost everyone — dismissed it on every single visit,
+  // forever. A dismissal the user has to repeat is not a dismissal.
   const [dismissed, setDismissed] = useState(() => {
     try {
-      return sessionStorage.getItem(DISMISS_KEY) === '1'
+      return localStorage.getItem(DISMISS_KEY) === '1'
     } catch {
       return false
     }
@@ -69,7 +74,7 @@ export function PrismClaimBanner() {
 
   const dismiss = () => {
     try {
-      sessionStorage.setItem(DISMISS_KEY, '1')
+      localStorage.setItem(DISMISS_KEY, '1')
     } catch {
       /* ignore */
     }
@@ -112,9 +117,19 @@ export function PrismClaimBanner() {
               </>
             ) : (
               <>
-                The <span className="text-ink">PRISM v2 community claim</span> is live. Held v1
-                PRISM? Your make-good allocation may be waiting.{' '}
-                <Link to="/claim" className="font-semibold text-magenta underline underline-offset-2 hover:text-ink">
+                The <span className="text-ink">PRISM v2 community claim</span> is live.{' '}
+                {/* the qualifier is DESKTOP-ONLY (mobile sweep 2026-08-06): the
+                    full sentence wrapped to three centred lines and ate ~165px
+                    of every page's first viewport on a phone. The link says the
+                    action; /claim itself explains the eligibility. */}
+                <span className="hidden sm:inline">
+                  Held v1 PRISM? Your make-good allocation may be waiting.{' '}
+                </span>
+                {/* thumb-sized (mobile audit 2026-08-05): was 14px tall */}
+                <Link
+                  to="/claim"
+                  className="inline-flex min-h-[36px] items-center font-semibold text-magenta underline underline-offset-2 hover:text-ink"
+                >
                   Check your address →
                 </Link>
               </>
@@ -125,7 +140,9 @@ export function PrismClaimBanner() {
           type="button"
           onClick={dismiss}
           aria-label="Dismiss"
-          className="press grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-white/8 hover:text-ink"
+          /* 36px thumb target (mobile sweep 2026-08-06: measured 28×28). The
+             GLYPH stays 14px — the target grows, the mark does not. */
+          className="press grid h-9 w-9 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-white/8 hover:text-ink"
         >
           <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M18 6 6 18M6 6l12 12" />
@@ -133,16 +150,13 @@ export function PrismClaimBanner() {
         </button>
       </div>
     </div>
-      {/* disclosure under the bar (owner 2026-07-30) — bare text on the page
-          void, OUTSIDE the washed container so it carries no background */}
-      <div className="py-1.5 text-center">
-        <span className="font-mono text-[11px] leading-relaxed text-ink-faint">
-          Spectrum is experimental technology.{' '}
-          <Link to="/risk" className="underline underline-offset-2 hover:text-ink">
-            Read the disclosure →
-          </Link>
-        </span>
-      </div>
+      {/* The disclosure that used to sit here now rides BannerCarousel's RiskSlide and is
+          rendered unconditionally by Layout — it must not vanish because the
+          banner region capped itself to one strip. */}
     </div>
   )
+}
+
+export function PrismClaimBanner() {
+  return <>{usePrismClaimSlide()}</>
 }

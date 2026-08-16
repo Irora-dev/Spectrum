@@ -83,7 +83,7 @@ const PRIMARY_TYPE = 'CreatorMetadata' as const
 // hostile blob with a valid signature — cap before display regardless).
 const CAP = { name: 48, url: 2048, tagline: 140, thesis: 4000, sector: 24, horizon: 24 } as const
 const MAX_SECTORS = 8
-const MAX_BLOB_BYTES = 32_768
+export const MAX_BLOB_BYTES = 32_768
 const FETCH_TIMEOUT_MS = 6_000
 
 // ── Types ────────────────────────────────────────────────────────────────────
