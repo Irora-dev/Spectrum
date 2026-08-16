@@ -26,6 +26,7 @@
     "batcher": "0xfb4646c26cfbbe8d4682aeb42e90b1ab8159764f",
     "directSwapWrapper": "0xCE01C930E548421867A8C1DBD7cE83a7D26C5c99",
     "feeGeneration": 2,
+    "packsFundingSplit": true,
     "rejectsV2Legs": true,
     "usdcDecimals": 6
   },
@@ -54,6 +55,7 @@
     "batcher": "0x65bf8842700498f99375c267dcd31e324d8f874c",
     "directSwapWrapper": "0xBeC653154735a0D1928430E82c5a17229227c067",
     "feeGeneration": 2,
+    "packsFundingSplit": true,
     "rejectsV2Legs": true,
     "usdcDecimals": 6
   },
@@ -84,6 +86,7 @@
     "batcher": "0x2ec8c0c87946ead5f9ae436374f6a6d0191c6803",
     "directSwapWrapper": "0xEf88CC32C34172D9cAA09b405fBed2151785bF03",
     "feeGeneration": 2,
+    "packsFundingSplit": true,
     "rejectsV2Legs": true,
     "usdcDecimals": 6
   }

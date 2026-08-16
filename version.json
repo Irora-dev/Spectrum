@@ -1,8 +1,12 @@
 {
-  "version": "2026.08.16b",
-  "note": "Follow-up to 2026.08.16, no money-code changes: Netlify edge-function bundling is fixed (Deno requires extension-explicit imports; the og and 0x-proxy graphs gained their .ts suffixes), and the release-proof workflow drops its impossible node-20 leg and seats a placeholder fee sink in its build simulations, which the compose-enabled config check rightly demands.",
-  "impact": "safe",
-  "sacred": [],
+  "version": "2026.08.16c",
+  "note": "Two fixes riding together: the gen-3 deployment book now declares its packing factories (packsFundingSplit true on all three chains \u2014 the first live buy went out in the old no-split shape and refused; the split-packed probe succeeds), and the review waiver ships with the tree so the public release-proof evaluates the same gate the source does. The book edit touches the launch/swap-sacred config; the waiver is executor-sacred like the ledger it stands in for.",
+  "impact": "config",
+  "sacred": [
+    "launch",
+    "swap",
+    "executor"
+  ],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }

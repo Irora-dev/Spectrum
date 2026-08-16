@@ -7,6 +7,27 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.16c
+
+Sacred: launch, swap, executor — the deployment book's funding-split declaration and the
+review-record surface.
+
+The gen-3 deployment book now declares its packing factories: `packsFundingSplit` is true
+on all three chains. The first live buy of this generation went out in the older no-split
+payload shape and the basket refused it whole (the in-app probe measured the split-packed
+shape succeeding — pools and amounts were fine); the seating template had missed the key
+on every chain, so ETH and Base carried the same latent refusal. Money moved nowhere: the
+refusal is the designed fail-closed behavior, and the fix is one declaration.
+
+The 2026.08.16 review waiver now SHIPS with the tree, beside the review ledger it stands
+in for, and joins the sacred registry under executor with the same F9 logic as the
+ledger. It was created in the export-ignored release tooling, so the public
+release-proof — which runs the interlock from a fresh clone — could not see it and
+failed closed, exactly as the gate is built to do. A gate that is only green on the
+maintainer's machine is not a gate: the waiver is public now, digest-pinned as before
+(it voids the moment the money core moves), and a counter-ruling deletes one file to
+restore the bar whole.
+
 ## 2026.08.16b
 
 Deploy and CI fixes, no money-code changes. Netlify's edge-function bundling failed on

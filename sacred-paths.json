@@ -63,6 +63,7 @@
         "app/src/lib/spectrum/allocation.ts",
         "app/src/lib/spectrum/portfolio-batcher.ts",
         "app/src/lib/spectrum/review-ledger.json",
+        "app/src/lib/spectrum/review-waiver.json",
         "app/src/lib/spectrum/go-live-interlock.test.ts"
       ]
     }

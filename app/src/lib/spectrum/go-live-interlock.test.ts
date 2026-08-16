@@ -53,8 +53,11 @@ const SACRED = import.meta.glob(['/../sacred-paths.json'], { query: '?raw', impo
 
 /** The owner's digest-pinned review waiver, when one exists (2026-08-16 ruling,
  *  recorded in the ops harness decisions log). Absent or unreadable = no waiver — the bar
- *  stands. The file lives in release/ (export-ignored, never ships public). */
-const WAIVER = import.meta.glob(['/../release/REVIEW-WAIVER.json'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+ *  stands. It lives BESIDE the ledger it stands in for and SHIPS with the tree
+ *  on purpose: the public release-proof runs this same suite from a fresh
+ *  clone, and a gate that is only green on the maintainer's machine is not a
+ *  gate. Sacred path, same F9 logic as the ledger. */
+const WAIVER = import.meta.glob(['/src/lib/spectrum/review-waiver.json'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
 const glob2 = import.meta.glob(['/src/**/release-surface*', '/src/components/**/ReleaseSurface*'], {
   query: '?raw',
@@ -130,7 +133,7 @@ export interface InterlockFacts {
    *  the flip, that same strictness is exactly what you want. */
   moneyCoreNotClean: number | null
   /** The owner's DIGEST-PINNED waiver of precondition 5 (2026-08-16 ruling,
-   *  recorded in the ops harness decisions log; file: release/REVIEW-WAIVER.json).
+   *  recorded in the ops harness decisions log; file: review-waiver.json beside the ledger).
    *  null = no waiver or unreadable — fail closed, the bar stands. It waives
    *  ONLY the clean-row demand, only while the money core still digests to the
    *  ruled value — the F2 law applied to the waiver itself. */
@@ -182,8 +185,8 @@ export function interlockViolations(f: InterlockFacts): string[] {
   // permanent global token. It stands in for the STREAK only: the ledger-shape
   // integrity checks above still bind (corruption is not a review demand), and
   // every other precondition bites unchanged. R counter-rules by deleting
-  // release/REVIEW-WAIVER.json; this branch then never fires and the bar is
-  // back, whole, with all its fixtures still live below.
+  // review-waiver.json (it lives beside review-ledger.json); this branch then
+  // never fires and the bar is back, whole, with all its fixtures still live below.
   if (f.reviewWaiverDigest != null && f.reviewWaiverDigest === f.moneyDigest) return v
 
   // ⚠ NO PRE-FILTERING (F4). The tail rows are taken AS THEY STAND, so a
