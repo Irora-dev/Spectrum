@@ -29,13 +29,13 @@ export const brand: BrandConfig = {
   // key now gates only what the 2026-08-01 ruling actually targeted: the OLD
   // hand-picked allocations surfaces (BundleGrid, BundleShelf, FeaturedBundle,
   // the forge doors).
-  // `create` ships OFF alongside `bundle`: the Create flow's engine is still
-  // SIMULATED (nothing signs, nothing moves), so an operator must not serve it
-  // to real visitors yet. The code converged onto this branch deliberately —
-  // one Home.tsx, one route table — and the toggle is what keeps it dark until
-  // the executors are real. Flip it to true (or delete the key) the release
-  // after the first real run. Dev servers show it regardless; see App.tsx.
-  pages: { bundle: false, create: false },
+  // `create` shipped OFF while the flow's engine was SIMULATED; that comment
+  // carried its own retirement clause — "flip it to true (or delete the key)
+  // the release after the first real run" — and the first real run happened
+  // 2026-08-16 (the live gen-3 buy, executors armed at the flip). The key is
+  // DELETED rather than set true: absent = ON is the page-toggle doctrine, so
+  // an operator who wants it dark writes `create: false` themselves.
+  pages: { bundle: false },
   // NO defaultChainId HERE, deliberately. It used to be `4663` under a "do not
   // merge to main" comment, and that comment was doing a job the code should
   // have been doing: every absorption of this branch into the kit dragged the

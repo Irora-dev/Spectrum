@@ -19,7 +19,12 @@ import { DexSwapCard } from './DexSwapCard'
 // basket stays unseeded (sessionStorage keeps one visit quiet).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const dismissKey = (addr: string) => `spectrum:seed-dismissed:${addr.toLowerCase()}`
+/** Exported so a landed SEED RUN can stamp it: right after a seed the supply
+ *  cache still reads 0, and this modal would pop its buy-shaped console at the
+ *  person who JUST seeded (owner live 2026-08-16). A stamp = seeded, not
+ *  dismissed-forever — the session ends and real data has long caught up. */
+export const seedOfferDismissKey = (addr: string) => `spectrum:seed-dismissed:${addr.toLowerCase()}`
+const dismissKey = seedOfferDismissKey
 
 export function SeedBasketModal({ ix, chainId }: { ix: BasketData; chainId: number }) {
   const { address: viewer } = useAccount()

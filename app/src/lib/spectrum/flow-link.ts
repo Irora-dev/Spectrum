@@ -10,10 +10,10 @@ import { pageEnabled, type PageKey } from '../../theme/brand'
 // ROUTE TRUTH since 2026-08-12 (owner: "/launch needs to be replaced with
 // /create"): /create is the REAL creation surface (Composer face + the deploy
 // studio) and rides the `launch` page key, default-ON like every real page.
-// The simulated manager engine lives at /manager alone, still behind the
-// operator's `create` key (ships OFF until the executors are real; dev shows
-// it). So the two doors now gate DIFFERENTLY — publish is a real-money door,
-// keep is the simulated engine's door — which is the honest split.
+// The manager engine lives at /manager behind the operator's `create` key —
+// default-ON since 2026-08-16 (the executors went real at the flip and the
+// first live run landed; brand.config.ts's shipped OFF retired per its own
+// clause). An operator ships it dark by writing `create: false`.
 //
 // `pageEnabled` treats ABSENT keys as ON, the default-ON doctrine of every
 // page toggle. This helper stays the only place that knows either path.

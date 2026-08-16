@@ -1,0 +1,85 @@
+# ── UPDATE FROM SPECTRUM — one button for people running their own copy ──────
+# Actions tab → "update-from-spectrum" → Run workflow. Pulls the latest released
+# Spectrum into this repository.
+#
+# Two paths, tried in order:
+#   1. GitHub's native fork-sync (repos/{repo}/merge-upstream) — server-side,
+#      handles everything including workflow-file changes; works when this repo
+#      is a FORK of Irora-dev/Spectrum.
+#   2. A plain git merge from the public repo — for template copies that have
+#      no fork relation. One honest limitation: the Actions token may not push
+#      changes to .github/workflows/*, so an update that touches the workflows
+#      themselves ends with instructions to pull locally instead of a push.
+#
+# A merge conflict is a STOP, never a guess: your own edits and the update
+# touched the same lines, and only you can say which side wins. The job fails
+# with the exact local commands.
+name: update-from-spectrum
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Try GitHub's native fork sync
+        id: forksync
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          if [ "${{ github.repository }}" = "Irora-dev/Spectrum" ]; then
+            echo "This IS the Spectrum repo — nothing upstream of it to pull." >> "$GITHUB_STEP_SUMMARY"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RESP=$(gh api "repos/${{ github.repository }}/merge-upstream" \
+            -f branch="${{ github.event.repository.default_branch }}" 2>&1) && {
+            echo "synced=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Synced via GitHub fork-sync: $(echo "$RESP" | head -c 300)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          echo "not-a-fork or conflict: $RESP"
+          echo "synced=false" >> "$GITHUB_OUTPUT"
+          # 409 = the fork has commits that conflict with upstream — git can say where
+          if echo "$RESP" | grep -q "409"; then
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge from the public repo (template copies)
+        if: steps.forksync.outputs.synced != 'true' && steps.forksync.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          git clone --branch "${{ github.event.repository.default_branch }}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" work
+          cd work
+          git config user.name "spectrum-update"
+          git config user.email "actions@users.noreply.github.com"
+          git remote add upstream https://github.com/Irora-dev/Spectrum.git
+          git fetch upstream main
+          if git merge --no-edit upstream/main; then
+            if git push origin HEAD; then
+              echo "✅ Updated by merge from Irora-dev/Spectrum@$(git rev-parse --short upstream/main)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "⚠️ The merge is clean but the push was refused — usually because this update touches .github/workflows/*, which the Actions token may not modify. Run locally:" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo "git remote add spectrum https://github.com/Irora-dev/Spectrum.git 2>/dev/null; git fetch spectrum main && git merge spectrum/main && git push" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          else
+            echo "⛔ MERGE CONFLICT — your edits and the update changed the same lines, and only you can pick the right side. Locally:" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "git remote add spectrum https://github.com/Irora-dev/Spectrum.git 2>/dev/null; git fetch spectrum main && git merge spectrum/main   # resolve, commit, push" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            exit 1
+          fi

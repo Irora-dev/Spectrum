@@ -7,6 +7,25 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.16d
+
+The seed round, from the owner's live bundle test. Seeding no longer kicks you out
+mid-run: the ceremony's seeded-watch used to swap the success face the moment supplies
+read >0 — unmounting the live run overlay underneath you, right after the wallet handed
+focus back — and now it waits until you close the run. A landed seed is celebrated as a
+seed: the plate says "seeded", doors to the basket you just opened (not "View
+portfolio"), and the backup "Now seed it" modal stands down for the session instead of
+popping its buy console at the person who just seeded off a stale supply read.
+
+The portfolio manage flow's Execute button ships ON by default. Its dark default was
+written while the engine was simulated and carried its own retirement clause — "flip it
+the release after the first real run" — and that run landed 2026-08-16. Operators who
+want the flow dark write `create: false` in brand.config.
+
+New: the update-from-spectrum action. Forks use GitHub's native sync (server-side,
+workflow files included); template copies get a plain merge from the public repo. A
+conflict stops with the exact local commands — your edits are never guessed at.
+
 ## 2026.08.16c
 
 Sacred: launch, swap, executor — the deployment book's funding-split declaration and the

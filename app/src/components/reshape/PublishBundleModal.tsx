@@ -1309,6 +1309,14 @@ function SuccessPlate({
     navigate(thesisHref(deployer, name))
     onClose()
   }
+  // ⚠ THE WATCH MUST NOT SWAP THE FACE UNDER A LIVE RUN (owner live 2026-08-16:
+  // seeding one basket kicked him out of the seed and back to the create flow).
+  // The run overlay is MOUNTED INSIDE the door below; the 12s seeded-watch (or
+  // its window-focus refetch, which fires the moment the wallet hands focus
+  // back) flips `seededAll` mid-run and the branch unmounts door + overlay
+  // together — before the finished plate is ever seen. While the overlay is up,
+  // the door face stays; the swap happens when the user closes the run.
+  const [seedOverlayUp, setSeedOverlayUp] = useState(false)
   const { data: seededAll } = useQuery({
     queryKey: ['seeded-watch', seedPlan.legs.map((l) => `${l.chainId}:${l.address.toLowerCase()}`).join(',')],
     queryFn: async () => {
@@ -1397,7 +1405,7 @@ function SuccessPlate({
           </div>
         ))}
       </div>
-      {hasDoor && !seededAll ? (
+      {hasDoor && (!seededAll || seedOverlayUp) ? (
         <>
           <SeedBundleDoor
             plan={seedPlan}
@@ -1406,7 +1414,10 @@ function SuccessPlate({
             accent={ACCENT}
             gradient="linear-gradient(90deg,var(--color-violet-bright),var(--color-magenta),var(--color-amber))"
             textClass="text-black"
-            onOverlayChange={onSeedOverlayChange}
+            onOverlayChange={(up) => {
+              setSeedOverlayUp(up)
+              onSeedOverlayChange(up)
+            }}
           />
           <div className="mt-4 flex flex-col gap-2.5 sm:flex-row">
             <Link

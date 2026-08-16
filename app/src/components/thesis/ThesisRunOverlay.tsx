@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { useAccount } from 'wagmi'
 import { parseEventLogs, type Address, type Hex } from 'viem'
 import { showName, showSymbol } from '../../lib/spectrum/safe-copy'
+import { seedOfferDismissKey } from '../SeedBasketModal'
 import { SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { thesisNeeds, type Thesis } from '../../lib/spectrum/thesis'
 import { thesisRef } from '../../lib/spectrum/thesis-url'
@@ -810,7 +811,7 @@ export function ThesisRunOverlay({
   // real run's face — same eyebrow, no chip, the real footer. Safe because
   // the guard is in the MACHINE: demo legs cannot arm (builder + load
   // refusals) and the fixture module cannot exist in a production bundle.
-  const eyebrowText = mode === 'sell' ? 'selling the whole bundle' : 'buying the whole bundle'
+  const eyebrowText = mode === 'sell' ? 'selling the whole bundle' : seedShares ? 'seeding the bundle — the first buys' : 'buying the whole bundle'
   const lanes: Lane[] = run ? deriveLanes(run, legs) : []
   const totalCents = run ? runTotalCents(run) : mode === 'buy' ? (amountCents ?? null) : null
   const fraction = run ? runFraction(run) : 0
@@ -1185,6 +1186,7 @@ export function ThesisRunOverlay({
               accent={accent}
               thesisName={thesis.name}
               demo={run.demo}
+              seed={!!seedShares}
               onDone={finishAndClose}
               onOfferPayAsset={onOfferPayAsset}
             />
@@ -1742,6 +1744,7 @@ function SuccessPlate({
   accent,
   thesisName,
   demo,
+  seed = false,
   onDone,
   onOfferPayAsset,
 }: {
@@ -1750,6 +1753,10 @@ function SuccessPlate({
   accent: string
   thesisName: string
   demo: boolean
+  /** A SEED run (seedShares drove the split): the plate speaks seeding, doors
+   *  to the basket itself, and never sends a creator to their portfolio as if
+   *  they had just bought someone's product (owner live 2026-08-16). */
+  seed?: boolean
   onDone: () => void
   /** Absent = this host has no picker, so the offer is not shown at all rather
    *  than rendered as a button that goes nowhere. */
@@ -1757,6 +1764,22 @@ function SuccessPlate({
 }) {
   const rows = landedRows(run, legs)
   const okCount = rows.filter((r) => r.ok).length
+  // A landed seed stamps the per-basket offer key at once: the supply cache
+  // still reads 0 for a beat, and without the stamp the "Now seed it" backup
+  // modal pops its buy console at the person who JUST seeded.
+  useEffect(() => {
+    if (!seed || demo) return
+    for (const r of rows) {
+      if (!r.ok || r.legAddress == null) continue
+      try {
+        sessionStorage.setItem(seedOfferDismissKey(r.legAddress), '1')
+      } catch {
+        /* storage unavailable — the modal's own creator+supply guards remain */
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed, demo])
+  const seededLeg = seed && okCount === 1 ? rows.find((r) => r.ok && r.legAddress != null && r.legSymbol != null) : null
   // the skipped rows' bridge door (audit 2026-08-16: LaneRow's doors vanished
   // the moment `finished` swapped it for this plate — exactly when the user is
   // reading the damage). One mount, keyed to the pressed row's chain.
@@ -1775,7 +1798,7 @@ function SuccessPlate({
         </div>
         <div className="mt-3 break-words font-display text-xl font-bold uppercase tracking-tight text-ink">{showName(thesisName)}</div>
         <div className="mt-2 text-sm leading-relaxed text-ink-dim">
-          {run.direction === 'buy' ? 'yours' : 'sold'} across {okCount} {okCount === 1 ? 'network' : 'networks'}
+          {run.direction === 'buy' ? (seed ? 'seeded' : 'yours') : 'sold'} across {okCount} {okCount === 1 ? 'network' : 'networks'}
           {rows.length > okCount ? ` · ${rows.length - okCount} ${rows.length - okCount === 1 ? 'leg was' : 'legs were'} skipped, noted below` : ''}
         </div>
         <div className="mt-5 space-y-2">
@@ -1840,7 +1863,19 @@ function SuccessPlate({
           </div>
         )}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          {!demo && (
+          {/* a SEED doors to the basket it just opened — its creator has not
+              "bought" anything, and /portfolio is the wrong room to celebrate
+              in. Multi-leg seeds keep Done alone: the ceremony behind this
+              plate holds the "View the bundle →" door. */}
+          {!demo && seededLeg?.legAddress != null && seededLeg.legSymbol != null && (
+            <Link
+              to={basketHref({ chainId: seededLeg.chainId, address: seededLeg.legAddress, symbol: seededLeg.legSymbol })}
+              className="press inline-flex h-12 flex-1 items-center justify-center rounded-xl border border-white/12 px-6 font-display text-[12px] font-bold uppercase tracking-[0.12em] text-ink-dim hover:border-cyan/50 hover:text-ink"
+            >
+              View your basket →
+            </Link>
+          )}
+          {!demo && !seed && (
             <Link
               to="/portfolio"
               className="press inline-flex h-12 flex-1 items-center justify-center rounded-xl border border-white/12 px-6 font-display text-[12px] font-bold uppercase tracking-[0.12em] text-ink-dim hover:border-cyan/50 hover:text-ink"

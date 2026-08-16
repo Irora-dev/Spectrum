@@ -1,12 +1,8 @@
 {
-  "version": "2026.08.16c",
-  "note": "Two fixes riding together: the gen-3 deployment book now declares its packing factories (packsFundingSplit true on all three chains \u2014 the first live buy went out in the old no-split shape and refused; the split-packed probe succeeds), and the review waiver ships with the tree so the public release-proof evaluates the same gate the source does. The book edit touches the launch/swap-sacred config; the waiver is executor-sacred like the ledger it stands in for.",
+  "version": "2026.08.16d",
+  "note": "The seed round: seeding a bundle no longer kicks the creator out mid-run (the seeded-watch waits for the run to close), a landed seed celebrates as a SEED with a door to the basket itself instead of 'view portfolio', and the backup seed modal stands down for the session after a real seed. The portfolio manage flow's Execute button now ships ON by default (its dark default was written for the simulated era and carried its own retirement clause; the first real run landed 2026-08-16). Plus: an update-from-spectrum action \u2014 forks and template copies pull the latest release with one button.",
   "impact": "config",
-  "sacred": [
-    "launch",
-    "swap",
-    "executor"
-  ],
+  "sacred": [],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }
