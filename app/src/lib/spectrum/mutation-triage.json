@@ -649,6 +649,42 @@
    "test": "submission-store.test.ts › a stamp EXACTLY at the plausibility floor records",
    "why": "REAL boundary: a stamp at exactly MIN_PLAUSIBLE_MS (2020-01-01, the floor itself) was refused under the mutant. Sibling of the ceiling pin on the same line, other bound. Proven red-under-mutant.",
    "at": "2026-08-16"
+  },
+  "runner-effects:377:20:< → <=": {
+   "verdict": "equivalent",
+   "class": "margin-headroom",
+   "why": "awaitReceiptOk's bounded poll widened to one EXTRA iteration: the 91st try costs 2 more seconds on the already-failing path and changes no verdict — success returns identically, exhaustion still answers false. Timing headroom, not behaviour.",
+   "at": "2026-08-17"
+  },
+  "runner-effects:978:22:< → <=": {
+   "verdict": "equivalent",
+   "class": "unconsumed-value",
+   "why": "the P6 skipped-set loop reading bitmap bit legs.length: an honest result carries no bit there, and a hostile stray high bit adds index legs.length to a set whose only reader iterates legs.entries() — indices strictly below length. The extra entry has no consumer.",
+   "at": "2026-08-17"
+  },
+  "runner-effects:1252:36:&& → ||": {
+   "verdict": "equivalent",
+   "class": "defensive-redundancy",
+   "why": "the preview-probe cache guard inverted: a proven chain re-runs the poisoned-floor probe on every batch instead of once. The probe is deterministic within a run and its verdict lands in the same sets — outcomes identical, cost one extra eth_call per step. The guard is a cache; the mutant is a cache miss.",
+   "at": "2026-08-17"
+  },
+  "runner-effects:1554:21:> → >=": {
+   "verdict": "equivalent",
+   "class": "implied-conjunct",
+   "why": "the atomic-ordering refusal widened to calls.length >= 1: a single-call bundle has batchIndex 0 === length-1, so the second conjunct is false by identity and the refusal still cannot fire. Zero calls cannot exist — the bundle is built [...approvals, batch].",
+   "at": "2026-08-17"
+  },
+  "runner-effects:1004:46:&& → ||": {
+   "verdict": "pinned",
+   "test": "runner-effects.test.ts › a HOSTILE native price answers null, never a dollar figure",
+   "why": "REAL, display-truth: the || precedence admits a NEGATIVE price feed into the gas figure — a broken oracle would render a negative dollar cost on the run card. The guard means null-when-unknowable; negative is worse than zero. Proven red-under-mutant via the legacy sim rung at nativeUsd -3000.",
+   "at": "2026-08-17"
+  },
+  "runner-effects:1238:53:> → >=": {
+   "verdict": "pinned",
+   "test": "runner-effects.test.ts › a HOSTILE native price answers null, never a dollar figure",
+   "why": "REAL, display-truth, the portfolio rung sibling: usd = 0 admitted turns the gas readout into a zero-dollar claim — a false sentence (gas is never free) where the law demands null. Proven red-under-mutant at nativeUsd 0.",
+   "at": "2026-08-17"
   }
  }
 }

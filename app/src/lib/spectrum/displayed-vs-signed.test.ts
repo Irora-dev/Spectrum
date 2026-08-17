@@ -856,10 +856,14 @@ describe('portfolioCompositionLawsBroken — the ported laws (audit F1/F2/F4/F6)
   const pComposed = (over: Partial<Parameters<typeof composePortfolioBatchBuy>[0]> = {}) => {
     const legs = over.legs ?? pLegs
     const committed = legs.reduce((s, l) => s + l.sellAmountRaw, 0n)
+    // sized at the SAME rate the batch will carry — the old hardcoded 40 here
+    // made the gen-2 fixtures self-consistent with the buggy gate (funding at
+    // 40bps headroom + conservation at 40) while production sized both at 25
+    const fixtureFee = BigInt(over.feeBps ?? BATCH_FEE_BPS)
     return composePortfolioBatchBuy({
       legs,
       fundingAsset: SETTLEMENT,
-      fundingTotalRaw: asFundingRaw(committed + (committed * BigInt(BATCH_FEE_BPS)) / 10_000n),
+      fundingTotalRaw: asFundingRaw(committed + (committed * fixtureFee) / 10_000n),
       owner: OWNER,
       recipient: OWNER,
       chainNowSec: 1_754_500_000,
@@ -1134,5 +1138,41 @@ describe('portfolioCompositionLawsBroken — deadline boundary pins', () => {
   it('a deadline exactly AT the window ceiling passes — one second past refuses (kills 651 > → >=)', () => {
     expect(portfolioCompositionLawsBroken(withDeadline(BigInt(T + 1_800)), ind)).toBeNull()
     expect(portfolioCompositionLawsBroken(withDeadline(BigInt(T + 1_801)), ind)).toMatch(/signable for far longer/)
+  })
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSERVATION IS GENERATION-AWARE (the owner's live 4663 refusal, 2026-08-17
+// 20:11). The composer sized legs at the chain's gen-2 rate (25bps) while the
+// conservation line held room for the legacy 40 — an honest batch refused by
+// our own two layers. The pin carries the LIVE numbers from the exec log.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('portfolio conservation at the generation’s own rate', () => {
+  const IND2 = { account: OWNER, chainNowSec: 1_754_500_000, maxDeadlineWindowSec: 1_800, expectedFeeBps: GEN2_BATCH_FEE_BPS }
+  const liveCompose = (legRaw: bigint) =>
+    composePortfolioBatchBuy({
+      legs: [{ symbol: 'FWA', buyToken: ASSET_A, sellAmountRaw: asFundingRaw(legRaw), minBuyAmountRaw: 1n, swapData: '0xdeadbeef01' as const, optional: false }],
+      fundingAsset: SETTLEMENT,
+      fundingTotalRaw: asFundingRaw(2_711_000_000n),
+      owner: OWNER,
+      recipient: OWNER,
+      chainNowSec: 1_754_500_000,
+      deadlineSec: 1_754_500_600,
+      feeBps: GEN2_BATCH_FEE_BPS,
+      feeRecipient: OWNER, // input-shape requirement; gen-2 drops it from the args
+      generation: 2,
+    })
+
+  it('THE LIVE NUMBERS: a 2711000000 pull whose leg fills the 25bps committable (2704239402) passes', () => {
+    expect(portfolioCompositionLawsBroken(liveCompose(2_704_239_402n), IND2)).toBeNull()
+  })
+
+  it('a gen-2 batch whose leg was sized to the LEGACY 40bps room (2700199204) refuses — the layers must agree at the chain’s own rate', () => {
+    const c = liveCompose(2_704_239_402n)
+    const legs = c.args[0].map((l) => ({ ...l }))
+    legs[0] = { ...legs[0], sellAmount: 2_700_199_204n as typeof legs[0]['sellAmount'] }
+    const tampered = { ...c, args: [legs, c.args[1], c.args[2], c.args[3]] as unknown as typeof c.args }
+    expect(portfolioCompositionLawsBroken(tampered, IND2)).toMatch(/two layers disagree about the money/)
   })
 })

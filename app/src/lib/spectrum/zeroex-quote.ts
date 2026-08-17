@@ -63,12 +63,33 @@ export const ALLOWANCE_HOLDER: Address = '0x0000000000001fF3684f28c67538d4D072C2
  *  something that actually bounds the floor's basis. */
 export const QUOTE_PLAUSIBILITY_BRACKET_BPS = 400
 
+/** The LOW side runs wider, and the reason is the HIGH fix's own reasoning
+ *  pointed the other way (the owner's live 4663 refusals, 2026-08-17 20:14:
+ *  two independent $LNOC sizes quoted an honest 492bps under the depth-aware
+ *  read and were refused at 400). `singleSwapImpactBps` prices a constant-
+ *  product curve; a real concentrated book at size can fill WORSE than that
+ *  model where liquidity sits in bands — the model's error grows with the
+ *  impact term in BOTH directions, and only the high side had been given the
+ *  room. 800 covers the measured class with margin while still refusing the
+ *  wrong-decimals/wrong-pair gaps this bracket exists for (those miss by
+ *  thousands of bps, not hundreds). The floor this brackets is not
+ *  quote-derived on portfolio legs — floor-discipline supplies it — so the
+ *  low side's "dangerous direction" is second-order there by construction. */
+export const QUOTE_PLAUSIBILITY_LOW_BRACKET_BPS = 800
+
 /** What we require of a 0x /swap/allowance-holder/quote response. Shape
  *  confirmed live by the contracts lane (their 0x-coverage tool + a real
  *  quote): an unroutable pair answers HTTP 200 with liquidityAvailable:false. */
 export interface ZeroExQuoteResponse {
   liquidityAvailable?: boolean
   buyAmount?: string
+  /** The settler-enforced minimum delivery (embedded in the calldata 0x
+   *  builds from our slippageBps). Rule 1 stands for BATCHER legs — there the
+   *  contract measures delta against OUR floor — but a DIRECT execution
+   *  through AllowanceHolder has exactly one on-chain floor and this is it:
+   *  LiFi-toAmountMin's equal, which is what the runner's sale fallback
+   *  compares S2 against. */
+  minBuyAmount?: string
   sellAmount?: string
   buyToken?: string
   sellToken?: string
@@ -356,6 +377,15 @@ export function validateLegQuote(
      *  existing callers keep the old symmetric behaviour; supply it wherever the
      *  depth model is doing real work. */
     frictionlessOutRaw?: bigint | null
+    /** 'external' = the caller's floor does NOT come from this quote — it is
+     *  supplied by the plan and enforced on-chain by the settler's own
+     *  minimum, so the plausibility bracket has no basis to run and stands
+     *  down BY DECLARATION (the runner's sale fallback, 2026-08-17). Every
+     *  structural law — pinned target and spender, no native value, echo,
+     *  outcome classification — runs unchanged; those are what this validator
+     *  is FOR on a direct execution. Absent = the original behaviour: a leg
+     *  whose floor derives from the quote must bracket it or refuse. */
+    floorBasis?: 'external'
   },
 ): LegQuote {
   const sym = showSymbol(expected.symbol)
@@ -426,7 +456,7 @@ export function validateLegQuote(
   // would loosen the floor derived from it (the dangerous direction); a
   // too-HIGH one composes a floor the chain will revert (fail-closed but
   // wasteful, and just as surely a wrong quote). Both refuse.
-  if (expected.spotOutRaw == null || expected.spotOutRaw <= 0n)
+  if (expected.floorBasis !== 'external' && (expected.spotOutRaw == null || expected.spotOutRaw <= 0n))
     throw new ZeroExQuoteRefusal(
       `$${sym}: we have no independent price to judge this quote against, so we will not build protection from it`,
       expected.symbol,
@@ -453,7 +483,24 @@ export function validateLegQuote(
   //
   // Without the frictionless figure we fall back to the old symmetric shape, so
   // every existing caller keeps its behaviour exactly.
-  const lo = (expected.spotOutRaw * BigInt(10_000 - QUOTE_PLAUSIBILITY_BRACKET_BPS)) / 10_000n
+  // external floor basis: the bracket's job does not exist here (see the
+  // field's doc) — the structural laws above have all run; hand back the leg
+  if (expected.floorBasis === 'external' || expected.spotOutRaw == null) {
+    return {
+      buyToken: expected.buyToken,
+      sellAmountRaw: expected.sellAmountRaw,
+      buyAmountRaw,
+      swapData: data as Hex,
+      // same discipline as the main exit: an unreadable or off-token fee is
+      // null (unseen), never zero
+      zeroExFeeRaw: (() => {
+        const amt = parseRawAmount(raw.fees?.zeroExFee?.amount ?? undefined)
+        const tok = raw.fees?.zeroExFee?.token?.toLowerCase()
+        return amt != null && amt >= 0n && (tok == null || tok === expected.sellToken.toLowerCase()) ? amt : null
+      })(),
+    }
+  }
+  const lo = (expected.spotOutRaw * BigInt(10_000 - QUOTE_PLAUSIBILITY_LOW_BRACKET_BPS)) / 10_000n
   const hiRef =
     expected.frictionlessOutRaw != null && expected.frictionlessOutRaw > expected.spotOutRaw
       ? expected.frictionlessOutRaw

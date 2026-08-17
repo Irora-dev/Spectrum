@@ -54,6 +54,56 @@ export const V4_POSITION_MANAGER: Record<number, Address | null> = {
   4663: '0x58daec3116aae6D93017bAAea7749052E8a04fA7',
 }
 
+/** Chains whose public RPC refuses ranged eth_getLogs get their held-id HINTS
+ *  from the chain's own Blockscout instead (4663 measured 2026-08-16: even
+ *  `fromBlock: 'earliest'` answers InvalidParams, so the Transfer scan can
+ *  never run there). The index is a HINT SOURCE ONLY — every id it names is
+ *  re-verified on-chain (ownerOf, then liquidity) before a row renders, the
+ *  same law the log scan already lived under. A host listed here must also be
+ *  in the deploy's connect-src CSP. */
+const BLOCKSCOUT_BASE: Record<number, string> = {
+  4663: 'https://robinhoodchain.blockscout.com',
+}
+
+/** Held ERC-721 ids for `contract` per the chain's Blockscout, or null when
+ *  the index cannot answer. Bounded pagination; a wrong or missing hint can
+ *  only UNDERSTATE, and the caller refuses to render "none" over a positive
+ *  wallet count. */
+async function blockscoutHeldIds(chainId: number, owner: Address, contract: Address): Promise<bigint[] | null> {
+  const base = BLOCKSCOUT_BASE[chainId]
+  if (!base) return null
+  const want = contract.toLowerCase()
+  const ids: bigint[] = []
+  let params = ''
+  try {
+    for (let page = 0; page < 5; page++) {
+      const ctl = new AbortController()
+      const t = setTimeout(() => ctl.abort(), 10_000)
+      const res = await fetch(`${base}/api/v2/addresses/${owner}/nft?type=ERC-721${params}`, { signal: ctl.signal })
+      clearTimeout(t)
+      if (!res.ok) return null
+      const body = (await res.json()) as {
+        items?: { id?: string; token?: { address?: string } }[]
+        next_page_params?: Record<string, string | number> | null
+      }
+      for (const it of body.items ?? []) {
+        if (it.token?.address?.toLowerCase() !== want) continue
+        try {
+          ids.push(BigInt(it.id ?? ''))
+        } catch {
+          /* a non-numeric id is not an id */
+        }
+      }
+      const next = body.next_page_params
+      if (!next || ids.length >= MAX_POSITIONS_PER_CHAIN * 3) break
+      params = '&' + Object.entries(next).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&')
+    }
+    return [...new Set(ids.map(String))].map(BigInt)
+  } catch {
+    return null
+  }
+}
+
 const posmAbi = parseAbi([
   'function balanceOf(address) view returns (uint256)',
   'function ownerOf(uint256) view returns (address)',
@@ -268,7 +318,12 @@ async function readV4Chain(
     })
     ids = [...new Set(logs.map((l) => l.args.id as bigint))]
   } catch {
-    return { rows: [], unreadable: { chainId, count: n } }
+    // the scan is refused on this connection — ask the chain's own index for
+    // HINTS. An empty hint list against a positive wallet count is refused
+    // too: "the index saw nothing" must never render as "you hold nothing".
+    const hinted = await blockscoutHeldIds(chainId, owner, posm)
+    if (hinted == null || (hinted.length === 0 && n > 0)) return { rows: [], unreadable: { chainId, count: n } }
+    ids = hinted
   }
   const owned: bigint[] = []
   await Promise.all(

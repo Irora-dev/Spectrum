@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
-import { ALLOWANCE_HOLDER, QUOTE_PLAUSIBILITY_BRACKET_BPS, ZeroExQuoteRefusal, createProxyZeroExFetcher, validateLegQuote, type ZeroExQuoteResponse } from './zeroex-quote'
+import { ALLOWANCE_HOLDER, QUOTE_PLAUSIBILITY_BRACKET_BPS, QUOTE_PLAUSIBILITY_LOW_BRACKET_BPS, ZeroExQuoteRefusal, createProxyZeroExFetcher, validateLegQuote, type ZeroExQuoteResponse } from './zeroex-quote'
 
 // THE QUOTE VALIDATOR — the aggregator is an untrusted counterparty; every
 // test is named for the lie it refuses.
@@ -80,7 +80,7 @@ describe('validateLegQuote — an untrusted counterparty, checked field by field
 
   it('THE BRACKET: a buyAmount beyond the band of our own read is a wrong quote, both directions', () => {
     const spot = 500_000n
-    const lo = (spot * BigInt(10_000 - QUOTE_PLAUSIBILITY_BRACKET_BPS)) / 10_000n
+    const lo = (spot * BigInt(10_000 - QUOTE_PLAUSIBILITY_LOW_BRACKET_BPS)) / 10_000n
     const hi = (spot * BigInt(10_000 + QUOTE_PLAUSIBILITY_BRACKET_BPS)) / 10_000n
     // inside the fence passes
     expect(() => validateLegQuote(honest({ buyAmount: lo.toString() }), expected())).not.toThrow()
@@ -150,8 +150,10 @@ describe('THE BRACKET AND THE FLOOR COMPOSE (critical, review 2026-08-07)', () =
         break
       }
     }
-    expect(worstAcceptedBps).toBeLessThanOrEqual(QUOTE_PLAUSIBILITY_BRACKET_BPS)
-    // and the old width is emphatically gone
+    // the bound is the documented LOW bracket (widened 2026-08-17 on the live
+    // $LNOC evidence — thin books under-fill the curve model); the pre-2026-08
+    // unbounded width stays emphatically gone
+    expect(worstAcceptedBps).toBeLessThanOrEqual(QUOTE_PLAUSIBILITY_LOW_BRACKET_BPS)
     expect(worstAcceptedBps).toBeLessThan(2_000)
   })
 
@@ -159,7 +161,9 @@ describe('THE BRACKET AND THE FLOOR COMPOSE (critical, review 2026-08-07)', () =
     // a thin asset's honest quote sits below FRICTIONLESS spot, which is why
     // the caller hands us the depth-aware number instead
     const spot = 1_000_000n
-    const honestThin = (spot * 9_200n) / 10_000n // 800 bps of real impact
+    // 950 bps of real impact: past even the widened LOW bracket vs raw spot
+    // (800, the 2026-08-17 $LNOC ruling), honest against its own reference
+    const honestThin = (spot * 9_050n) / 10_000n
     expect(() => validateLegQuote(quote(honestThin.toString()), want(spot))).toThrow() // vs raw spot: refused
     expect(() => validateLegQuote(quote(honestThin.toString()), want(honestThin))).not.toThrow() // vs the honest reference: fine
   })
@@ -254,9 +258,13 @@ describe('the plausibility bracket is asymmetric on purpose', () => {
     expect(() => validateLegQuote(q(SPOT), base({ spotOutRaw: DEPTH, frictionlessOutRaw: SPOT }))).not.toThrow()
   })
 
-  it('the LOW side is UNCHANGED — a cheap quote still refuses, because that is the direction that costs money', () => {
-    const tooLow = (DEPTH * BigInt(10_000 - QUOTE_PLAUSIBILITY_BRACKET_BPS - 1)) / 10_000n
+  it('the LOW side holds at ITS OWN bracket — 800 since the live $LNOC class (2026-08-17), and past it a cheap quote still refuses', () => {
+    // the low band carries the curve model's under-fill error on thin books;
+    // beyond it, a cheap quote is the direction that costs money — refused
+    const tooLow = (DEPTH * BigInt(10_000 - QUOTE_PLAUSIBILITY_LOW_BRACKET_BPS - 1)) / 10_000n
     expect(() => validateLegQuote(q(tooLow), base({ spotOutRaw: DEPTH, frictionlessOutRaw: SPOT }))).toThrow(ZeroExQuoteRefusal)
+    const withinLow = (DEPTH * BigInt(10_000 - 492)) / 10_000n // the measured honest gap
+    expect(() => validateLegQuote(q(withinLow), base({ spotOutRaw: DEPTH, frictionlessOutRaw: SPOT }))).not.toThrow()
   })
 
   it('the HIGH side still bites — beating FRICTIONLESS spot by more than the bracket is implausible', () => {
@@ -329,5 +337,30 @@ describe('0x’s volume fee is read, so it can be shown', () => {
   it('a malformed amount is unreadable rather than a wrong number', () => {
     for (const bad of ['abc', '-5', '1.5', ''])
       expect(validateLegQuote(withFees({ zeroExFee: { amount: bad, token: SELL.toLowerCase() } }), want).zeroExFeeRaw).toBeNull()
+  })
+})
+
+
+describe('the LOW bracket carries the thin-book class (the owner’s live $LNOC refusals, 2026-08-17)', () => {
+  const LNOC_SPOT = 2_012_988_098_717_771_732_807_159n
+  const lnocWant = { symbol: 'LNOC', chainId: 4663, sellToken: USDC, buyToken: AAVE, sellAmountRaw: 1_775_000_000n, spotOutRaw: LNOC_SPOT }
+  const lnocQuote = (buyAmount: string): ZeroExQuoteResponse => ({
+    liquidityAvailable: true,
+    buyAmount,
+    sellAmount: '1775000000',
+    sellToken: USDC,
+    buyToken: AAVE,
+    allowanceTarget: ALLOWANCE_HOLDER,
+    transaction: { to: ALLOWANCE_HOLDER, value: '0', data: '0xabcdef12' },
+    status: 200,
+  })
+  it('the two live sizes pass: an honest 492bps-under quote on a thin book is a fill, not a lie', () => {
+    // 2026-08-17 20:15 verbatim: quoted 1913894995861847636988399 against our 2012988098717771732807159
+    const q = validateLegQuote(lnocQuote('1913894995861847636988399'), lnocWant)
+    expect(q.buyAmountRaw).toBe(1_913_894_995_861_847_636_988_399n)
+  })
+  it('and the bracket still bites: 920bps under is a wrong quote, refused', () => {
+    const under920 = (LNOC_SPOT * 9_080n) / 10_000n
+    expect(() => validateLegQuote(lnocQuote(under920.toString()), lnocWant)).toThrow(/wrong quote/i)
   })
 })

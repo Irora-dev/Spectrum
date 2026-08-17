@@ -1,8 +1,8 @@
 {
-  "_doc": "ONE-SHOT, DIGEST-PINNED waiver of interlock precondition 5 (the independent clean-row bar). Valid ONLY while the live money-core digest equals `digest` below — any money-core edit voids it, the same F2 law that binds a ledger row, so a waiver can never become a permanent global token. Created by an owner ruling recorded in the operating harness's decisions log; a counter-ruling DELETES this file and the bar returns whole. A future release either meets the bar or carries a NEW recorded ruling with a fresh digest. This file ships with the tree ON PURPOSE: the public release-proof evaluates the same gate the source did, and a bar that was waived should say so in the open.",
-  "digest": "5877aa52",
+  "_doc": "ONE-SHOT, DIGEST-PINNED waiver of interlock precondition 5 (the independent clean-row bar). Valid ONLY while the live money-core digest equals `digest` below \u2014 any money-core edit voids it, the same F2 law that binds a ledger row, so a waiver can never become a permanent global token. Created by an owner ruling recorded in the operating harness's decisions log; a counter-ruling DELETES this file and the bar returns whole. A future release either meets the bar or carries a NEW recorded ruling with a fresh digest. This file ships with the tree ON PURPOSE: the public release-proof evaluates the same gate the source did, and a bar that was waived should say so in the open.",
+  "digest": "5d142ee2",
   "ruledBy": "owner",
-  "at": "2026-08-16",
-  "release": "v2026.08.16",
-  "ruling": "The owner waives the independent-review row for this release at this exact digest, superseding the 2026-08-14 one-pass ruling for this release only, pending the co-founder's objection. Review substance on record: the independent reviewer's cold pass at digest 1b1670d6 found zero money defects, and their substance re-read of the flip delta passed; the row itself never filed because the tree kept moving under review."
+  "at": "2026-08-17",
+  "release": "v2026.08.17",
+  "ruling": "The owner waives the independent-review row for the portfolio-run repair release at this exact digest ('yes just rule it', 2026-08-17), the second use of the recorded-ruling channel \u2014 the prior waiver died when these fixes touched the money core, exactly as designed. The reviewer's row was requested first with the complete delta and had not landed by Sunday ~23:00; their retroactive read stands welcome. Substance: three fixes from the owner's own same-evening exec-log refusals, each pinned with the live numbers, A12 re-swept clean at the shipped bytes."
 }

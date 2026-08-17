@@ -18,6 +18,7 @@ import { compositionLawsBroken, diffDisplayedVsSigned, diffDisplayedVsSignedPort
 import type { FundingStep } from './funding-plan'
 import { RunnerRefusal, type RunnerEffects, type SimulatedStep } from './execution-runner'
 import { showChainId, showSymbol } from './safe-copy'
+import { ALLOWANCE_HOLDER, createProxyZeroExFetcher, validateLegQuote, ZeroExQuoteRefusal, type ZeroExFetcher } from './zeroex-quote'
 import { probeWritable } from './submission-store'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,6 +121,10 @@ export interface RunnerEffectsContext {
   /** Test seams for the bridge step's two network oracles. Defaults are the
    *  REAL lifi.ts functions (the guarded parse with the pinned-target law). */
   lifiQuote?: typeof fetchLifiQuote
+  /** The same-chain sale fallback's quote seam (0x through the operator's
+   *  proxy). Injected in tests; defaults to the proxy fetcher the token page
+   *  already trades through. */
+  zeroExQuote?: ZeroExFetcher
   lifiStatus?: typeof fetchLifiStatus
   /** WHICH CONTRACT THIS RUN SPEAKS (the executor migration, 2026-08-13).
    *  'legacy' (absent = legacy — the pre-migration default, byte-identical) =
@@ -573,6 +578,12 @@ export function createRunnerEffects(ctx: RunnerEffectsContext): RunnerEffects {
       // exists to plan, and the quote's own tx.value carries the amount —
       // signed verbatim like every other byte (the owner's live find, 2026-08-14).
       const isNativeSale = asset.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+      // S2's numbers come FIRST: the floor is what the plan draws on, and the
+      // fallback lane below needs it as the independent price basis its
+      // validator demands — derived before any lane is asked (law S2b: the
+      // settlement token's VERIFIED decimals, refused on any disagreement).
+      const settlementDec = await verifiedSettlementDecimals(client, ctx, chainId, settlement, scope)
+      const floorRaw = centsToRawAt(step.action.floorProceedsCents, settlementDec)
       const quoteFn = ctx.lifiQuote ?? fetchLifiQuote
       let quote: LifiQuote
       try {
@@ -585,17 +596,77 @@ export function createRunnerEffects(ctx: RunnerEffectsContext): RunnerEffects {
           slippageBps: DEFAULT_SLIPPAGE_BPS,
         })
       } catch (e) {
-        throw new RunnerRefusal(
-          `This sale could not be quoted: ${e instanceof Error ? e.message : 'the routing service did not answer'} Nothing was sent.`,
-          scope,
-        )
+        const lifiWords = e instanceof Error ? e.message : 'the routing service did not answer'
+        // ── THE SAME-CHAIN FALLBACK LANE (the owner's live 4663 refusal,
+        // 2026-08-17 20:07: LI.FI has no coverage for this pair on the young
+        // chain while the token page sells the SAME asset through the 0x
+        // proxy). ERC-20 → settlement only; LI.FI remains the cross-chain
+        // machine and the native-sale lane. The S-laws hold unchanged:
+        //   S1 — validateLegQuote pins call target AND approval spender to
+        //        the baked AllowanceHolder, refuses value-carrying quotes,
+        //        and the bytes it validated are stored verbatim below;
+        //   S2 — the floor compares against 0x's OWN settler-enforced
+        //        minimum (minBuyAmount), toAmountMin's equal — a quote that
+        //        cannot state its enforced minimum is refused, never trusted;
+        //   S3 — approvals plan exactly, to the pinned holder, zero-first
+        //        where the token demands it (the shared approvalPlan below).
+        if (isNativeSale)
+          throw new RunnerRefusal(`This sale could not be quoted: ${lifiWords} Nothing was sent.`, scope)
+        const zx = ctx.zeroExQuote ?? createProxyZeroExFetcher()
+        try {
+          const raw = await zx({
+            chainId,
+            sellToken: asset,
+            buyToken: settlement,
+            sellAmountRaw: sellRaw,
+            taker: ctx.account,
+            slippageBps: DEFAULT_SLIPPAGE_BPS,
+          })
+          const leg = validateLegQuote(raw, {
+            symbol,
+            chainId,
+            sellToken: asset,
+            buyToken: settlement,
+            sellAmountRaw: sellRaw,
+            // the plan supplies the floor and the settler enforces it on-chain
+            // (S2 below) — the validator's bracket has no quote-derived floor
+            // to protect, so it stands down by declaration; every structural
+            // law (pinned target/spender, no native value, echo) still runs
+            spotOutRaw: null,
+            floorBasis: 'external',
+          })
+          let minRaw: bigint | null = null
+          try {
+            minRaw = raw.minBuyAmount != null ? BigInt(raw.minBuyAmount) : null
+          } catch {
+            minRaw = null
+          }
+          if (minRaw == null || minRaw <= 0n)
+            throw new ZeroExQuoteRefusal(
+              `$${showSymbol(symbol)}: the direct lane's quote carries no readable enforced minimum — a floor we cannot read is a floor we do not have`,
+              symbol,
+            )
+          quote = {
+            tool: '0x',
+            toAmount: leg.buyAmountRaw,
+            toAmountMin: minRaw,
+            approvalAddress: ALLOWANCE_HOLDER,
+            tx: { to: ALLOWANCE_HOLDER, data: leg.swapData, value: 0n, gasLimit: null },
+            gasCostUsd: null,
+            crossChain: false,
+            nativeFeeRaw: 0n,
+            etaSec: null,
+          }
+        } catch (zErr) {
+          const zxWords = zErr instanceof Error ? zErr.message : 'the direct lane did not answer'
+          throw new RunnerRefusal(
+            `This sale could not be quoted on either lane we trust. The routing service said: ${lifiWords} The direct lane said: ${zxWords} Nothing was sent.`,
+            scope,
+          )
+        }
       }
-      // S2 — the floor converts at the settlement token's VERIFIED decimals
-      // (law S2b above): config expectation vs the token's own decimals(),
-      // refused on any disagreement, so this floor can never silently
-      // mis-scale (the old hardcoded 10^4 assumed 6dp forever).
-      const settlementDec = await verifiedSettlementDecimals(client, ctx, chainId, settlement, scope)
-      const floorRaw = centsToRawAt(step.action.floorProceedsCents, settlementDec)
+      // S2 — the floor (derived above, law S2b) clears before anything signs,
+      // whichever lane produced the quote
       if (quote.toAmountMin < floorRaw)
         throw new RunnerRefusal(
           'The market has moved against this sale: its guaranteed minimum no longer covers what the plan draws on. Nothing was sold — re-open the review to plan against today’s prices.',

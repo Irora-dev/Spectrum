@@ -2,12 +2,12 @@
   "note": "WRITTEN BY scripts/mutation-sweep.mjs — do not hand-edit `swept`. Triage lives in mutation-triage.json.",
   "swept": {
     "displayed-vs-signed": {
-      "at": "2026-08-16",
-      "digest": "sha256:e498c6c37342ea11",
+      "at": "2026-08-17",
+      "digest": "sha256:4980b34ecc40ed8f",
       "sites": 48,
-      "mutants": 48,
-      "killed": 44,
-      "partial": false,
+      "mutants": 40,
+      "killed": 37,
+      "partial": true,
       "survivors": [
         {
           "sig": "displayed-vs-signed:421:26:> → >=",
@@ -29,13 +29,6 @@
           "col": 26,
           "op": "> → >=",
           "text": "if (optionalLegs.length > 0 && legs.length > 1 && optionalLegs.length === legs.length)"
-        },
-        {
-          "sig": "displayed-vs-signed:721:18:> → >=",
-          "line": 721,
-          "col": 18,
-          "op": "> → >=",
-          "text": "if (totalCommit > 0n && legs.length > 1) {"
         }
       ]
     },
@@ -422,13 +415,56 @@
       ]
     },
     "runner-effects": {
-      "at": "2026-08-16",
-      "digest": "sha256:1eaf91bc4cbc9da8",
-      "sites": 122,
-      "mutants": 122,
-      "killed": 122,
-      "partial": false,
-      "survivors": []
+      "at": "2026-08-17",
+      "digest": "sha256:ac4f670fb5a70737",
+      "sites": 123,
+      "mutants": 40,
+      "killed": 34,
+      "partial": true,
+      "survivors": [
+        {
+          "sig": "runner-effects:377:20:< → <=",
+          "line": 377,
+          "col": 20,
+          "op": "< → <=",
+          "text": "for (let i = 0; i < tries; i++) {"
+        },
+        {
+          "sig": "runner-effects:978:22:< → <=",
+          "line": 978,
+          "col": 22,
+          "op": "< → <=",
+          "text": "for (let i = 0; i < legs.length; i++) if ((result.skippedBitmap >> BigInt(i)) & 1n) skippe"
+        },
+        {
+          "sig": "runner-effects:1004:46:&& → ||",
+          "line": 1004,
+          "col": 46,
+          "op": "&& → ||",
+          "text": "if (usd != null && Number.isFinite(usd) && usd > 0) {"
+        },
+        {
+          "sig": "runner-effects:1238:53:> → >=",
+          "line": 1238,
+          "col": 53,
+          "op": "> → >=",
+          "text": "if (usd != null && Number.isFinite(usd) && usd > 0) {"
+        },
+        {
+          "sig": "runner-effects:1252:36:&& → ||",
+          "line": 1252,
+          "col": 36,
+          "op": "&& → ||",
+          "text": "if (!previewProven.has(chainId) && !previewBroken.has(chainId)) {"
+        },
+        {
+          "sig": "runner-effects:1554:21:> → >=",
+          "line": 1554,
+          "col": 21,
+          "op": "> → >=",
+          "text": "if (calls.length > 1 && prepared.batchIndex !== calls.length - 1)"
+        }
+      ]
     },
     "portfolio-batcher": {
       "at": "2026-08-16",

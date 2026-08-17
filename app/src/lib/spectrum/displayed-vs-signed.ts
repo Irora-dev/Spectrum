@@ -738,7 +738,13 @@ export function portfolioCompositionLawsBroken(
   //    EXCLUSIVE fee, unlike the legacy inclusive equation: the contract
   //    charges the fee ON TOP of what deploys, so the committable is
   //    maxCommittedFor and the composer fills it exactly (largest-remainder). */
-  const committable = maxCommittedFor(fundingTotal, BATCH_FEE_BPS)
+  // GENERATION-AWARE (the owner's live 4663 refusal, 2026-08-17 20:11): the
+  // composer sizes legs at the CHAIN's fee (gen-2 = 25bps) while this line
+  // held room for the legacy 40 — the exact two-layer disagreement this gate
+  // exists to catch, except both layers were ours. The fee-equality law above
+  // already pins p.feeBps to the independent expectation, so conserving
+  // against that same expectation keeps the gate independent of the payload.
+  const committable = maxCommittedFor(fundingTotal, independent.expectedFeeBps ?? BATCH_FEE_BPS)
   if (totalCommit !== committable)
     return `this batch pulls ${fundingTotal} but its legs commit ${totalCommit} rather than the ${committable} that leaves room for the fee — two layers disagree about the money. Nothing was signed.`
 

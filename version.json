@@ -1,8 +1,10 @@
 {
-  "version": "2026.08.16d",
-  "note": "The seed round: seeding a bundle no longer kicks the creator out mid-run (the seeded-watch waits for the run to close), a landed seed celebrates as a SEED with a door to the basket itself instead of 'view portfolio', and the backup seed modal stands down for the session after a real seed. The portfolio manage flow's Execute button now ships ON by default (its dark default was written for the simulated era and carried its own retirement clause; the first real run landed 2026-08-16). Plus: an update-from-spectrum action \u2014 forks and template copies pull the latest release with one button.",
+  "version": "2026.08.17",
+  "note": "The portfolio-run repair release, from one live evening of exec-log rows. Sales quote through a second lane when the routing service has no coverage (the 0x proxy the token page already trades through), with every floor and byte-verification law intact. The batch conservation gate reads the chain's own fee generation instead of the legacy constant \u2014 an honest gen-2 batch no longer refuses itself. The quote plausibility bracket's low side carries the thin-book class (measured live at 492bps) while still refusing wrong-decimal gaps. Gas readouts can never show a negative or zero dollar figure off a broken price feed.",
   "impact": "config",
-  "sacred": [],
+  "sacred": [
+    "executor"
+  ],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }

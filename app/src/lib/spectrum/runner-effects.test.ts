@@ -1297,7 +1297,12 @@ describe('the portfolio engine — SpectrumPortfolioBatcher end to end', () => {
     composePortfolioBatchBuy({
       legs: P_LEGS,
       fundingAsset: USDC,
-      fundingTotalRaw: asFundingRaw(1_004_000_000n),
+      // funding rides the SAME rate the batch carries (the 2026-08-17 live
+      // refusal's lesson): the old hardcoded 1_004_000_000 was the 40bps-era
+      // number, self-consistent with the gate's old hardcoded 40 — and the
+      // moment the gate learned the chain's real rate, every fixture built on
+      // the stale pair refused, exactly as production had.
+      fundingTotalRaw: asFundingRaw(1_000_000_000n + (1_000_000_000n * BigInt(feeBps)) / 10_000n),
       owner: ME,
       recipient: ME,
       chainNowSec: NOW_SEC,
@@ -1359,6 +1364,26 @@ describe('the portfolio engine — SpectrumPortfolioBatcher end to end', () => {
       }),
     }
   }
+
+  it('a HOSTILE native price answers null, never a dollar figure — negative on the legacy rung, zero on the portfolio rung (kills :1004 && → || and :1238 > → >=)', async () => {
+    // legacy sim path: a negative price would ride (A && B) || C into a
+    // NEGATIVE displayed gas figure under the || mutant
+    const lc = composedFor(8453)
+    const neg = rig({ atomic: true }, { 8453: fakeClient(8453, { callData: [goodResult(lc)] }) }, { nativeUsd: () => -3_000 })
+    const simN = (await createRunnerEffects(neg.ctx).simulate(batchStep(8453))) as MeasuredSimulatedStep
+    expect(simN.gasCostUsd).toBeNull()
+
+    // portfolio sim path: zero is not a price — a zero-dollar gas readout is
+    // a false sentence, and the guard's own comment says null, never zero
+    const pc = portfolioComposed(batchFeeBpsFor(8453))
+    const zero = rig(
+      { atomic: true },
+      { 8453: fakeClient(8453, { callData: [portfolioResult(pc)] }) },
+      { engine: 'portfolio', composePortfolioStep: async () => pc, shownFor: () => shownFromPortfolio(pc, 8453), nativeUsd: () => 0 },
+    )
+    const simZ = (await createRunnerEffects(zero.ctx).simulate(batchStep(8453))) as MeasuredSimulatedStep
+    expect(simZ.gasCostUsd).toBeNull()
+  })
 
   it('the happy path runs to done through compose → laws → gate → preview → P6′', async () => {
     const { rig: r } = portfolioRig({})
@@ -1569,7 +1594,7 @@ describe('the portfolio engine — SpectrumPortfolioBatcher end to end', () => {
   })
 
   it('the P8 gate binds: a review that showed a different amount refuses before the wallet', async () => {
-    const composed = portfolioComposed()
+    const composed = portfolioComposed(batchFeeBpsFor(8453))
     const shownWrong = shownAtReviewSurface({
       chainId: 8453,
       fundingAsset: composed.args[1],
@@ -2002,7 +2027,9 @@ describe('portfolio gate boundaries — the exact edge, on the portfolio rung', 
     composePortfolioBatchBuy({
       legs: P_LEGS,
       fundingAsset: USDC,
-      fundingTotalRaw: asFundingRaw(1_004_000_000n),
+      // sized at the chain's own rate — the stale 40bps-era constant was the
+      // 2026-08-17 live refusal's fixture twin
+      fundingTotalRaw: asFundingRaw(1_000_000_000n + (1_000_000_000n * BigInt(batchFeeBpsFor(8453))) / 10_000n),
       owner: ME,
       recipient: ME,
       chainNowSec,
@@ -2194,5 +2221,118 @@ describe('poisonFloor — the preview must prove it can fail before a pass is tr
 
   it('an empty leg set does not throw — the probe is called on failure-adjacent paths', () => {
     expect(() => poisonFloor([[], '0xf', 0n, {}])).not.toThrow()
+  })
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SALE FALLBACK LANE (the owner's live 4663 no-route, 2026-08-17 20:07):
+// LI.FI answers nothing on the young chain while the 0x proxy — the lane the
+// token page already trades through — has the route. The S-laws must hold on
+// the fallback exactly as on the primary: pinned target and spender (S1, via
+// validateLegQuote's baked AllowanceHolder), the settler-enforced minimum as
+// the S2 floor basis, exact approvals to the pinned holder (S3).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the sale fallback lane — LI.FI silent, the 0x proxy answers', () => {
+  const HOLDER = '0x0000000000001fF3684f28c67538d4D072C22734'
+  const SOLD2 = '0x4444444444444444444444444444444444444444' as Address
+  const ZX_DATA = '0x2213bc0b00000000000000000000000000000000000000000000000000000000000000cc' as Hex
+  const NO_ROUTE = new Error('No route for this swap right now (No available quotes for the requested transfer).')
+  const zxResponse = (over: Partial<{ min: string }> = {}) => ({
+    liquidityAvailable: true,
+    buyAmount: '10000000',
+    minBuyAmount: over.min ?? '9900000',
+    sellAmount: (5n * 10n ** 18n).toString(),
+    buyToken: OTHER,
+    sellToken: SOLD2,
+    allowanceTarget: HOLDER,
+    transaction: { to: HOLDER, value: '0', data: ZX_DATA },
+    status: 200,
+  })
+  const fbSellStep = (chainId: number, floor = 900): FundingStep => ({
+    order: 1,
+    action: { kind: 'sell', chainId, asset: SOLD2, symbol: 'SLD2', sellRaw: (5n * 10n ** 18n).toString(), decimals: 18, floorProceedsCents: floor },
+  })
+  const fbRig = (over: Partial<RunnerEffectsContext> = {}) => {
+    const clients = {
+      1: fakeClient(1, {
+        allowance: 0n,
+        receipts: [
+          { transactionHash: `0x${'a'.repeat(63)}1`, status: 'success', blockNumber: 1n },
+          { transactionHash: `0x${'a'.repeat(63)}2`, status: 'success', blockNumber: 2n },
+        ],
+      }),
+    }
+    return rig({ atomic: true }, clients, {
+      settlementAddress: () => OTHER,
+      lifiQuote: async () => {
+        throw NO_ROUTE
+      },
+      zeroExQuote: (async () => zxResponse()) as never,
+      ...over,
+    })
+  }
+
+  it('runs the sale through the fallback WHOLE: approve the sold token, then the 0x bytes VERBATIM at the pinned holder', async () => {
+    const r = fbRig()
+    const state = await runPlan(r, [fbSellStep(1)])
+    expect(state.phase, state.notes.join('|')).toBe('done')
+    const chain1 = r.sentTxs.filter((t) => t.chainId === 1)
+    expect(chain1).toHaveLength(2)
+    expect(chain1[0].to).toBe(SOLD2) // S3: approval on the SOLD token…
+    expect(chain1[1].to.toLowerCase()).toBe(HOLDER.toLowerCase()) // S1: the pinned holder
+    expect(chain1[1].data).toBe(ZX_DATA) // S1: bytes verbatim
+    expect(chain1[1].value).toBe(0n)
+  })
+
+  it('S2 on the fallback: a settler minimum under the plan’s draw refuses — nothing signs', async () => {
+    const r = fbRig({ zeroExQuote: (async () => zxResponse({ min: '8000000' })) as never })
+    const state = await runPlan(r, [fbSellStep(1, 900)]) // floor $9.00 > min $8.00
+    expect(state.phase).toBe('refused')
+    expect(state.notes.join('|')).toMatch(/market has moved against this sale/)
+    expect(r.sentTxs).toHaveLength(0)
+  })
+
+  it('a quote that cannot state its enforced minimum is refused, never trusted', async () => {
+    const bare = zxResponse() as Record<string, unknown>
+    delete bare.minBuyAmount
+    const r = fbRig({ zeroExQuote: (async () => bare) as never })
+    const state = await runPlan(r, [fbSellStep(1)])
+    expect(state.phase).toBe('refused')
+    expect(state.notes.join('|')).toMatch(/no readable enforced minimum/)
+    expect(r.sentTxs).toHaveLength(0)
+  })
+
+  it('both lanes silent: the refusal names BOTH answers, and nothing was sent', async () => {
+    const r = fbRig({
+      zeroExQuote: (async () => {
+        throw new Error('0x proxy unreachable')
+      }) as never,
+    })
+    const state = await runPlan(r, [fbSellStep(1)])
+    expect(state.phase).toBe('refused')
+    expect(state.notes.join('|')).toMatch(/either lane we trust/)
+    expect(state.notes.join('|')).toMatch(/No route for this swap right now/)
+    expect(state.notes.join('|')).toMatch(/0x proxy unreachable/)
+    expect(r.sentTxs).toHaveLength(0)
+  })
+
+  it('a NATIVE sale never tries the fallback — LI.FI is the native lane, and the single-lane message stands', async () => {
+    let zxCalled = false
+    const r = fbRig({
+      zeroExQuote: (async () => {
+        zxCalled = true
+        return zxResponse()
+      }) as never,
+    })
+    const native: FundingStep = {
+      order: 1,
+      action: { kind: 'sell', chainId: 1, asset: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address, symbol: 'ETH', sellRaw: (10n ** 18n).toString(), decimals: 18, floorProceedsCents: 900 },
+    }
+    const state = await runPlan(r, [native])
+    expect(state.phase).toBe('refused')
+    expect(zxCalled).toBe(false)
+    expect(state.notes.join('|')).toMatch(/This sale could not be quoted:/)
+    expect(r.sentTxs).toHaveLength(0)
   })
 })

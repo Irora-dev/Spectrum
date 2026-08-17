@@ -7,6 +7,34 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.17
+
+Sacred: executor — the review-record surface (the waiver re-pins to this release's
+digest under a recorded owner ruling; the reviewer's retroactive read stands welcome).
+
+The portfolio-run repair release — every fix from one live evening of refusals, each
+pinned with the exec log's own numbers.
+
+Sales learned a second lane: when the routing service answers no-route (young chains,
+thin coverage), the sale falls back to the 0x proxy the token page already trades
+through. The laws hold unchanged on the fallback — pinned call target and approval
+spender, the settler's own enforced minimum as the floor basis (a quote that cannot
+state its minimum is refused), exact approvals, bytes signed verbatim. Native sales
+never fall back; a double failure names both answers.
+
+The batch conservation gate is generation-aware: it conserved against the legacy fee
+constant while the composer sized legs at the chain's own gen-2 rate, so an honest
+batch refused itself — two layers disagreeing where both were ours. It now reads the
+same independent per-generation expectation the fee-equality law already pins.
+
+The quote plausibility bracket's low side widened to carry the thin-book class: real
+concentrated books at size can fill under the curve model's expectation (measured live
+at 492bps on two independent sizes), and only the high side had been given that room.
+Wrong-decimal and wrong-pair gaps still refuse — they miss by thousands of bps.
+
+Gas readouts hold the null-never-zero law against hostile inputs: a negative or zero
+native price can no longer become a displayed dollar figure.
+
 ## 2026.08.16d
 
 The seed round, from the owner's live bundle test. Seeding no longer kicks you out
