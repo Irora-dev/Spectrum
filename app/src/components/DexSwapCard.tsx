@@ -1045,13 +1045,9 @@ export function DexSwapCard({
           newcomer hesitates) — three steps, one quiet line, buys only, and
           deliberately OUTSIDE the typed-amount gate: the person this serves
           has an empty console. */}
-      {dir === 'buy' && ix && (
-        // ONE line, less text (the owner live 2026-08-15, superseding the
-        // 2026-08-13 two-line balance)
-        <p className="mt-3 px-1 text-center font-mono text-[11px] leading-relaxed text-ink-faint">
-          You pay, it buys all {ix.holdings.length} assets, ${showSymbol(ix.symbol)} lands in your wallet. Sell anytime.
-        </p>
-      )}
+      {/* the you-pay-it-buys explainer left entirely on the owner's
+          2026-08-18 word ("remove … text on the basket / bundle individual
+          pages") — the 08-15 one-line cut finished the journey to zero */}
       {(amountRaw > 0n || dex.quote != null) && (
         <>
         {showNavGap && (

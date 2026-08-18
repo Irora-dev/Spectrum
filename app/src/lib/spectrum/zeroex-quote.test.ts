@@ -68,6 +68,21 @@ describe('validateLegQuote — an untrusted counterparty, checked field by field
   it('an echo answering a different pair or amount is refused — a response never describes itself', () => {
     expect(() => validateLegQuote(honest({ buyToken: EVIL }), expected())).toThrow(/different token pair/i)
     expect(() => validateLegQuote(honest({ sellToken: EVIL }), expected())).toThrow(/different token pair/i)
+  })
+
+  it('a quote stating ZERO output refuses — the CLASSIFIER refuses non-evidence first (routable demands a positive buyAmount; the :452 gate is depth behind it)', () => {
+    expect(() => validateLegQuote(honest({ buyAmount: '0' }), expected())).toThrow(/could not reach the exchange/i)
+  })
+
+  it('the 0x fee is null unless readable AND in the sold token — an off-token amount never counts in sell units, a zero fee is SEEN as zero', () => {
+    // external basis: the bracket stands down, the fee closure is the subject
+    const ext = expected({ floorBasis: 'external' as const })
+    const offToken = validateLegQuote(honest({ fees: { zeroExFee: { amount: '5000', token: AAVE } } }), ext)
+    expect(offToken.zeroExFeeRaw).toBeNull()
+    const zero = validateLegQuote(honest({ fees: { zeroExFee: { amount: '0', token: USDC } } }), ext)
+    expect(zero.zeroExFeeRaw).toBe(0n)
+    const inToken = validateLegQuote(honest({ fees: { zeroExFee: { amount: '5000', token: USDC } } }), ext)
+    expect(inToken.zeroExFeeRaw).toBe(5000n)
     expect(() => validateLegQuote(honest({ sellAmount: '999999' }), expected())).toThrow(/different amount/i)
     expect(() => validateLegQuote(honest({ sellAmount: '1e6' }), expected())).toThrow(/different amount/i)
   })

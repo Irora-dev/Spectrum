@@ -1,9 +1,11 @@
 {
-  "version": "2026.08.17",
-  "note": "The portfolio-run repair release, from one live evening of exec-log rows. Sales quote through a second lane when the routing service has no coverage (the 0x proxy the token page already trades through), with every floor and byte-verification law intact. The batch conservation gate reads the chain's own fee generation instead of the legacy constant \u2014 an honest gen-2 batch no longer refuses itself. The quote plausibility bracket's low side carries the thin-book class (measured live at 492bps) while still refusing wrong-decimal gaps. Gas readouts can never show a negative or zero dollar figure off a broken price feed.",
+  "version": "2026.08.18",
+  "note": "The fee-rail release: every swap outside the batcher now pays the product fee where the chain allows it. Sells ride the direct-swap wrapper first (0.4%, 100% burns PRISM) with floors and outflow ceilings unmoved, falling through to the routed lanes rather than dying. Refused legs gain a per-leg consent door into their own wrapper transaction, quoted by simulating the real call and proven before signing. The thin-leg protection dial ships fully pinned (a consented ceiling or no floor at all; unreadable depth still refuses). Restricted tokens that refuse the wrapper fill direct and say so. PRISM lanes charge the ruled 0.4% instead of the batcher's 0.25, and PRISM sells join the fee rail with WETH proceeds.",
   "impact": "config",
   "sacred": [
-    "executor"
+    "executor",
+    "swap",
+    "launch"
   ],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"

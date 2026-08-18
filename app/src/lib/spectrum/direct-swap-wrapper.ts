@@ -33,10 +33,13 @@ import { deploymentFor, feeGenerationFor } from '../chain/deployments'
 // permanently, ownerless. the owner accepted that knowingly (2026-08-16). Wiring
 // reads whatever the deployments book seats — this module never hardcodes one.
 //
-// FIRST-SWAP CHECK owed per chain (w-91): read the FeeCharged event and
-// verify burnCut == fee - fee/8. The 7:1 split is the reason this contract
-// exists; a wrapper that collected the fee and burned nothing would look
-// identical on every other measure.
+// FIRST-SWAP CHECK owed per chain (w-91, updated for the fee-model change):
+// read the FeeCharged event and verify the burn cut against THE CHAIN'S OWN
+// GENERATION — gen-1 wrappers split 7:1 (burnCut == fee − fee/8, integrator
+// keeps fee/8); a feeGeneration-2 chain's wrapper burns 100% (burnCut == fee,
+// FeeCharged is (burnSink, burnCut), no integrator anywhere). The burn is the
+// reason this contract exists; a wrapper that collected the fee and burned
+// nothing would look identical on every other measure.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const directSwapWrapperAbi = parseAbi([
@@ -54,6 +57,22 @@ export const directSwapWrapperAbiGen2 = parseAbi([
 
 /** The contract's inclusive feeBps ceiling — exactly 200 is accepted. */
 export const WRAPPER_MAX_FEE_BPS = 200
+
+/** THE WRAPPER'S PRODUCT RATE — 40 bps (0.4%), 100% burn, both generations
+ *  (fee-model ruling 2026-08-16, docs/FEE-MODEL-100PCT-BURN-2026-08-16.md in
+ *  the contracts repo). ⚠ NOT the batcher's rate: the batcher charges 25 on a
+ *  feeGeneration-2 chain because 0x's own ~15 bps skim rides inside its quotes
+ *  (≈40 all-in); the wrapper routes through the UniversalRouter with no
+ *  aggregator in the path, so OUR fee is the whole 40. A lane that charges
+ *  `batchFeeBpsFor` here undercharges by 15 bps and breaks the ruled model. */
+export const WRAPPER_FEE_BPS = 40
+
+/** The rate a wrapper lane charges on this chain. Flat across generations
+ *  today; the per-chain read exists so a future generation's rate lands in
+ *  ONE place (the same shape as allocation.ts's batchFeeBpsFor). */
+export function wrapperFeeBpsFor(_chainId: number): number {
+  return WRAPPER_FEE_BPS
+}
 
 /** The contract's inclusive deadline horizon. */
 export const WRAPPER_MAX_DEADLINE_SEC = 24 * 3600

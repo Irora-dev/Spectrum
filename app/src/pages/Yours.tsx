@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import bundleHeroArt1280 from '../assets/bundle-hero.1280.jpg'
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchAssetHistory, type ChartRange } from '../lib/spectrum/history'
 import { planPortfolioHistory } from '../lib/spectrum/portfolio-history'
 import { computeWindowMove } from '../lib/spectrum/window-move'
@@ -41,6 +41,7 @@ import { assetKey, GUEST_SCOPE, loadDraft, loadPortfolio, savePortfolioBand } fr
 import { basketPnl, pnlAvailable, usePnlIndexes } from '../lib/spectrum/pnl'
 import { flowHref } from '../lib/spectrum/flow-link'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
+import { BridgeBanner } from '../components/BridgeFund'
 import { stocksForChain } from '../lib/chain/stocks'
 import { basketHref, creatorHref } from '../lib/spectrum/short-url'
 import { useHandleForAddress } from '../lib/spectrum/use-handles'
@@ -48,8 +49,8 @@ import { changeAccent, formatPrice, formatUsdCompact, formatUsdTight, moneyPriva
 import { AssetLogo } from '../components/AssetLogo'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { BasketBento, BentoClassLegend, ClassSignalGlyph, type LegendClass } from '../components/BasketBento'
-import { RunProgressStyles } from '../components/thesis/ThesisRunOverlay'
-import { takeRunLanded } from '../lib/spectrum/run-landed'
+import { RunProgressStyles } from '../components/run-progress'
+import { RUN_LANDED_EVENT, takeRunLanded } from '../lib/spectrum/run-landed'
 import { classSignalFor } from '../lib/spectrum/class-signal'
 import { CategoryPills } from '../components/CategoryPills'
 import { Carousel } from '../components/Carousel'
@@ -953,7 +954,41 @@ export function Yours() {
   const [welcome] = useState(() => shouldWelcome())
   // THE RUN LANDING (the owner 2026-08-15): the completion plate hands over what
   // changed; those tiles glow with the bento's own arrival ring, once.
-  const [landedKeys] = useState(() => takeRunLanded())
+  // SAME-PAGE DELIVERY TOO (the owner live 2026-08-18: "run completing… you
+  // don't see the change in the portfolio bento grid"): the manage flow runs
+  // ON this page, so a mount-time read alone never heard those landings — the
+  // flow now announces on its way off the screen and this listener spends the
+  // handoff the moment it can actually be seen.
+  const [landedKeys, setLandedKeys] = useState(() => takeRunLanded().keys)
+  useEffect(() => {
+    const onLanded = () => {
+      const more = takeRunLanded()
+      if (more.keys.size > 0) setLandedKeys((prev) => new Set([...prev, ...more.keys]))
+    }
+    window.addEventListener(RUN_LANDED_EVENT, onLanded)
+    return () => window.removeEventListener(RUN_LANDED_EVENT, onLanded)
+  }, [])
+  // the run moved real money — the book must not keep quoting the old mix.
+  // A SETTLE-POLL, not a fixed pair of shots (the owner live 2026-08-18:
+  // "just bought lienfi and it doesn't show up in the bento immediately —
+  // needs to be instant"): public-RPC balance reads lag receipts by an
+  // unbounded-ish window on the young chain, so after a landing the book
+  // refetches every 3s for 30s — the tile appears the first poll after the
+  // node catches up, and the polling stops itself either way.
+  const qcLanded = useQueryClient()
+  useEffect(() => {
+    if (landedKeys.size === 0) return
+    void qcLanded.invalidateQueries({ queryKey: ['spectrum', 'raw-holdings'] })
+    const started = Date.now()
+    const id = window.setInterval(() => {
+      if (Date.now() - started > 30_000) {
+        window.clearInterval(id)
+        return
+      }
+      void qcLanded.invalidateQueries({ queryKey: ['spectrum', 'raw-holdings'] })
+    }, 3_000)
+    return () => window.clearInterval(id)
+  }, [landedKeys, qcLanded])
   // ⚠ LAND ON THE PICTURE, NOT THE TOP OF THE PAGE (the owner 2026-08-15: "View
   // your portfolio… should take you immediately back to the bento grid… and you
   // see the new assets/reweighting happen live"). `landedKeys` is already the
@@ -2940,6 +2975,20 @@ export function Yours() {
                   </div>
                   )}
 
+                  {/* CONTINUE WHERE YOU LEFT OFF (the owner 2026-08-18: a
+                      closed/refreshed mid-bridge flow "should be able to
+                      continue from the portfolio bento grid"). The pending
+                      store survives reloads by design; this mounts the SAME
+                      banner the swap console trusts, one per network, right
+                      above the picture — each renders nothing when that
+                      chain has no transfer in flight, and Continue reopens
+                      the flow, which replans on the arrived funds. */}
+                  <div className="space-y-2">
+                    {SUPPORTED_CHAIN_IDS.map((cid) => (
+                      <BridgeBanner key={`bb:${cid}`} chainId={cid} {...(keepHref ? { onUse: () => void navigate(keepHref) } : {})} />
+                    ))}
+                  </div>
+
                   {/* THE PICTURE, at full width — weight-proportioned squares.
                       It used to live in a 320px rail beside the list, where a
                       5% holding was a stamp. Given the whole width it is a
@@ -3037,6 +3086,19 @@ export function Yours() {
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {/* THE AIRDROP CUT, SAID OUT LOUD (the owner 2026-08-18: a
+                      scam token "shows up in my portfolio — filter out low
+                      liquidity tokens and honeypots"): discovered tokens with
+                      no credible market leave the book at the source; this
+                      one line is the no-silent-hiding half. Paste-to-add (the
+                      hero's utility column) remains the door for a real token
+                      the bar catches early. */}
+                  {(raw.data?.suspectCount ?? 0) > 0 && (
+                    <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                      {raw.data!.suspectCount} airdropped token{raw.data!.suspectCount === 1 ? '' : 's'} hidden — no credible market · add by address to show one
+                    </p>
                   )}
 
                   {/* (the paste-to-add door moved to the hero's utility column,

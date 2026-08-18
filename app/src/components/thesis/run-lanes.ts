@@ -1,6 +1,6 @@
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { showChainId } from '../../lib/spectrum/safe-copy'
-import type { ChainNeed } from '../../lib/spectrum/funding-plan'
+import type { ChainNeed } from '../../lib/spectrum/plan-shared-types'
 import { formatAssetCeil } from '../../lib/spectrum/thesis-pay-asset'
 import type { LegFunding, ThesisRun, ThesisRunStep, ThesisStepState } from '../../lib/spectrum/thesis-run-types'
 

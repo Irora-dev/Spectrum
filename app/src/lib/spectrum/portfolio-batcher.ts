@@ -525,6 +525,18 @@ export interface AssembleZeroExBatchBuyInput {
   /** The batcher generation the target chain's contract speaks — passes
    *  through to composePortfolioBatchBuy verbatim. Absent = 1. */
   generation?: 1 | 2
+  /** PER-LEG PROTECTION OVERRIDES, keyed by lowercase asset (the owner's
+   *  ruling, live 2026-08-17: "we need the user to override the slippage
+   *  settings… so you can have no protection to get it across the line" — a
+   *  17%-impact $LNOC leg was un-fillable at any honest floor). A NUMBER is a
+   *  consented ceiling in bps: the floor still derives inside it, the same
+   *  discipline at the user's own bound. 'none' floors the leg at 1 wei and
+   *  asks the route for maximum tolerance — the user accepts whatever the
+   *  pool gives. Consent is per-run, chosen at the review, never persisted
+   *  as a default. The read-failed law is untouched: an override on a depth
+   *  we could not read still refuses — "no protection" is a choice about a
+   *  measured market, not a blindfold. */
+  floorOverrides?: Record<string, number | 'none'>
   /** Gas price in wei, for the ECONOMIC leg cap the contract delegates to the
    *  backend in writing (see economic-leg-cap.ts). Null refuses: an unmeasured
    *  gas price is not a cheap one, and this bound exists for the expensive case. */
@@ -559,6 +571,10 @@ export interface AssembledZeroExBatchBuy {
      *  point of the thin-market ruling is that the number is stated, and a
      *  number nobody can read back is not stated. */
     floor: { sBps: number; selfImpactBps: number; taxBps: number; ceilingBps: number }
+    /** Present when the user overrode this leg's protection at the review —
+     *  a number is their consented ceiling (bps); 'none' floored it at 1 wei.
+     *  The face reads this to say so in words. */
+    floorOverride?: number | 'none'
   })[]
   /** Every leg that fell out, and why — plan-time, quote-time, floor-time.
    *  One channel; the review shows them all. */
@@ -721,7 +737,11 @@ export async function assembleZeroExBatchBuyUnchecked(
         // stage from the same frozen market row — so the tolerance we ask 0x to
         // embed, the tolerance our floor enforces, and the tolerance the review
         // states are the same number by construction.
-        const ceiling = legToleranceCeilingBps(targetByAsset.get(l.asset.toLowerCase())?.liquidityUsd ?? null, l.budgetUsdCents / 100)
+        const override = input.floorOverrides?.[l.asset.toLowerCase()]
+        // an override replaces the ceiling at THE one seam, so the tolerance
+        // 0x embeds, the floor below and the review's sentence stay one number
+        const ceiling =
+          override === 'none' ? 9_999 : override ?? legToleranceCeilingBps(targetByAsset.get(l.asset.toLowerCase())?.liquidityUsd ?? null, l.budgetUsdCents / 100)
         try {
           const raw = await fetchQuote({
             chainId: input.chainId,
@@ -808,11 +828,33 @@ export async function assembleZeroExBatchBuyUnchecked(
     // the market term, self-impact accumulating, tax widening — the same
     // discipline, one derivation home.
     const okQuotes = quoted as { i: number; quote: LegQuote }[]
+    // 'none'-overridden legs do not enter floor derivation at all — their
+    // floor IS the 1-wei sentinel, by consent. Guard first: waiving protection
+    // on an UNREADABLE depth stays refused (the read-failed law — a user can
+    // accept a measured risk, not an unmeasured one).
+    const noFloorKeys = new Set<string>()
+    let noFloorRefused = false
+    for (const l of planned.legs) {
+      const k = l.asset.toLowerCase()
+      if (input.floorOverrides?.[k] !== 'none') continue
+      const liq = targetByAsset.get(k)?.liquidityUsd ?? null
+      if (quoteDriftBpsFor(liq, l.budgetUsdCents / 100) == null) {
+        excluded.add(k)
+        const symbol = targetByAsset.get(k)?.symbol ?? k
+        refusals.push({ symbol, reason: `$${showSymbol(symbol)}: protection cannot be waived on a depth we could not read — waiving is a choice about a measured market` })
+        noFloorRefused = true
+      } else {
+        noFloorKeys.add(k)
+      }
+    }
+    if (noFloorRefused) continue
     const floorPlan = deriveLegFloors(
-      planned.legs.map((l, i) => {
+      planned.legs.filter((l) => !noFloorKeys.has(l.asset.toLowerCase())).map((l) => {
+        const i = planned.legs.indexOf(l)
         const liq = targetByAsset.get(l.asset.toLowerCase())?.liquidityUsd ?? null
         const notionalUsd = l.budgetUsdCents / 100
-        const ceiling = legToleranceCeilingBps(liq, notionalUsd)
+        const override = input.floorOverrides?.[l.asset.toLowerCase()]
+        const ceiling = typeof override === 'number' ? override : legToleranceCeilingBps(liq, notionalUsd)
         return {
         key: l.asset.toLowerCase(),
         quotedBuyAmount: okQuotes.find((q) => q.i === i)!.quote.buyAmountRaw,
@@ -850,7 +892,27 @@ export async function assembleZeroExBatchBuyUnchecked(
     const floorByKey = new Map(floorPlan.legs.map((f) => [f.key, f]))
     const legs = planned.legs.map((l, i): AssembledZeroExBatchBuy['legs'][number] => {
       const quote = okQuotes.find((q) => q.i === i)!.quote
-      const floor = floorByKey.get(l.asset.toLowerCase())
+      const k = l.asset.toLowerCase()
+      const override = input.floorOverrides?.[k]
+      if (noFloorKeys.has(k)) {
+        // the consented no-floor leg: 1 wei satisfies the contract's own
+        // "must state a floor" shape while protecting nothing — which is
+        // exactly what was consented to, and the face says so
+        return {
+          symbol: l.symbol,
+          buyToken: l.asset,
+          sellAmountRaw: raws[i],
+          minBuyAmountRaw: 1n,
+          zeroExFeeRaw: quote.zeroExFeeRaw,
+          swapData: quote.swapData,
+          optional: l.optional,
+          budgetUsdCents: l.budgetUsdCents,
+          buyAmountRaw: quote.buyAmountRaw,
+          floor: { sBps: 10_000, selfImpactBps: 0, taxBps: 0, ceilingBps: 9_999 },
+          floorOverride: 'none' as const,
+        }
+      }
+      const floor = floorByKey.get(k)
       if (!floor) throw new Error(`floor plan lost leg ${l.asset} — refusal-free rounds must floor every leg`)
       return {
         symbol: l.symbol,
@@ -866,8 +928,12 @@ export async function assembleZeroExBatchBuyUnchecked(
           sBps: floor.sBps,
           selfImpactBps: floor.breakdown.selfImpactBps,
           taxBps: floor.breakdown.taxBps,
-          ceilingBps: legToleranceCeilingBps(targetByAsset.get(l.asset.toLowerCase())?.liquidityUsd ?? null, l.budgetUsdCents / 100) ?? S_MAX_BPS,
+          ceilingBps:
+            typeof override === 'number'
+              ? override
+              : legToleranceCeilingBps(targetByAsset.get(k)?.liquidityUsd ?? null, l.budgetUsdCents / 100) ?? S_MAX_BPS,
         },
+        ...(typeof override === 'number' ? { floorOverride: override } : {}),
       }
     })
 
@@ -894,16 +960,31 @@ export async function assembleZeroExBatchBuyUnchecked(
     let burnSwapData: `0x${string}` | undefined
     if (input.burn) {
       const requiredCommitted = legs.reduce((t, l) => (l.optional ? t : t + (l.sellAmountRaw as bigint)), 0n)
-      const burnEstRaw = (requiredCommitted * BigInt(input.feeBps) * 7n * 995n) / (80_000n * 1_000n)
+      // THE CUT IS GENERATION-AWARE (the owner's Base decode, 2026-08-18: the
+      // fee parked instead of burning): gen-1 burns 7/8 of the fee, a
+      // feeGeneration-2 contract burns ALL of it — sizing every route at 7/8
+      // there wasn't drift-dust, it was an eighth of every fee diverting by
+      // arithmetic even when the quote succeeded. Same 0.5% drift haircut
+      // both ways; under-size stays the safe direction.
+      const burnShare = input.generation === 2 ? [1n, 1n] : [7n, 8n]
+      const burnEstRaw = (requiredCommitted * BigInt(input.feeBps) * burnShare[0] * 995n) / (10_000n * burnShare[1] * 1_000n)
       if (burnEstRaw > 0n) {
         try {
-          const raw = await fetchQuote({
-            chainId: input.chainId,
-            sellToken: input.fundingAsset,
-            buyToken: input.burn.asset,
-            sellAmountRaw: burnEstRaw,
-            // the BATCHER takes delivery — it burns what lands on itself
-            taker: input.batcher,
+          // ONE quiet retry (same decode: HIS run's divert was a transient
+          // quote failure — the identical request answered fine minutes
+          // later, and a single blip should not park a whole run's fee)
+          const fetchBurnQuote = () =>
+            fetchQuote({
+              chainId: input.chainId,
+              sellToken: input.fundingAsset,
+              buyToken: input.burn!.asset,
+              sellAmountRaw: burnEstRaw,
+              // the BATCHER takes delivery — it burns what lands on itself
+              taker: input.batcher,
+            })
+          const raw = await fetchBurnQuote().catch(async () => {
+            await new Promise((r) => setTimeout(r, 800))
+            return fetchBurnQuote()
           })
           // The burn quote takes the STRUCTURAL half of validateLegQuote —
           // pinned target/spender, no native value, real calldata, exact

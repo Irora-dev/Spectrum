@@ -5,7 +5,7 @@ import type { Address } from 'viem'
 import { SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { useAccount } from 'wagmi'
 import type { BasketSummary } from '../../lib/spectrum/basket-data'
-import type { ChainNeed } from '../../lib/spectrum/funding-plan'
+import type { ChainNeed } from '../../lib/spectrum/plan-shared-types'
 import { readThesisFunds } from '../../lib/spectrum/thesis-funding'
 import {
   formatAssetFloor,

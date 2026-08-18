@@ -7,6 +7,95 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.18
+
+Sacred: executor, swap, launch — the sale step gains a fee lane, the single-swap paths
+route through the fee wrapper, and the pool-discovery read (find-best-pool) moved with the
+live-day routing work; every floor, approval and byte-verification law holds.
+
+Operator-file note: this release's diff carries the operator-file covenant migration
+(kit policy moved out of the files forks own, into `theme/kit-defaults.ts`) — the one
+release cut WITH `--allow-operator-files`, exactly once, for exactly that commit; the
+gate arms against `STATE.sourceSha` from here on.
+
+The fee rail reaches every swap outside the batcher. Sells first: a sale whose asset
+routes to settlement through the direct-swap wrapper rides it before the routing
+services — the product fee (0.4%, 100% burns PRISM) charged on-chain with the plan's
+numbers unmoved (the fee backs out of the outflow, the pull can never exceed what the
+plan drew, and the floor still clears before anything signs). Any lane refusal falls
+through to the routed lanes unchanged: honest feeless coverage beats a dead sale.
+
+The protection dial, now fully pinned: per-leg floor overrides on measured-thin legs —
+a consented looser ceiling, or no floor at all, per run, never persisted. One number
+flows to all three surfaces (the asked slippage, the signed floor, the review sentence),
+'none' floors at literally 1 wei and says NO FLOOR in words, and a leg whose depth
+could not be read refuses even under consent — waiving is a choice about a measured
+market, and an unreadable depth is not a measurement.
+
+Refused legs get a door instead of a dead end. A leg the aggregator refuses at size
+(the thin-book class — the same pool fills a wallet-taker fine) or declines outright
+(hooked-market tokens) can be bought in its own transaction through the wrapper: one
+click of consent per leg, quoted at click by simulating the real call, floored off the
+measured output, re-proven, and signed byte-verbatim. Every route is proven against
+the live chain before it carries money.
+
+Restricted tokens are carried honestly: a token whose own transfer rule refuses the
+wrapper (measured live on the hooked-market class) fills DIRECT through the router —
+feeless because the token leaves no lawful way to charge, disclosed on the card in so
+many words, with the floor still enforced on-chain by the router itself.
+
+PRISM lanes stop undercharging: the wrapper's rate is 0.4% (the batcher's 0.25 assumes
+the aggregator's own skim inside its quotes — no aggregator rides these lanes). Both
+PRISM wrapper lanes now charge and DISPLAY the ruled rate. PRISM sells join the fee
+rail through the fork-proven WETH-out payload: you part with exactly what you typed
+(the fee comes out of it, stated), and proceeds arrive as WETH — the same asset as
+ETH, unwrap any time — measured from the transaction's own logs.
+
+From a full morning of live testing, the flow's remaining walls fell in place:
+
+Routing is the machine's decision. The re-route consent doors lasted one session:
+legs the aggregator refuses now carve themselves through the wrapper and run as part
+of the same plan — one Run press covers the whole flow, carved legs execute one at a
+time, and a refused one advances the queue instead of stalling it.
+
+The sale floor gets a live basis. Sale floors were born from the indexer's spot
+price, which lags a dumping market by minutes — unclearable at birth, inherited by
+every rebuilt review. The review now asks the routed lane for each sale's own
+enforced minimum at build time and floors on the lower basis. The sale lane also
+signs the plan's own floor rather than double-haircutting itself out of the race.
+
+The run's landing lands every time: written the moment the run completes, announced
+when the flow leaves the screen (never spent behind its own overlay), and the book
+settle-polls past the young chain's RPC lag so a just-bought asset tiles the first
+moment the node can show it. Basket trims ride the wallet that actually holds them,
+carved basket sells open their own overlay, and the bridge's mini-game can no longer
+Space-click the flow closed. A transfer in flight now shows above the portfolio's
+picture with its own Continue, surviving any close or refresh.
+
+The gas top-up finds its price (the review reads native-USD per funded chain and
+hands it to the runner — the seam existed and nothing supplied it), and a top-up the
+destination already covers simply stands down instead of refusing the plan.
+
+Airdropped tokens with no credible market no longer get a seat in the book: the
+pricer demands real liquidity AND real trading from the deepest pool, and never-asked
+-for tokens that fail it are hidden behind one counted line. Pasting an address
+remains the door for a real token the bar catches early.
+
+The basket page surfaces its share and referral doors as small controls in the
+identity row, the thesis reads in body ink at a book measure, and the share card's
+title and price fit their lanes with the price at two decimals.
+
+The evening's hardening wave ships alongside, all additive: every run can now be
+journaled for offline replay and its receipt reconciled against the money laws the
+moment it lands (a diverted fee is a disclosed verdict in words, never archaeology);
+an independent calldata lint re-judges the laws at the wallet seam; the basket
+side's composition is pinned byte-exact by golden masters; an import-boundary
+ratchet freezes the portfolio/basket cross-imports so the product line can only
+tighten; and the money laws and measured bug classes are written down in docs/
+(MONEY-LAWS.md, BUG-CLASSES.md). A handful of shared names moved to seam modules
+(plan-shared-types, signable-confirm, run-progress, demo-catalog) with behavior
+byte-identical and every attested money-core file untouched.
+
 ## 2026.08.17
 
 Sacred: executor — the review-record surface (the waiver re-pins to this release's

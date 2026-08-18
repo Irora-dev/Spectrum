@@ -125,7 +125,16 @@ describe('the refusal-sentence ratchet', () => {
     // unreadable and the rest of the batch composes fine. Asserted in
     // floor-discipline.test.ts — the unusable-ceiling pin, and the pin that one
     // bad leg does not take the batch down with it.
-    expect(found).toHaveLength(69)
+    // 69 → 70 (2026-08-17, the protection dial — the owner's live LNOC ruling):
+    // portfolio-batcher gained the read-failed-outranks-consent refusal
+    // ("protection cannot be waived on a depth we could not read — waiving is
+    // a choice about a measured market"). The dial lets a user consent a
+    // per-leg floor override on MEASURED-thin legs; a leg whose depth read
+    // FAILED refuses even under consent, because a waiver is a choice about a
+    // known risk and an unreadable depth is not a known anything. Asserted in
+    // portfolio-batcher.test.ts — the dial describe's unreadable-waive pin
+    // (both the 'none' and the numeric variant).
+    expect(found).toHaveLength(70)
   })
 
   it('no refusal sentence is empty, and none leaks a raw placeholder into what a person reads', () => {

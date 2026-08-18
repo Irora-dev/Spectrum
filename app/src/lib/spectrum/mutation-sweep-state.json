@@ -415,64 +415,99 @@
       ]
     },
     "runner-effects": {
-      "at": "2026-08-17",
-      "digest": "sha256:ac4f670fb5a70737",
-      "sites": 123,
-      "mutants": 40,
-      "killed": 34,
-      "partial": true,
+      "at": "2026-08-18",
+      "digest": "sha256:d6d727ad51976349",
+      "sites": 130,
+      "mutants": 130,
+      "killed": 119,
+      "partial": false,
       "survivors": [
         {
-          "sig": "runner-effects:377:20:< → <=",
-          "line": 377,
+          "sig": "runner-effects:390:20:< → <=",
+          "line": 390,
           "col": 20,
           "op": "< → <=",
           "text": "for (let i = 0; i < tries; i++) {"
         },
         {
-          "sig": "runner-effects:978:22:< → <=",
-          "line": 978,
+          "sig": "runner-effects:625:31:> → >=",
+          "line": 625,
+          "col": 31,
+          "op": "> → >=",
+          "text": "if (backed.sellRaw > 0n) {"
+        },
+        {
+          "sig": "runner-effects:721:39:<= → <",
+          "line": 721,
+          "col": 39,
+          "op": "<= → <",
+          "text": "if (minRaw == null || minRaw <= 0n)"
+        },
+        {
+          "sig": "runner-effects:806:55:<= → <",
+          "line": 806,
+          "col": 55,
+          "op": "<= → <",
+          "text": "if (!Number.isFinite(amountCents) || amountCents <= 0)"
+        },
+        {
+          "sig": "runner-effects:857:47:< → <=",
+          "line": 857,
+          "col": 47,
+          "op": "< → <=",
+          "text": "if (destNative == null || destNative < weiNeeded)"
+        },
+        {
+          "sig": "runner-effects:863:25:> → >=",
+          "line": 863,
+          "col": 25,
+          "op": "> → >=",
+          "text": "} else if (units > 0n) fromAmountForGas = units"
+        },
+        {
+          "sig": "runner-effects:1072:22:< → <=",
+          "line": 1072,
           "col": 22,
           "op": "< → <=",
           "text": "for (let i = 0; i < legs.length; i++) if ((result.skippedBitmap >> BigInt(i)) & 1n) skippe"
         },
         {
-          "sig": "runner-effects:1004:46:&& → ||",
-          "line": 1004,
-          "col": 46,
-          "op": "&& → ||",
-          "text": "if (usd != null && Number.isFinite(usd) && usd > 0) {"
+          "sig": "runner-effects:1250:33:=== → !==",
+          "line": 1250,
+          "col": 33,
+          "op": "=== → !==",
+          "text": "abi: composed.generation === 2 ? portfolioBatcherAbiGen2 : portfolioBatcherAbi,"
         },
         {
-          "sig": "runner-effects:1238:53:> → >=",
-          "line": 1238,
-          "col": 53,
-          "op": "> → >=",
-          "text": "if (usd != null && Number.isFinite(usd) && usd > 0) {"
-        },
-        {
-          "sig": "runner-effects:1252:36:&& → ||",
-          "line": 1252,
+          "sig": "runner-effects:1346:36:&& → ||",
+          "line": 1346,
           "col": 36,
           "op": "&& → ||",
           "text": "if (!previewProven.has(chainId) && !previewBroken.has(chainId)) {"
         },
         {
-          "sig": "runner-effects:1554:21:> → >=",
-          "line": 1554,
+          "sig": "runner-effects:1648:21:> → >=",
+          "line": 1648,
           "col": 21,
           "op": "> → >=",
           "text": "if (calls.length > 1 && prepared.batchIndex !== calls.length - 1)"
+        },
+        {
+          "sig": "runner-effects:1656:21:> → >=",
+          "line": 1656,
+          "col": 21,
+          "op": "> → >=",
+          "text": "if (calls.length > 1) {"
         }
       ]
     },
     "portfolio-batcher": {
-      "at": "2026-08-16",
-      "digest": "sha256:8c5239e473b64080",
-      "sites": 75,
-      "mutants": 40,
-      "killed": 36,
-      "partial": true,
+      "at": "2026-08-18",
+      "digest": "sha256:13f8f5a4efa5b566",
+      "sites": 79,
+      "mutants": 79,
+      "killed": 73,
+      "partial": false,
       "survivors": [
         {
           "sig": "portfolio-batcher:126:31:<= → <",
@@ -501,6 +536,20 @@
           "col": 10,
           "op": "+ → -",
           "text": "while (c + (c * fee) / 10_000n > fundingTotalRaw) c -= 1n"
+        },
+        {
+          "sig": "portfolio-batcher:666:28:<= → <",
+          "line": 666,
+          "col": 28,
+          "op": "<= → <",
+          "text": "for (let round = 0; round <= input.targets.length + 1; round++) {"
+        },
+        {
+          "sig": "portfolio-batcher:672:86:&& → ||",
+          "line": 672,
+          "col": 86,
+          "op": "&& → ||",
+          "text": "for (const r of planned.refusals) if (!refusals.some((x) => x.symbol === r.symbol && x.rea"
         }
       ]
     },

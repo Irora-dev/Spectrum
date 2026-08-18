@@ -184,3 +184,29 @@ describe('generation 2 (the production fee model) — feeRecipient GONE from the
     expect(() => decodeFunctionData({ abi: directSwapWrapperAbi, data: g2 })).toThrow()
   })
 })
+
+describe('the bounds are exactly the contract’s — [0, 200] fee, floors at zero lawful here (the audit sweep’s :133/:134 edges)', () => {
+  const base = {
+    chainId: 4663,
+    sellToken: null,
+    sellAmount: 1_000_000n,
+    buyToken: '0x1111111111111111111111111111111111111111' as const,
+    minBuyAmount: 0n,
+    poolData: '0x00' as const,
+    feeRecipient: null,
+    nowSec: 1_700_000_000,
+  }
+  it('feeBps 0 composes (a feeless wrapped call is lawful input; the RATE is the composer’s law, not this builder’s)', () => {
+    const call = swapWithFeeCall({ ...base, feeBps: 0 })
+    expect(call).not.toBeNull()
+    expect(call!.feeRaw).toBe(0n)
+    expect(call!.value).toBe(1_000_000n)
+  })
+  it('feeBps exactly 200 composes; 201 answers null (the ceiling is inclusive)', () => {
+    expect(swapWithFeeCall({ ...base, feeBps: 200 })).not.toBeNull()
+    expect(swapWithFeeCall({ ...base, feeBps: 201 })).toBeNull()
+  })
+  it('minBuyAmount 0 composes — the floor is the caller’s law and the lint’s watch, never silently rewritten here', () => {
+    expect(swapWithFeeCall({ ...base, feeBps: 40, minBuyAmount: 0n })).not.toBeNull()
+  })
+})

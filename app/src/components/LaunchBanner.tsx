@@ -146,20 +146,41 @@ function drawShareImage(
   ctx.textBaseline = 'middle'
   ctx.fillText(tick, 84, 82)
 
-  // name
-  ctx.fillStyle = '#f4f0f4'
-  ctx.font = `700 64px ${DISPLAY}`
-  ctx.fillText(o.name.toUpperCase().slice(0, 24), 64, 168)
-
-  // price (right-aligned)
+  // price (right-aligned) — TWO decimals on this card (owner 2026-08-18:
+  // "the price only needs to be to two decimals"); a sub-cent NAV keeps
+  // formatNav's precision because "$0.00" would be a wrong number, not a
+  // rounder one. Drawn and MEASURED first so the name's lane below is fit
+  // against the space the price actually takes.
+  const priceText = `$${o.priceUsd >= 0.01 ? o.priceUsd.toFixed(2) : formatNav(o.priceUsd)}`
   ctx.textAlign = 'right'
   ctx.fillStyle = 'rgba(244,240,244,0.6)'
   ctx.font = `600 20px ${MONO}`
   ctx.fillText('PRICE', W - 64, 70)
   ctx.fillStyle = '#f4f0f4'
   ctx.font = `300 84px ${DISPLAY}`
-  ctx.fillText(`$${formatNav(o.priceUsd)}`, W - 64, 148)
+  const priceW = ctx.measureText(priceText).width
+  ctx.fillText(priceText, W - 64, 148)
   ctx.textAlign = 'left'
+
+  // name — FIT, never clip (owner 2026-08-18: "the title and price clip each
+  // other"): the name's lane ends 48px short of the measured price. Step the
+  // font down to 40px to fit; still over, ellipsize by measurement.
+  ctx.fillStyle = '#f4f0f4'
+  const nameLane = W - 64 - priceW - 64 - 48
+  const fullName = o.name.toUpperCase().slice(0, 24)
+  let nameSize = 64
+  ctx.font = `700 ${nameSize}px ${DISPLAY}`
+  while (nameSize > 40 && ctx.measureText(fullName).width > nameLane) {
+    nameSize -= 2
+    ctx.font = `700 ${nameSize}px ${DISPLAY}`
+  }
+  if (ctx.measureText(fullName).width <= nameLane) {
+    ctx.fillText(fullName, 64, 168)
+  } else {
+    let trimmed = fullName
+    while (trimmed.length > 3 && ctx.measureText(`${trimmed}…`).width > nameLane) trimmed = trimmed.slice(0, -1)
+    ctx.fillText(`${trimmed}…`, 64, 168)
+  }
 
   // return since creation chip
   if (o.sincePct != null) {

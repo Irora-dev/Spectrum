@@ -9,12 +9,12 @@ import { useMinWidth } from '../../lib/motion'
 import { ZEROEX_COMPOSE_ENABLED } from '../../lib/spectrum/portfolio-batcher'
 import { realExecutionArming, walkthroughAllowed, type ExecutionArming } from '../../lib/spectrum/execution-arming'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
-import { stocksForChain } from '../../lib/chain/stocks'
 import { isRetryableDetection } from '../../lib/pools'
 import { formatUnits, parseEther } from 'viem'
 import type { FundingAction } from '../../lib/spectrum/funding-plan'
 import { resolveAsset } from '../launch/BasketBuilder'
-import { RunBeam, RunProgressStyles, ThesisRunOverlay } from '../thesis/ThesisRunOverlay'
+import { ThesisRunOverlay } from '../thesis/ThesisRunOverlay'
+import { RunBeam, RunProgressStyles } from '../run-progress'
 import { seedThesisOf } from '../reshape/seed-plan'
 import { listBasketsForChain } from '../../lib/spectrum/basket-data'
 import { thesisRef } from '../../lib/spectrum/thesis-url'
@@ -25,10 +25,12 @@ import { batcherFor } from '../../lib/spectrum/execution-arming'
 import { changeHeldBy } from '../../lib/spectrum/change-attribution'
 import { walletName } from '../../lib/spectrum/wallet-names'
 import { shortAddr } from '../../lib/spectrum/format'
-import { directSwapWrapperFor, swapWithFeeCall } from '../../lib/spectrum/direct-swap-wrapper'
+import { directSwapWrapperFor, swapWithFeeCall, wrapperFeeBpsFor } from '../../lib/spectrum/direct-swap-wrapper'
+import { discoverDirectRoute, quoteAndComposeDirectSwap } from '../../lib/spectrum/direct-swap-lane'
+import { DirectLegCard, type DirectLegSpec } from './DirectLegCard'
 import { INTERFACE_TAG_ADDRESS } from '../../lib/config/operator'
 import { bridgeRows, pollBridge } from '../../lib/spectrum/bridge-pending'
-import { writeRunLanded } from '../../lib/spectrum/run-landed'
+import { announceRunLanded, writeRunLanded } from '../../lib/spectrum/run-landed'
 import { stepKeyOf, type RunStepState } from '../../lib/spectrum/execution-runner'
 import { PublishBundleModal } from '../reshape/PublishBundleModal'
 import { groupBundleDraft, isBundleDraft, type BundleGroup } from '../reshape/publish-bundle-model'
@@ -41,6 +43,7 @@ import { useCopy } from '../../lib/use-copy'
 import { formatUsdCompact } from '../../lib/spectrum/format'
 import { applyChanges, exitCost, toPlanChanges, type PlanLeg } from '../../lib/spectrum/insights'
 import { ASSET_THEMES } from '../../lib/spectrum/asset-categories'
+import { demoCatalog } from '../../lib/spectrum/demo-catalog'
 import { integerShares } from '../../lib/spectrum/publish-picks'
 import { useWalletGroup } from '../../lib/spectrum/use-wallet-group'
 import { useRawHoldings } from '../../lib/spectrum/use-raw-holdings'
@@ -111,13 +114,14 @@ import {
 } from '../../lib/spectrum/portfolio-run-wiring'
 import { DEFAULT_SLIPPAGE_BPS } from '../../lib/spectrum/hook-data'
 import { useSendTransaction, useSwitchChain } from 'wagmi'
-import { DEFAULT_CHAIN_ID } from '../../lib/chain/deployments'
+import { DEFAULT_CHAIN_ID, settlementDecimalsFor } from '../../lib/chain/deployments'
+import { fetchLifiQuote } from '../../lib/spectrum/lifi'
 import { PRISM_CLAIM_CHAIN_ID, PRISM_V2_HOOK } from '../../lib/prism/claim'
 import { encodePrismPoolSwap, quotePrismPool } from '../../lib/prism/pool'
 import { failuresAsText, recordFailure } from '../../lib/spectrum/failure-log'
 import { clientFor } from '../../lib/chain/rpc'
 import { TradePrism } from '../TradePrism'
-import { BridgeRunnerGame } from './BridgeRunnerGame'
+import { BridgeRunnerGame } from '../BridgeRunnerGame'
 import { defaultComposeDeps, defaultMarketReader, settlementFor } from '../../lib/spectrum/portfolio-run-market'
 import { nativeEthUsdOnChain } from '../../lib/pools/v4-usd'
 import type { MarketRow } from '../../lib/spectrum/portfolio-run-wiring'
@@ -445,29 +449,11 @@ const STATIONS: { id: Station; label: string }[] = [
  *  portfolio/rebalance pills and this picker must agree on what "DeFi" is. */
 const ASSET_TAGS: Record<string, 'defi' | 'ai' | 'memes' | 'stocks'> = ASSET_THEMES
 
-/** The flow's example catalog — EXPORTED for the add-asset popup (owner 15:00:
- *  "we should literally just take [it] from the create flow… don't reinvent
- *  the wheel"). */
-export function demoCatalog(): AllocAsset[] {
-  const stocks = stocksForChain(4663)
-  const stock = (sym: string): AllocAsset[] => {
-    const s = stocks.find((x) => x.symbol === sym)
-    return s ? [{ chainId: 4663, address: s.address, symbol: s.symbol }] : []
-  }
-  return [
-    { chainId: 1, address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', symbol: 'AAVE' },
-    { chainId: 1, address: '0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66', symbol: 'SYRUP' },
-    ...stock('NVDA'),
-    ...stock('AAPL'),
-    { chainId: 4663, address: '0x39dBED3a2bd333467115dE45665cC57F813C4571', symbol: 'PONS' },
-    { chainId: 8453, address: '0x1bc0c42215582d5A085795f4baDbaC3ff36d1Bcb', symbol: 'BANKR' },
-    { chainId: 8453, address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', symbol: 'cbBTC' },
-    { chainId: 1, address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', symbol: 'UNI' },
-    { chainId: 8453, address: '0x0b3e328455c4059EEb9e3f84B5543F74E24e7E1b', symbol: 'VIRTUAL' },
-    // An operator build may carry a SUBSET of these networks — anything the
-    // book doesn't know is filtered out rather than crashing chainCfg later.
-  ].filter((a) => SUPPORTED_CHAIN_IDS.includes(a.chainId))
-}
+/** The flow's example catalog — lives in demo-catalog.ts since the split's
+ *  S7 (the picker was importing this whole component graph for one fixture
+ *  list); imported for this flow's own use and re-exported so callers are
+ *  unchanged. */
+export { demoCatalog }
 
 /** Outer shell + inner core (the forge's machined-hardware idiom). */
 function Shell({ children, bare = false }: { children: ReactNode; bare?: boolean }) {
@@ -1278,6 +1264,18 @@ export function PortfolioFlow({
   // them DIRECT in PRISM's own pool through the existing trade machinery.
   const [directPrism, setDirectPrism] = useState<{ usdCents: number; ethAmount: string | null } | null>(null)
   const [directPrismOpen, setDirectPrismOpen] = useState(false)
+  // THE GENERALIZED DIRECT-LANE LEGS (the owner 2026-08-17: LNOC/FWA buying
+  // fixed for good) — legs the batch could not carry, carved BY THE USER'S
+  // CLICK on a refusal/preflight door into their own wrapper transactions.
+  // Keyed set; consent is the click, per leg, per review (cleared with the
+  // carve states below on every arming change).
+  const [directLegs, setDirectLegs] = useState<DirectLegSpec[]>([])
+  const addDirectLeg = useCallback((leg: DirectLegSpec) => {
+    setDirectLegs((prev) =>
+      prev.some((p) => p.chainId === leg.chainId && p.asset.toLowerCase() === leg.asset.toLowerCase()) ? prev : [...prev, leg],
+    )
+  }, [])
+
   // THE MAIN BUTTON RUNS IT (owner 2026-08-15: "we should still facilitate the
   // execution direct from the main button, not needing to click buy from pool
   // as its own button"): once the run the user consented to reaches a terminal
@@ -1350,7 +1348,10 @@ export function PortfolioFlow({
         buyToken: PRISM_V2_HOOK,
         minBuyAmount: minOut,
         poolData: tx.data,
-        feeBps: batchFeeBpsFor(PRISM_CLAIM_CHAIN_ID),
+        // ⚠ the WRAPPER's rate, not the batcher's: 25 assumes 0x's own skim
+        // inside the quote, and there is no 0x on this lane (the ruled fee
+        // model, 2026-08-16 — this call undercharged at 25 until 2026-08-17)
+        feeBps: wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID),
         feeRecipient: INTERFACE_TAG_ADDRESS,
         nowSec: Math.floor(Date.now() / 1000),
       })
@@ -1415,6 +1416,8 @@ export function PortfolioFlow({
     setDirectPrism(null)
     setDirectPrismOpen(false)
     setDirectRun({ phase: 'idle' })
+    setDirectLegs([])
+    setCarveTurn(0)
     setDirectBaskets([])
     setDirectBasketsOpen(false)
     setDirectBasketsDone(false)
@@ -1492,8 +1495,18 @@ export function PortfolioFlow({
   // what the build is doing RIGHT NOW — a skeleton with no words taught a
   // live user "something's broken" (13:09 recording); each phase names itself
   const [runReviewPhase, setRunReviewPhase] = useState<string>('')
+  // PER-LEG PROTECTION OVERRIDES (the owner 2026-08-17: "the user to override
+  // the slippage settings… no protection to get it across the line"). Keyed
+  // `${chainId}:${assetLower}`; consent is PER-RUN — cleared with every fresh
+  // review, never persisted (a sticky no-floor default would be a footgun).
+  const [floorOverrides, setFloorOverrides] = useState<Record<string, number | 'none'>>({})
+  const floorOverridesRef = useRef(floorOverrides)
+  floorOverridesRef.current = floorOverrides
   const runReviewRef = useRef<PortfolioRunReview | null>(null)
   runReviewRef.current = runReview
+  // per-chain native-USD read at review build — the runner's refuel sizing
+  // reads it synchronously (null = unreadable, never zero)
+  const nativeUsdRef = useRef<Map<number, number>>(new Map())
   const runner = useExecutionRunner({
 
     // the legacy engine has no seated contract anywhere and this surface
@@ -1503,9 +1516,27 @@ export function PortfolioFlow({
       const review = runReviewRef.current
       if (!review || !address)
         return Promise.reject(new BatchComposeRefusal('the review this run was confirmed from is gone — re-open the review'))
-      return composePortfolioStepFor(review, address as `0x${string}`, defaultComposeDeps())(step)
+      return composePortfolioStepFor(review, address as `0x${string}`, {
+        ...defaultComposeDeps(),
+        // the review screen's per-leg protection consents overlay the frozen
+        // review at compose time (chosen AFTER the review was built)
+        floorOverridesFor: (cid) => {
+          const out: Record<string, number | 'none'> = {}
+          for (const [k, v] of Object.entries(floorOverridesRef.current)) {
+            const [c, asset] = k.split(':')
+            if (Number(c) === cid) out[asset] = v
+          }
+          return Object.keys(out).length > 0 ? out : undefined
+        },
+      })(step)
     },
     engine: ZEROEX_COMPOSE_ENABLED ? 'portfolio' : 'legacy',
+    // THE SALE STEP'S WRAPPER LANE, armed EXPLICITLY (its presence-gate law):
+    // sells whose route ends in settlement ride the fee wrapper first — 40
+    // bps, 100% burn — and every lane refusal falls through to the routed
+    // lanes unchanged (owner 2026-08-17: sells pay the product fee too).
+    directLane: { discover: discoverDirectRoute, quoteAndCompose: quoteAndComposeDirectSwap },
+    nativeUsd: (cid) => nativeUsdRef.current.get(cid) ?? null,
     shownFor: (step) => {
       const review = runReviewRef.current
       return review && address ? shownForFrom(review, address as `0x${string}`)(step) : null
@@ -1563,6 +1594,78 @@ export function PortfolioFlow({
       },
     })
   }, [runner.state, runReview, address])
+  // THE LANDING WRITES ITSELF AT DONE (the owner live 2026-08-18: "run
+  // completing doesn't have a pop up with success… and you don't see the
+  // change in the bento"). The write lived ONLY inside one button's onClick —
+  // every other way out of this flow lost the landing whole. Now done/partial
+  // WRITES the landing (announce: false — storage only; the announce fires
+  // when this flow actually leaves the screen, below, so a same-page
+  // portfolio never spends it behind the overlay). Once per run.
+  const landedWroteRef = useRef<unknown>(null)
+  useEffect(() => {
+    const ph = runner.state?.phase
+    if ((ph !== 'done' && ph !== 'partial') || !runReview || landedWroteRef.current === runner.state) return
+    landedWroteRef.current = runner.state
+    const changed = new Set<string>()
+    for (const c of draft.funding?.changes ?? []) {
+      if (Math.abs(c.toUsd - c.fromUsd) > 0.5) changed.add(`${c.chainId}:${c.address.toLowerCase()}`)
+    }
+    for (const ch of runReview.chains) for (const l of ch.legs) changed.add(`${ch.chainId}:${l.asset.toLowerCase()}`)
+    for (const sale of runReview.sells) changed.add(`${sale.chainId}:${sale.asset.toLowerCase()}`)
+    writeRunLanded([...changed], [], { announce: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runner.state?.phase, runReview])
+  // …and ANNOUNCES when the flow leaves the screen — the first moment the
+  // picture is visible. Unmount covers every exit path (the ✕, Escape, the
+  // backdrop, the button, an inline station change); a mounted portfolio
+  // hears it then, a navigation reads storage at mount instead.
+  useEffect(() => () => announceRunLanded(), [])
+  // THE CARVE QUEUE (the owner 2026-08-18: "it should just happen auto as
+  // part of the flow"): once the batch attempt is terminal, carved legs run
+  // themselves one at a time — sequential because each is its own wallet
+  // prompt, and a refused leg advances the queue rather than stalling it.
+  const [carveTurn, setCarveTurn] = useState(0)
+  const carveArmed = runner.state?.phase === 'done' || runner.state?.phase === 'partial' || runner.state?.phase === 'refused'
+  // ROUTE-CLASS AUTO-CARVES — the machine's decision, never a door:
+  // (a) a batch step failing with a NAMED leg (RequiredLegFailed at sim or on
+  //     chain — the aggregator refusing the batcher-as-taker at size, the
+  //     class the preflight's own honest-scope note says it cannot catch);
+  useEffect(() => {
+    const steps = runner.state?.steps
+    const review = runReviewRef.current
+    if (!steps || !review) return
+    for (const stp of steps) {
+      if (stp.status !== 'failed' || stp.failedLegIndex == null) continue
+      const m = /^batch:(\d+):/.exec(stp.key)
+      if (!m) continue
+      const chain = review.chains.find((ch) => ch.chainId === Number(m[1]))
+      const leg = chain?.legs[stp.failedLegIndex]
+      if (chain && leg) addDirectLeg({ chainId: chain.chainId, asset: leg.asset, symbol: leg.symbol, usdCents: leg.budgetUsdCents })
+    }
+  }, [runner.state, addDirectLeg])
+  // (b) a preflight verdict of REFUSED — the quote-level probe already asked
+  //     the aggregator AS the batcher at the leg's exact size and was told no.
+  useEffect(() => {
+    const review = runReviewRef.current
+    if (!review) return
+    for (const ch of review.chains)
+      for (const l of ch.legs) {
+        if (preflightMap.get(`${ch.chainId}:${l.asset.toLowerCase()}`)?.kind === 'refused')
+          addDirectLeg({ chainId: ch.chainId, asset: l.asset, symbol: l.symbol, usdCents: l.budgetUsdCents })
+      }
+  }, [preflightMap, addDirectLeg])
+  // BASKET SELLS OPEN THEMSELVES (the owner 2026-08-18: no routing doors —
+  // and his STONKMEME trim carved into a card while the emptied run said
+  // "complete", a dead end wearing a button). When the run settles — or the
+  // whole plan carved out and there is nothing to run — the first carved
+  // sell's overlay raises itself; finishing one opens the next.
+  useEffect(() => {
+    if (directBasketSells.length === 0 || sellOverlayFor) return
+    const ph = runner.state?.phase
+    const planEmpty = !!runReview && runReview.plan.steps.length === 0
+    if (ph === 'done' || ph === 'partial' || ph === 'refused' || planEmpty) setSellOverlayFor(directBasketSells[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runner.state?.phase, directBasketSells, sellOverlayFor, runReview])
   // fire the PRISM direct leg after the consented run lands (done/partial);
   // a refused run keeps the manual door — nothing cascades off a refusal
   useEffect(() => {
@@ -1618,6 +1721,7 @@ export function PortfolioFlow({
           sellRaw: c.sellRaw,
           decimals: c.decimals,
         }))
+        const foreignTrims: { chainId: number; symbol: string; owner: string; usd: number }[] = []
         let keptChanges = changeRows
         if (changeRows.some((c) => c.toUsd < c.fromUsd)) {
           const sellChainIds = [...new Set(changeRows.map((c) => c.chainId))]
@@ -1631,9 +1735,26 @@ export function PortfolioFlow({
             c.toUsd < c.fromUsd && sellBasketSets.get(c.chainId)?.has(c.address.toLowerCase()) === true
           const trims = changeRows.filter(isBasketTrim)
           keptChanges = changeRows.filter((c) => !isBasketTrim(c))
-          setDirectBasketSells(
-            trims.map((c) => ({ chainId: c.chainId, address: c.address, symbol: c.symbol, freedUsd: Math.max(0, c.fromUsd - c.toUsd) })),
-          )
+          // THE TRIM RIDES THE WALLET THAT HOLDS IT (the owner live 2026-08-18:
+          // the STONKMEME sell overlay answered "nothing sellable" — the plan
+          // saw the GROUP's holding, the overlay reads the ACTIVE signer's
+          // balance, and the trim never went through the other-wallet
+          // partition the batch sells get). Same attribution, same card.
+          {
+            const me = (address as string).toLowerCase()
+            const mineTrims: typeof trims = []
+            for (const c of trims) {
+              const saleUsd = Math.max(0, c.fromUsd - c.toUsd)
+              const held = changeHeldBy(c.chainId, c.address)
+              const mine = held?.find((h) => h.owner.toLowerCase() === me)?.usd ?? 0
+              const biggest = held?.[0]
+              if (!held || mine + 1 >= saleUsd || !biggest || biggest.owner.toLowerCase() === me) mineTrims.push(c)
+              else foreignTrims.push({ chainId: c.chainId, symbol: c.symbol, owner: biggest.owner, usd: saleUsd })
+            }
+            setDirectBasketSells(
+              mineTrims.map((c) => ({ chainId: c.chainId, address: c.address, symbol: c.symbol, freedUsd: Math.max(0, c.fromUsd - c.toUsd) })),
+            )
+          }
         } else {
           setDirectBasketSells([])
         }
@@ -1656,7 +1777,7 @@ export function PortfolioFlow({
             foreign.push({ chainId: c.chainId, symbol: c.symbol, owner: biggest.owner, usd: saleUsd })
             return false
           })
-          setOtherWalletSells(foreign)
+          setOtherWalletSells([...foreignTrims, ...foreign])
         }
         const reb = draft.funding
           ? rebalanceRunInput({
@@ -1693,6 +1814,24 @@ export function PortfolioFlow({
         // sentence + the Try-again door, never a frozen skeleton (13:09)
         setRunReviewPhase(`reading your balances on ${fundChains.length} network${fundChains.length === 1 ? '' : 's'}…`)
         const funds = await withPhaseDeadline(readThesisFunds(fundChains, address as `0x${string}`), 25_000, 'reading your balances')
+        if (dead) return
+        // NATIVE-USD PER CHAIN, read ONCE here and handed to the runner as a
+        // sync lookup (the owner live 2026-08-18: every refuel-carrying
+        // bridge refused "could not read a native-gas price" — the runner's
+        // nativeUsd seam existed and NOTHING in production supplied it, so
+        // the top-up was unsizeable by construction). Best-effort per chain:
+        // a failed read stays null and the runner's own covered-already
+        // degrade or refusal speaks.
+        await Promise.all(
+          fundChains.map(async (cid) => {
+            try {
+              const v = await nativeEthUsdOnChain(cid)
+              if (v != null && v > 0) nativeUsdRef.current.set(cid, v)
+            } catch {
+              /* stays null — the runner refuses or degrades honestly */
+            }
+          }),
+        )
         if (dead) return
         let live = reb && reb.kind === 'runnable' ? reb.targets : norm.filter((t) => t.pct > 0)
         // NATIVE-ETH BUY TARGETS RESOLVE TO THE CHAIN'S WETH (the owner live
@@ -1791,6 +1930,34 @@ export function PortfolioFlow({
         const NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
         const nativeSells = allSells.filter((s) => s.address.toLowerCase() === NATIVE)
         const erc20Sells = allSells.filter((s) => s.address.toLowerCase() !== NATIVE)
+        // THE SALE FLOOR'S LIVE BASIS (the owner live 2026-08-18, the CASHCAT
+        // wall): ask the routed lane for each sale's OWN enforced minimum at
+        // build time, so the floor is a number a lane actually guarantees —
+        // never only the indexer's laggy spot. A failed read costs nothing:
+        // the est basis stands, exactly as before.
+        setRunReviewPhase(`pricing ${erc20Sells.length || 'the'} sale${erc20Sells.length === 1 ? '' : 's'} on the live routes…`)
+        await Promise.all(
+          erc20Sells.map(async (se) => {
+            try {
+              const settlement = settlementFor(se.chainId)
+              if (!settlement) return
+              const q = await fetchLifiQuote({
+                chainId: se.chainId,
+                fromToken: se.address as `0x${string}`,
+                toToken: settlement,
+                fromAmount: BigInt(se.sellRaw),
+                fromAddress: address as `0x${string}`,
+                slippageBps: DEFAULT_SLIPPAGE_BPS,
+              })
+              const dec = settlementDecimalsFor(se.chainId)
+              const cents = Number(q.toAmountMin / 10n ** BigInt(Math.max(0, dec - 2)))
+              if (Number.isFinite(cents) && cents > 0) (se as { liveMinCents?: number }).liveMinCents = cents
+            } catch {
+              /* est basis stands — the routed lanes re-floor at run time anyway */
+            }
+          }),
+        )
+        if (dead) return
         setRunReviewPhase(`reading the market for ${live.length + allSells.length} asset${live.length + allSells.length === 1 ? '' : 's'}…`)
         const market = await withPhaseDeadline(
           defaultMarketReader([
@@ -4230,27 +4397,87 @@ export function PortfolioFlow({
                                               not what a person is deciding with — the question they are
                                               actually answering is "what is the least I could walk away
                                               with", so that is the number shown. */}
-                                          {l.thinMarket && l.toleranceBps != null && st?.status !== 'done' && (
-                                            <p className="mt-1 text-[12px] leading-relaxed text-amber-200/70">
-                                              thin pool{l.impactBps != null ? ` — this size moves the price about ${Math.round(l.impactBps / 100)}%` : ''}, and it
-                                              can move again before it lands. You get at least $
-                                              {(
-                                                (l.budgetUsdCents / 100) *
-                                                (1 - (l.impactBps ?? 0) / 10_000) *
-                                                (1 - l.toleranceBps / 10_000)
-                                              ).toLocaleString(undefined, { maximumFractionDigits: 0 })}{' '}
-                                              worth, or nothing is bought.
-                                            </p>
-                                          )}
+                                          {l.thinMarket && l.toleranceBps != null && st?.status !== 'done' && (() => {
+                                            const ovKey = `${c.chainId}:${l.asset.toLowerCase()}`
+                                            const ov = floorOverrides[ovKey]
+                                            const floorUsd = (
+                                              (l.budgetUsdCents / 100) *
+                                              (1 - (l.impactBps ?? 0) / 10_000) *
+                                              (1 - (typeof ov === 'number' ? ov : l.toleranceBps) / 10_000)
+                                            ).toLocaleString(undefined, { maximumFractionDigits: 0 })
+                                            return (
+                                              <div className="mt-1">
+                                                <p className="text-[12px] leading-relaxed text-amber-200/70">
+                                                  thin pool{l.impactBps != null ? ` — this size moves the price about ${Math.round(l.impactBps / 100)}%` : ''}, and it
+                                                  can move again before it lands.{' '}
+                                                  {ov === 'none'
+                                                    ? 'NO FLOOR: you accept whatever the pool gives — possibly far less than shown, and no revert will save it.'
+                                                    : `You get at least $${floorUsd} worth, or nothing is bought.`}
+                                                </p>
+                                                {/* the protection dial (the owner 2026-08-17): per-run
+                                                    consent, offered ONLY on measured-thin legs — the
+                                                    read-failed class never gets a dial, and nothing here
+                                                    persists past this review */}
+                                                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                                  <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">protection</span>
+                                                  {([
+                                                    ['standard', undefined],
+                                                    ['loose · 20%', 2_000],
+                                                    ['none', 'none'],
+                                                  ] as const).map(([label, val]) => {
+                                                    const active = val === undefined ? ov === undefined : ov === val
+                                                    return (
+                                                      <button
+                                                        key={label}
+                                                        type="button"
+                                                        onPointerDown={capturePress}
+                                                        onClick={() =>
+                                                          setFloorOverrides((m) => {
+                                                            const next = { ...m }
+                                                            if (val === undefined) delete next[ovKey]
+                                                            else next[ovKey] = val
+                                                            return next
+                                                          })
+                                                        }
+                                                        aria-pressed={active}
+                                                        className={`press inline-flex h-7 items-center rounded-full border px-2.5 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
+                                                          active
+                                                            ? val === 'none'
+                                                              ? 'border-alert/60 bg-alert/15 text-alert'
+                                                              : 'border-amber-400/50 bg-amber-400/10 text-amber-200'
+                                                            : 'border-white/10 text-ink-faint hover:border-white/30 hover:text-ink-dim'
+                                                        }`}
+                                                      >
+                                                        {label}
+                                                      </button>
+                                                    )
+                                                  })}
+                                                </div>
+                                              </div>
+                                            )
+                                          })()}
                                           {/* the pre-flight's REFUSED verdict, in the module's own
                                               words — the chain was asked before consent (unknown
-                                              renders nothing, the module's law) */}
+                                              renders nothing, the module's law). THE DOOR RIDES IT
+                                              (owner 2026-08-17, the LNOC wall): a leg the
+                                              aggregator refuses at size can still fill on its own
+                                              market through the fee wrapper — the click carves it
+                                              into its own transaction, stated dollars and all. */}
                                           {(() => {
                                             const v = preflightMap.get(`${c.chainId}:${l.asset.toLowerCase()}`)
                                             const w = v ? preflightWords(l.symbol, v) : null
-                                            return w && st?.status !== 'done' ? (
-                                              <p className="mt-1 text-[12px] leading-relaxed text-amber-200/90">{w}</p>
-                                            ) : null
+                                            if (!w || st?.status === 'done') return null
+                                            const carved = directLegs.some((d) => d.chainId === c.chainId && d.asset.toLowerCase() === l.asset.toLowerCase())
+                                            return (
+                                              <div className="mt-1">
+                                                <p className="text-[12px] leading-relaxed text-amber-200/90">{w}</p>
+                                                {carved && (
+                                                  <p className="mt-0.5 font-mono text-[11px] text-cyan/90">
+                                                    ${showSymbol(l.symbol)} re-routes through its own market — runs with this plan ↓
+                                                  </p>
+                                                )}
+                                              </div>
+                                            )
                                           })()}
                                         </div>
                                       ))}
@@ -4263,11 +4490,27 @@ export function PortfolioFlow({
                                     {(c.refusals.length > 0 ||
                                       c.legs.some((l) => preflightMap.get(`${c.chainId}:${l.asset.toLowerCase()}`)?.kind === 'refused')) && (
                                       <div className="relative mt-3 space-y-1.5">
-                                        {c.refusals.map((r) => (
-                                          <p key={`${r.symbol}:${r.reason}`} className="text-[13px] leading-relaxed text-amber-200/80">
-                                            {r.reason}
-                                          </p>
-                                        ))}
+                                        {c.refusals.map((r) => {
+                                          // A refused leg with a nameable draft target AUTO-CARVES
+                                          // (the owner 2026-08-18: routing decisions happen in the
+                                          // background) — the effect below adds it to the direct
+                                          // lane; this row states the re-route, never asks.
+                                          const target = r.symbol
+                                            ? norm.find((t) => t.asset.chainId === c.chainId && t.asset.symbol === r.symbol)
+                                            : undefined
+                                          const carved =
+                                            !!target && directLegs.some((d) => d.chainId === c.chainId && d.asset.toLowerCase() === target.asset.address.toLowerCase())
+                                          return (
+                                            <div key={`${r.symbol}:${r.reason}`}>
+                                              <p className="text-[13px] leading-relaxed text-amber-200/80">{r.reason}</p>
+                                              {carved && (
+                                                <p className="mt-0.5 font-mono text-[11px] text-cyan/90">
+                                                  ${showSymbol(target!.asset.symbol)} re-routes through its own market — runs with this plan ↓
+                                                </p>
+                                              )}
+                                            </div>
+                                          )
+                                        })}
                                         {/* THE DOOR RIDES EVERY REFUSAL ON THIS CARD, unconditionally
                                             (owner 2026-08-16, staring at a RequiredLegFailed preview
                                             refusal with no way forward: "also no retry button??").
@@ -4299,6 +4542,19 @@ export function PortfolioFlow({
                                         </a>
                                       )}
                                     </p>
+                                    {/* THE SIM-ONLY CLASS RE-ROUTES ITSELF (the owner
+                                        2026-08-18: "it should just do the decision/choice in
+                                        the background… it should just happen auto as part of
+                                        the flow"). RequiredLegFailed with the floor waived is
+                                        the AGGREGATOR refusing the batcher-as-taker at size —
+                                        an effect below auto-carves the named leg through the
+                                        fee wrapper and runs it as part of this flow; this line
+                                        only says where the leg went. */}
+                                    {st?.status === 'failed' && st.failedLegIndex != null && c.legs[st.failedLegIndex] != null && (
+                                      <p className="relative mt-1.5 font-mono text-[11px] text-cyan/90">
+                                        ${showSymbol(c.legs[st.failedLegIndex].symbol)} re-routes through its own market — running below ↓
+                                      </p>
+                                    )}
                                     {isActive(st) && <RunBeam accent="var(--color-cyan)" />}
                                   </div>
                                 )
@@ -4323,7 +4579,7 @@ export function PortfolioFlow({
                                   <p className={`relative mt-2.5 font-mono text-[10px] uppercase tracking-[0.14em] ${directRun.phase === 'done' ? 'text-teal' : directRun.phase === 'failed' ? 'text-amber-200/90' : directRun.phase === 'idle' ? 'text-ink-faint' : 'text-ink'}`}>
                                     {directRun.phase === 'idle' &&
                                       (directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) && INTERFACE_TAG_ADDRESS
-                                        ? `runs last · +${(batchFeeBpsFor(PRISM_CLAIM_CHAIN_ID) / 100).toFixed(1)}% fee`
+                                        ? `runs last · +${(wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID) / 100).toFixed(1)}% fee`
                                         : 'runs last')}
                                     {directRun.phase === 'quoting' && 'quoting…'}
                                     {directRun.phase === 'wallet' && 'check your wallet'}
@@ -4363,6 +4619,17 @@ export function PortfolioFlow({
                                   )}
                                 </div>
                               )}
+                              {/* THE DIRECT-LANE LEGS the user carved by clicking a
+                                  refusal/preflight door — each one leg like any other,
+                                  filling through the fee wrapper on its own market */}
+                              {directLegs.map((leg, i) => (
+                                <DirectLegCard
+                                  key={`${leg.chainId}:${leg.asset.toLowerCase()}`}
+                                  spec={leg}
+                                  autoRun={carveArmed && i === carveTurn}
+                                  onTerminal={() => setCarveTurn((t) => (t === i ? t + 1 : t))}
+                                />
+                              ))}
                               {/* SALES THAT SIGN WITH ANOTHER WALLET (recording 1205) —
                                   named, grouped, with the switch instruction; they run
                                   when that wallet is the signer (the review rebuilds on
@@ -4610,7 +4877,7 @@ export function PortfolioFlow({
                                               type="button"
                                               onPointerDown={capturePress}
                                               onClick={() => setBridgeChoice('bridge')}
-                                              className="spectral-btn press inline-flex h-12 items-center gap-2 rounded-full px-7 font-display text-[13px] font-bold uppercase tracking-[0.12em] text-void"
+                                              className="spectral-btn press inline-flex h-12 items-center gap-2 whitespace-nowrap rounded-full px-6 font-display text-[12px] font-bold uppercase tracking-[0.1em] text-void sm:px-7 sm:text-[13px] sm:tracking-[0.12em]"
                                             >
                                               Bridge it & run →
                                             </button>
@@ -4621,7 +4888,7 @@ export function PortfolioFlow({
                                                 setBridgeChoice('local')
                                                 setRunReview(null) // rebuild local-only; auto-runs when clean
                                               }}
-                                              className="press inline-flex h-12 items-center gap-2 rounded-full border border-white/15 px-7 font-display text-[13px] font-bold uppercase tracking-[0.12em] text-ink-dim hover:border-cyan/50 hover:text-ink"
+                                              className="press inline-flex h-12 items-center gap-2 whitespace-nowrap rounded-full border border-white/15 px-6 font-display text-[12px] font-bold uppercase tracking-[0.1em] text-ink-dim hover:border-cyan/50 hover:text-ink sm:px-7 sm:text-[13px] sm:tracking-[0.12em]"
                                             >
                                               Use each network’s own funds
                                             </button>
@@ -5434,10 +5701,12 @@ export function PortfolioFlow({
                 const subject = sellOverlayFor
                 setSellOverlayFor(null)
                 // same exit law as the buy lane (recording 1221): a finished
-                // sale lands on the portfolio with the sold basket glowing
+                // sale lands on the portfolio with the sold basket glowing —
+                // and leaves the queue, so the next carved sell opens itself
                 const run = address && subject ? loadThesisRun(address, thesisRef(subject.symbol), 'sell') : null
                 const p = run ? runProgress(run) : null
                 if (p && p.finished && p.done > 0 && subject) {
+                  setDirectBasketSells((prev) => prev.filter((b) => !(b.chainId === subject.chainId && b.address.toLowerCase() === subject.address.toLowerCase())))
                   writeRunLanded([`${subject.chainId}:${subject.address.toLowerCase()}`])
                   onCreated()
                   onClose()

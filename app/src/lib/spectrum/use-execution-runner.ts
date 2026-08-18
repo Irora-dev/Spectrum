@@ -10,7 +10,7 @@ import { deploymentFor, settlementDecimalsFor } from '../chain/deployments'
 import { appendExec, type ExecLogEntry } from './exec-log'
 import { initialRunState, runFundingPlan, type RunState } from './execution-runner'
 import type { FundingPlan, FundingStep } from './funding-plan'
-import { createRunnerEffects, planExecutable } from './runner-effects'
+import { createRunnerEffects, planExecutable, type RunnerEffectsContext } from './runner-effects'
 import { burnAssetFor, emptyPlanGate } from './portfolio-run-wiring'
 import type { ComposedPortfolioBatchBuy } from './portfolio-batcher'
 
@@ -64,6 +64,10 @@ export interface UseExecutionRunnerArgs {
   /** USD per whole native token — feeds the measured gasCostUsd the route
    *  comparator consumes. Null/omitted = unreadable, never zero. */
   nativeUsd?: (chainId: number) => number | null
+  /** The sale step's fee-wrapper lane, passed through VERBATIM to the effects
+   *  layer (its presence-gate law lives there: absent = today's routed lanes
+   *  byte-for-byte; present = wrapper-first on settlement-ending routes). */
+  directLane?: RunnerEffectsContext['directLane']
   logShape: RunnerLogShape
 }
 
@@ -194,6 +198,7 @@ export function useExecutionRunner(args: UseExecutionRunnerArgs) {
         burnComposable: (cid) => burnAssetFor(cid) != null,
         approvalsFor: args.approvalsFor,
         nativeUsd: args.nativeUsd,
+        directLane: args.directLane,
         writeExecLog: (entry) => appendExec(account, execEntryFor(args.logShape, entry, Date.now())),
         onState: setState,
         shouldStop: () => stopRef.current,

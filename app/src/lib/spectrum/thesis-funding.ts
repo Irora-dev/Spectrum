@@ -3,7 +3,7 @@ import { chainCfg } from '../chain/chains'
 import { deploymentFor, settlementDecimalsFor } from '../chain/deployments'
 import { clientFor } from '../chain/rpc'
 import { erc20BalanceAbi } from './abis-v2'
-import { FundingPlanContractError, type ChainNeed } from './funding-plan'
+import { FundingPlanContractError, type ChainNeed } from './plan-shared-types'
 import type { LegFunding, PerChainFunds } from './thesis-run-types'
 
 // ─────────────────────────────────────────────────────────────────────────────

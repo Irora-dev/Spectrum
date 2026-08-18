@@ -16,7 +16,7 @@ import {
 } from './portfolio-batcher'
 import { singleSwapImpactBps } from './floor-discipline'
 import { shownAtReviewSurface, type ShownStepReview } from './displayed-vs-signed'
-import type { PerChainFunds } from './thesis-run-types'
+import type { PerChainFunds } from './plan-shared-types'
 import type { ZeroExFetcher } from './zeroex-quote'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ export function buildRunReview(args: {
    *  priced through the SAME market read the buys use, floored, and handed to
    *  the funding plan as a real order-1 step. Undefined = the legacy buy-only
    *  shape, byte-identical. */
-  sells?: { chainId: number; address: string; symbol: string; sellRaw: string; decimals: number }[]
+  sells?: { chainId: number; address: string; symbol: string; sellRaw: string; decimals: number; liveMinCents?: number }[]
   /** the owner's bridge-consent ruling (2026-08-15): true = compose with each
    *  chain's own funds only — nothing travels, shortfalls refuse by chain. */
   localOnly?: boolean
@@ -292,7 +292,21 @@ export function buildRunReview(args: {
       refusals.push(`$${s.symbol}: this sale prices at nothing readable, so it is not planned`)
       continue
     }
-    const floorCents = Math.floor((estCents * (10_000 - DEFAULT_SLIPPAGE_BPS - SELL_FLOOR_DRIFT_BPS)) / 10_000)
+    // THE FLOOR'S BASIS IS A NUMBER SOMEONE GUARANTEES (the owner live
+    // 2026-08-18: a CASHCAT sale refused "market has moved" on every
+    // re-check — the indexer's spot price lags a dumping market by minutes,
+    // so an est-only floor was born unclearable and every rebuilt review
+    // inherited the same stale-high basis). When the caller fetched the live
+    // lane's own enforced minimum at build time, the floor is the LOWER of
+    // the two bases, each with the drift allowance — the /swap page's own
+    // floor→floor law, applied here. No live read → the est basis alone,
+    // exactly as before.
+    const estFloor = Math.floor((estCents * (10_000 - DEFAULT_SLIPPAGE_BPS - SELL_FLOOR_DRIFT_BPS)) / 10_000)
+    const liveFloor =
+      typeof s.liveMinCents === 'number' && Number.isFinite(s.liveMinCents) && s.liveMinCents > 0
+        ? Math.floor((s.liveMinCents * (10_000 - SELL_FLOOR_DRIFT_BPS)) / 10_000)
+        : null
+    const floorCents = liveFloor != null && liveFloor < estFloor ? liveFloor : estFloor
     if (floorCents <= 0) {
       refusals.push(`$${s.symbol}: this sale is too small to clear its own slippage floor, so it is not planned`)
       continue
@@ -713,6 +727,9 @@ export interface ComposeDeps {
    *  refusing a fundable plan because a balance read failed would be its own
    *  bug (the read-failed law). */
   settlementBalance?: (chainId: number, account: Address, token: Address) => Promise<bigint | null>
+  /** The review screen's per-leg protection overrides for a chain (lowercase
+   *  asset → consented ceiling bps | 'none'). Absent = no overrides. */
+  floorOverridesFor?: (chainId: number) => Record<string, number | 'none'> | undefined
 }
 
 /** The exact assembler input for one reviewed chain — PURE, exported so the
@@ -722,8 +739,13 @@ export function composeInputFor(
   chain: PortfolioChainReview,
   account: Address,
   reads: { batcher: Address; chainNowSec: number; gasPriceWei: bigint | null; nativeUsd: number | null; hopReserveUsd: number | null; feeRecipient: Address; feeBps?: number },
+  /** The review screen's per-leg protection overrides for THIS chain (keyed
+   *  by lowercase asset) — consent chosen after the review was built, so it
+   *  overlays here rather than riding the frozen review object. */
+  floorOverrides?: Record<string, number | 'none'>,
 ): Parameters<typeof assembleZeroExBatchBuyLive>[0] {
   return {
+    ...(floorOverrides && Object.keys(floorOverrides).length > 0 ? { floorOverrides } : {}),
     chainId: chain.chainId,
     targets: chain.targets,
     grossUsdCents: chain.grossCents,
@@ -808,15 +830,20 @@ export function composePortfolioStepFor(
       }
     }
     const assembled = await assembleZeroExBatchBuyLive(
-      composeInputFor(chain, account, {
-        batcher,
-        chainNowSec: await deps.chainNowSec(chainId),
-        gasPriceWei: await deps.gasPriceWei(chainId),
-        nativeUsd: await deps.nativeUsd(chainId),
-        hopReserveUsd: await deps.hopReserveUsd(chainId),
-        feeRecipient: deps.feeRecipient,
-        feeBps: deps.feeBps,
-      }),
+      composeInputFor(
+        chain,
+        account,
+        {
+          batcher,
+          chainNowSec: await deps.chainNowSec(chainId),
+          gasPriceWei: await deps.gasPriceWei(chainId),
+          nativeUsd: await deps.nativeUsd(chainId),
+          hopReserveUsd: await deps.hopReserveUsd(chainId),
+          feeRecipient: deps.feeRecipient,
+          feeBps: deps.feeBps,
+        },
+        deps.floorOverridesFor?.(chainId),
+      ),
       deps.fetchQuote,
     )
     return assembled.composed

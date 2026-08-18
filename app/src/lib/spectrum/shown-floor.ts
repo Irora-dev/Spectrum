@@ -1,4 +1,4 @@
-import { confirmSignableAmount } from './limit-price'
+import { confirmSignableAmount } from './signable-confirm'
 
 /**
  * THE SWAP CARD'S HALF OF THE DISPLAYED-VS-SIGNED LAW (audit 2026-08-07, closed

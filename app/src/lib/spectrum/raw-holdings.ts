@@ -67,6 +67,15 @@ export interface RawHolding {
    *  portfolio (like `fixture`) and EXEMPT from the dust fold — never fold
    *  what was explicitly asked for. */
   manual?: true
+  /** NO CREDIBLE MARKET (the owner 2026-08-18: a scam airdrop "shows up in
+   *  my portfolio — we need to filter out low liquidity tokens and
+   *  honeypots"): a DISCOVERED, never-hand-added token whose priced sweep
+   *  found no market at all. "Unpriced and visible" is the honest state for
+   *  CURATED tokens; for an airdrop nobody asked for it is a scam's stage.
+   *  Suspect rows leave every display surface and are COUNTED behind one
+   *  quiet line; pasting the address (manual-assets) remains the door for
+   *  the rare real token this bar catches early. */
+  suspect?: true
   /** In a linked-wallet GROUP read: the wallets this merged row is made of.
    *  Set by the merge (use-raw-holdings) so attribution survives the one-book
    *  collapse; absent on single-wallet reads. */
@@ -220,6 +229,7 @@ export async function fetchChainRawHoldings(
       const price = isDiscovered
         ? (dexPrices.get(token.address.toLowerCase()) ?? null)
         : await priceHolding(chainId, token.address as Address, token.decimals, ethUsd)
+      const isManual = manualSet.has(token.address.toLowerCase())
       return {
         chainId,
         address: token.address.toLowerCase(),
@@ -230,7 +240,9 @@ export async function fetchChainRawHoldings(
         verified: !isDiscovered,
         // hand-added rows keep their provenance whether the list, discovery,
         // or the paste itself surfaced them — the dust fold reads this flag
-        ...(manualSet.has(token.address.toLowerCase()) ? { manual: true as const } : {}),
+        ...(isManual ? { manual: true as const } : {}),
+        // the airdrop bar: discovered + no credible market + nobody asked
+        ...(isDiscovered && price == null && !isManual ? { suspect: true as const } : {}),
       } satisfies RawHolding
     }),
   )
@@ -253,6 +265,9 @@ export interface RawHoldingsResult {
   discoveryGaps: number
   /** Holdings visible but unpriceable right now. */
   unpriced: number
+  /** Discovered rows hidden by the no-credible-market bar (the airdrop/spam
+   *  cut) — surfaced as one quiet count line, never silently. */
+  suspectCount?: number
 }
 
 // ── pure combine: raw holdings join the basket look-through ────────────────

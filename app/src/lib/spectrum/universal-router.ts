@@ -113,3 +113,231 @@ export function encodeUrV3SwapExactIn(args: {
 export function urUsesSixFieldV3(chainId: number): boolean {
   return chainId === 4663
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V4 SHAPES — the generalized single-hop exact-in pair. Provenance, per shape:
+//  · ERC-20-out (encodeUrV4SwapExactInSingle): the SHIPPED prism/pool.ts
+//    encoder (encodePrismPoolSwap — carrying real mainnet buys since
+//    2026-07-30) lifted off its pinned PRISM constants. Byte-identity to that
+//    shipped encoder is pinned in universal-router.test.ts.
+//  · WETH-out sell (encodeUrV4SellToWeth): FORK-PROVEN by SpectrumContracts —
+//    test/fork/DirectSwapWrapperSellFork.t.sol (spectrum-contracts repo),
+//    4/4 on a real mainnet fork at block 25767000; test 1 is this exact
+//    shippable shape.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** UR command bytes + v4-periphery action bytes. VERIFIED — against the
+ *  deployed router's Etherscan source AND a real sell tx's decoded calldata,
+ *  by SpectrumContracts (test/fork/DirectSwapWrapperSellFork.t.sol in the
+ *  spectrum-contracts repo) — not recalled from memory. */
+export const UR_CMD_V4_SWAP = '0x10' as const
+export const UR_CMD_WRAP_ETH = '0x0b' as const
+export const V4_ACTION_SWAP_EXACT_IN_SINGLE = 0x06
+export const V4_ACTION_SETTLE_ALL = 0x0c
+export const V4_ACTION_TAKE = 0x0e
+export const V4_ACTION_TAKE_ALL = 0x0f
+/** ActionConstants.OPEN_DELTA — as a TAKE amount, 0 means "the whole open
+ *  delta": the lawful amount when the real output is only known post-swap. */
+export const V4_OPEN_DELTA = 0n
+
+const U128_MAX = (1n << 128n) - 1n
+
+/** A v4 PoolKey as the encoders take it (same field set the detector's
+ *  hooked-market readout and prism/pool.ts's PRISM_POOL_KEY carry). */
+export interface UrV4PoolKey {
+  currency0: Address
+  currency1: Address
+  fee: number
+  tickSpacing: number
+  hooks: Address
+}
+
+const V4_POOL_KEY_ABI = {
+  type: 'tuple',
+  components: [
+    { name: 'currency0', type: 'address' },
+    { name: 'currency1', type: 'address' },
+    { name: 'fee', type: 'uint24' },
+    { name: 'tickSpacing', type: 'int24' },
+    { name: 'hooks', type: 'address' },
+  ],
+} as const
+
+/** Pack action bytes into the actions `bytes` ('0x060c0f' style). */
+function packV4Actions(actions: readonly number[]): Hex {
+  return ('0x' + actions.map((a) => a.toString(16).padStart(2, '0')).join('')) as Hex
+}
+
+/** ExactInputSingleParams — the exact tuple layout the shipped prism encoder
+ *  proved on live mainnet (uint128 amounts; the byte-identity test pins this
+ *  helper to that encoder, so the two can never drift apart silently). */
+function encodeV4ExactInSingleParams(
+  poolKey: UrV4PoolKey,
+  zeroForOne: boolean,
+  amountIn: bigint,
+  amountOutMin: bigint,
+  hookData: Hex,
+): Hex {
+  return encodeAbiParameters(
+    [
+      {
+        type: 'tuple',
+        components: [
+          { ...V4_POOL_KEY_ABI, name: 'poolKey' },
+          { name: 'zeroForOne', type: 'bool' },
+          { name: 'amountIn', type: 'uint128' },
+          { name: 'amountOutMinimum', type: 'uint128' },
+          { name: 'hookData', type: 'bytes' },
+        ],
+      },
+    ],
+    [{ poolKey, zeroForOne, amountIn, amountOutMinimum: amountOutMin, hookData }],
+  )
+}
+
+/** uint128 range guard — the prism module's own law, kept verbatim. */
+function assertU128Amounts(amountIn: bigint, amountOutMin: bigint): void {
+  if (amountIn <= 0n || amountIn > U128_MAX || amountOutMin < 0n || amountOutMin > U128_MAX) {
+    throw new Error('Amount out of range.')
+  }
+}
+
+const NATIVE = '0x0000000000000000000000000000000000000000'
+
+/**
+ * Generalized v4 single-hop exact-in swap → COMPLETE execute() calldata for
+ * the wrapper's `poolData`. This is prism/pool.ts's encodePrismPoolSwap
+ * (actions 0x06 SWAP_EXACT_IN_SINGLE ‖ 0x0c SETTLE_ALL ‖ 0x0f TAKE_ALL under
+ * the single 0x10 command, SETTLE_ALL(inputCurrency, amountIn),
+ * TAKE_ALL(outputCurrency, minOut)) generalized over any pool key — the
+ * shipped shape, pinned byte-identical in the test file.
+ *
+ * OUTPUT DELIVERY: TAKE_ALL credits MSG_SENDER — the address(1) sentinel,
+ * which the router maps to whoever called execute(). Through the direct-swap
+ * wrapper that is the WRAPPER itself, whose measured balance-delta floor
+ * then binds (the wrapper's whole security model).
+ *
+ * NATIVE OUTPUT IS REFUSED HERE: a native-out fill (currency0 = address(0),
+ * zeroForOne = false) would hand the wrapper raw ETH, which the gen-3 wrapper
+ * reverts (NativeOutputUnsupported). That sell must take WETH instead — use
+ * encodeUrV4SellToWeth, the fork-proven shape for exactly this case.
+ *
+ * `hookData` defaults '0x'. A non-empty value is the HOOKED-pool lane — e.g.
+ * FWA's dynamic-fee hook takes none, but the parameter exists for hooks that
+ * require data.
+ *
+ * `deadline` is caller-supplied unix seconds — this module stays pure (no
+ * Date.now() here; the prism module derives its own, which is why the
+ * byte-identity test pins the clock).
+ */
+export function encodeUrV4SwapExactInSingle(args: {
+  poolKey: UrV4PoolKey
+  zeroForOne: boolean
+  amountIn: bigint
+  amountOutMin: bigint
+  hookData?: Hex
+  deadline: number
+}): Hex {
+  assertU128Amounts(args.amountIn, args.amountOutMin)
+  const inputCurrency = args.zeroForOne ? args.poolKey.currency0 : args.poolKey.currency1
+  const outputCurrency = args.zeroForOne ? args.poolKey.currency1 : args.poolKey.currency0
+  if (outputCurrency.toLowerCase() === NATIVE) {
+    throw new Error(
+      'Native output is unsupported by this shape (the wrapper reverts NativeOutputUnsupported) — use encodeUrV4SellToWeth for a WETH-out sell.',
+    )
+  }
+  const swapParams = encodeV4ExactInSingleParams(
+    args.poolKey,
+    args.zeroForOne,
+    args.amountIn,
+    args.amountOutMin,
+    args.hookData ?? '0x',
+  )
+  const settleParams = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'uint256' }],
+    [inputCurrency, args.amountIn],
+  )
+  const takeParams = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'uint256' }],
+    [outputCurrency, args.amountOutMin],
+  )
+  const v4Input = encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [packV4Actions([V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, V4_ACTION_TAKE_ALL]), [swapParams, settleParams, takeParams]],
+  )
+  return encodeFunctionData({
+    abi: urExecuteAbi,
+    functionName: 'execute',
+    args: [concatHex([UR_CMD_V4_SWAP]), [v4Input], BigInt(args.deadline)],
+  })
+}
+
+/**
+ * THE FORK-PROVEN WETH-OUT SELL SHAPE — SpectrumContracts,
+ * test/fork/DirectSwapWrapperSellFork.t.sol (spectrum-contracts repo), 4/4 on
+ * a real mainnet fork at block 25767000; test 1 is this exact shippable
+ * shape. Sells `currency1` into a native-ETH pool (zeroForOne = false) and
+ * delivers WETH to the wrapper:
+ *
+ *   commands = 0x10 ‖ 0x0b            (V4_SWAP, then WRAP_ETH)
+ *   v4 actions = 0x06 ‖ 0x0c ‖ 0x0e   (SWAP_EXACT_IN_SINGLE, SETTLE_ALL,
+ *                                      TAKE — TAKE, not TAKE_ALL)
+ *   TAKE(native, ADDRESS_THIS, OPEN_DELTA) leaves the native output ON THE
+ *   ROUTER; WRAP_ETH(MSG_SENDER, CONTRACT_BALANCE) then wraps the router's
+ *   WHOLE balance and delivers the WETH to the wrapper, whose measured
+ *   balance-delta floor binds.
+ *
+ * ⚠⚠ THE ONE WORD THAT MUST NEVER REGRESS: WRAP_ETH's amount is an EXACT
+ * amount, NOT a floor. Passing minOut there instead of the CONTRACT_BALANCE
+ * sentinel strands realOutput − minOut as native ETH on the router — where
+ * ANY stranger's SWEEP command takes it (DirectSwapWrapperSellFork.t.sol
+ * test 2 makes that theft executable on the fork; that run is why w-0's
+ * first sell shape was scrapped, 2026-08-16). CONTRACT_BALANCE is the ONLY
+ * lawful WRAP_ETH amount here.
+ */
+export function encodeUrV4SellToWeth(args: {
+  poolKey: UrV4PoolKey
+  amountIn: bigint
+  amountOutMin: bigint
+  hookData?: Hex
+  deadline: number
+}): Hex {
+  if (args.poolKey.currency0.toLowerCase() !== NATIVE) {
+    throw new Error('encodeUrV4SellToWeth needs a native-ETH pool (currency0 = address(0)).')
+  }
+  assertU128Amounts(args.amountIn, args.amountOutMin)
+  // The slippage floor rides in the SWAP params (amountOutMinimum) — enforced
+  // by the pool fill itself, so it never needs restating at the wrap step.
+  const swapParams = encodeV4ExactInSingleParams(
+    args.poolKey,
+    false, // selling currency1 for native currency0
+    args.amountIn,
+    args.amountOutMin,
+    args.hookData ?? '0x',
+  )
+  const settleParams = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'uint256' }],
+    [args.poolKey.currency1, args.amountIn],
+  )
+  // TAKE (0x0e), not TAKE_ALL: recipient ADDRESS_THIS keeps the native output
+  // on the router for the wrap step; OPEN_DELTA (0) = the full open delta.
+  const takeParams = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+    [args.poolKey.currency0, UR_ADDRESS_THIS, V4_OPEN_DELTA],
+  )
+  const v4Input = encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [packV4Actions([V4_ACTION_SWAP_EXACT_IN_SINGLE, V4_ACTION_SETTLE_ALL, V4_ACTION_TAKE]), [swapParams, settleParams, takeParams]],
+  )
+  // ⚠ CONTRACT_BALANCE, exactly — see the block comment above for why any
+  // other word here is an executable donation (fork test 2).
+  const wrapInput = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'uint256' }],
+    [UR_MSG_SENDER, UR_CONTRACT_BALANCE],
+  )
+  return encodeFunctionData({
+    abi: urExecuteAbi,
+    functionName: 'execute',
+    args: [concatHex([UR_CMD_V4_SWAP, UR_CMD_WRAP_ETH]), [v4Input, wrapInput], BigInt(args.deadline)],
+  })
+}

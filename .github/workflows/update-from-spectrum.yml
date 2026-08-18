@@ -65,6 +65,11 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git remote add upstream https://github.com/Irora-dev/Spectrum.git
           git fetch upstream main
+          # OPERATOR-OWNED files resolve to the FORK's side automatically on
+          # conflict: brand and site config are written by the operator's own
+          # wizard, and "keep mine" is the only right answer for them. Real
+          # code conflicts still stop with the file list — never a guess.
+          OPERATOR_OWNED='app/src/brand.config.ts app/src/site.config.json'
           if git merge --no-edit upstream/main; then
             if git push origin HEAD; then
               echo "✅ Updated by merge from Irora-dev/Spectrum@$(git rev-parse --short upstream/main)." >> "$GITHUB_STEP_SUMMARY"
@@ -76,10 +81,31 @@ jobs:
               exit 1
             fi
           else
-            echo "⛔ MERGE CONFLICT — your edits and the update changed the same lines, and only you can pick the right side. Locally:" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo "git remote add spectrum https://github.com/Irora-dev/Spectrum.git 2>/dev/null; git fetch spectrum main && git merge spectrum/main   # resolve, commit, push" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            git merge --abort
-            exit 1
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            LEFTOVER=""
+            for f in $CONFLICTS; do
+              case " $OPERATOR_OWNED " in
+                *" $f "*) git checkout --ours -- "$f" && git add "$f" ;;
+                *) LEFTOVER="$LEFTOVER $f" ;;
+              esac
+            done
+            if [ -z "$LEFTOVER" ] && git commit --no-edit; then
+              if git push origin HEAD; then
+                echo "✅ Updated. Your own brand/site config conflicted with the update and was KEPT AS YOURS (the operator owns those files): $CONFLICTS" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "⚠️ Merge resolved (your brand/site config kept) but the push was refused — usually a workflow-file update the Actions token may not write. Pull locally and push." >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
+            else
+              echo "⛔ MERGE CONFLICT — your edits and the update changed the same lines, and only you can pick the right side. The files:" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              git diff --name-only --diff-filter=U >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo "Locally:" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo "git remote add spectrum https://github.com/Irora-dev/Spectrum.git 2>/dev/null; git fetch spectrum main && git merge spectrum/main   # resolve, commit, push" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              git merge --abort
+              exit 1
+            fi
           fi

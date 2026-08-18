@@ -78,18 +78,35 @@ export function BridgeRunnerGame() {
       if (y >= GROUND - 0.5) vy = -7.6
     }
 
+    // ⚠ SPACE MUST NEVER "CLICK" WHATEVER BUTTON STILL HOLDS FOCUS (the owner
+    // live 2026-08-18: "pressing space and playing this game sometimes closes
+    // the pop up before you're done — which breaks the whole flow"). A native
+    // button activates on Space at KEYUP, and a keydown preventDefault does
+    // not reliably cancel that activation — so the game (1) blurs whatever is
+    // focused the moment it mounts (the Bridge-it button that opened this
+    // flow was the killer), and (2) swallows Space on keyup too.
+    if (document.activeElement instanceof HTMLElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur()
+    const typingIn = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (typingIn(e.target)) return
       e.preventDefault()
+      if (document.activeElement instanceof HTMLElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur()
       jump()
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || typingIn(e.target)) return
+      e.preventDefault()
     }
     const onPointer = (e: PointerEvent) => {
       e.preventDefault()
       jump()
     }
     window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
     canvas.addEventListener('pointerdown', onPointer)
 
     const frame = (now: number) => {
@@ -173,6 +190,7 @@ export function BridgeRunnerGame() {
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
       canvas.removeEventListener('pointerdown', onPointer)
       ro.disconnect()
     }

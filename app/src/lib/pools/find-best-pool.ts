@@ -31,6 +31,7 @@ import {
   type BasketRoute,
   type BestPoolResult,
   type PoolCandidate,
+  type PoolKey,
 } from './types'
 import { probeTransferFee, screenTokenIdentity } from './token-screen'
 import { V2_REJECTED_MESSAGE as V2_ONLY_SENTENCE, V2_REJECTION_CLAUSE, chainRejectsV2 } from './v2-legs'
@@ -330,11 +331,58 @@ async function v4DepthEth(client: Client, poolManager: Address, id: `0x${string}
   }
 }
 
+/** The key fields a hooked Initialize event carries (fee · tickSpacing ·
+ *  hooks); the pair is supplied by the caller because the scan fixed it. */
+export interface HookedInitLike {
+  fee: number
+  tickSpacing: number
+  hooks: Address
+}
+
+/** Pick the deepest HOOKED pool and return its FULL v4 pool key + depth —
+ *  hooked pools can't be basket routes, but the direct-swap lane can trade
+ *  them through the UniversalRouter (encodeUrV4SwapExactInSingle's hookData
+ *  lane), so the detector now keeps the key it used to throw away.
+ *
+ *  `depths[i]` belongs to `hooked[i]`; iteration is over the DEPTHS list, so
+ *  the caller's read cap (first 6 hooked ids, unchanged) is the boundary —
+ *  an unread init can never be selected. -1 (the read-failure sentinel) and
+ *  0-depth entries never win; null when nothing read > 0. */
+export function deepestHookedPool(
+  hooked: readonly HookedInitLike[],
+  depths: readonly number[],
+  pair: { currency0: Address; currency1: Address },
+): (PoolKey & { depthEth: number }) | null {
+  let best: (PoolKey & { depthEth: number }) | null = null
+  for (let i = 0; i < depths.length; i++) {
+    const init = hooked[i]
+    const depthEth = depths[i]
+    if (!init || !(depthEth > 0)) continue
+    if (!best || depthEth > best.depthEth) {
+      best = {
+        currency0: pair.currency0,
+        currency1: pair.currency1,
+        fee: init.fee,
+        tickSpacing: init.tickSpacing,
+        hooks: init.hooks,
+        depthEth,
+      }
+    }
+  }
+  return best
+}
+
 async function findV4(
   client: Client,
   cfg: Pick<ChainCfg, 'chainId'> & { poolManager: Address },
   asset: Address,
-): Promise<{ candidates: PoolCandidate[]; partial: V4ScanGap; depthCheckFailed?: boolean; hookedDepthEth?: number }> {
+): Promise<{
+  candidates: PoolCandidate[]
+  partial: V4ScanGap
+  depthCheckFailed?: boolean
+  hookedDepthEth?: number
+  hookedDeepest?: (PoolKey & { depthEth: number }) | null
+}> {
   const scan = await scanV4Initialize(
     client,
     cfg.chainId,
@@ -352,12 +400,12 @@ async function findV4(
   // Concurrent depth reads: many-pool memecoins meant dozens of sequential
   // round-trips against rate-limited public RPCs (a visible stall); the batching
   // client coalesces them into Multicall3 instead of N sequential round-trips.
-  const hookedIds: `0x${string}`[] = []
+  const hooked: V4Init[] = []
   const eligible = inits.filter((init) => {
     if (seen.has(init.id)) return false
     seen.add(init.id)
     if (init.hooks.toLowerCase() !== zeroAddress) {
-      hookedIds.push(init.id) // rejected as a ROUTE — but its depth still tells the venue story
+      hooked.push(init) // rejected as a ROUTE — but its depth (and now its KEY) still tells the venue story
       return false
     }
     if (init.fee === DYNAMIC_FEE_FLAG) return false // reject dynamic-fee pools
@@ -365,10 +413,16 @@ async function findV4(
   })
   const [depths, hookedDepths] = await Promise.all([
     Promise.all(eligible.map((i) => v4DepthEth(client, cfg.poolManager, i.id))),
-    Promise.all(hookedIds.slice(0, 6).map((id) => v4DepthEth(client, cfg.poolManager, id))),
+    Promise.all(hooked.slice(0, 6).map((i) => v4DepthEth(client, cfg.poolManager, i.id))),
   ])
   const depthCheckFailed = depths.some((d) => d === -1)
-  const hookedDepthEth = hookedDepths.reduce((m, d) => Math.max(m, d > 0 ? d : 0), 0)
+  // The scan's pair filter fixed {currency0, currency1} = {native, asset}
+  // (native ETH is address(0), always the numerically-lower side), so every
+  // hooked init's key is pair + its own fee/tickSpacing/hooks. hookedDepthEth
+  // derives from the same selection (max positive read depth, 0 when none) —
+  // one source of truth, byte-identical to the old reduce.
+  const hookedDeepest = deepestHookedPool(hooked, hookedDepths, { currency0: NATIVE_ETH, currency1: asset })
+  const hookedDepthEth = hookedDeepest?.depthEth ?? 0
   const out: PoolCandidate[] = []
   eligible.forEach((init, idx) => {
     const depthEth = depths[idx]
@@ -394,7 +448,7 @@ async function findV4(
       depthUsd: null,
     })
   })
-  return { candidates: out, partial, depthCheckFailed, hookedDepthEth }
+  return { candidates: out, partial, depthCheckFailed, hookedDepthEth, hookedDeepest }
 }
 
 // ── V4Q (settlement-quoted hookless V4 — the stocks-fork lineage) ─────────────
@@ -609,7 +663,29 @@ export function hookedMarketDominates(hookedDepthEth: number, bestRoutableDepthE
   return hookedDepthEth >= Math.max(bestRoutableDepthEth, 0.01) * 2
 }
 
-export async function findBestPool(asset: Address, chainId: number): Promise<BestPoolResult> {
+/** BestPoolResult's hookedMarket, extended with the deepest hooked pool's
+ *  FULL KEY — so the direct-swap lane can COMPOSE a UniversalRouter swap
+ *  against the token's real (hooked) market instead of only warning about it.
+ *  Declared here rather than widening types.ts's BestPoolResult: strictly
+ *  additive — the base type every existing consumer imports is untouched, and
+ *  this narrowing is assignable wherever BestPoolResult is expected (the
+ *  dominance warning above keeps reading the same two depth fields). */
+export interface HookedMarketReadout {
+  hookedDepthEth: number
+  bestHooklessDepthEth: number
+  /** The deepest hooked candidate by depthEth ({native, asset} pair exactly
+   *  as the scan filters it; depth reads stay capped at the first 6 hooked
+   *  ids, unchanged). null when none read > 0. */
+  deepest: (PoolKey & { depthEth: number }) | null
+}
+
+/** What findBestPool actually returns: BestPoolResult with the hooked-market
+ *  readout extended (see HookedMarketReadout). */
+export interface BestPoolResultWithHookedKey extends BestPoolResult {
+  hookedMarket: HookedMarketReadout | null
+}
+
+export async function findBestPool(asset: Address, chainId: number): Promise<BestPoolResultWithHookedKey> {
   const cfg = chainCfg(chainId)
   // Honest failure, not silent degradation. The V4 PoolManager is the baseline —
   // the protocol's own pools ARE V4 — so a chain with one runs V4-only detection;
@@ -863,6 +939,9 @@ export async function findBestPool(asset: Address, chainId: number): Promise<Bes
     route: toRoute(best),
     candidates,
     warnings,
-    hookedMarket: hookedEth > 0 ? { hookedDepthEth: hookedEth, bestHooklessDepthEth: best.depthEth } : null,
+    hookedMarket:
+      hookedEth > 0
+        ? { hookedDepthEth: hookedEth, bestHooklessDepthEth: best.depthEth, deepest: v4.hookedDeepest ?? null }
+        : null,
   }
 }

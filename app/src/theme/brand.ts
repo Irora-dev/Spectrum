@@ -1,4 +1,5 @@
 // The kit's brand contract. An operator's chosen name + look lives in one
+import { KIT_PAGE_DEFAULTS } from './kit-defaults'
 // `brand.config.ts`; this file is the type + the pure helpers around it. Shapes mirror
 // `spectrum-mini/shared/brand.ts` so the two kits converge (the wizard writes this file).
 //
@@ -108,7 +109,14 @@ export interface BrandConfig {
 
 /** Default-on: a page shows unless it is explicitly turned off. */
 export function pageEnabled(pages: Partial<PageToggles> | undefined, key: PageKey): boolean {
-  return pages?.[key] !== false
+  // the operator's explicit value wins; absence falls through to the kit's
+  // policy layer (theme/kit-defaults.ts — upstream-owned, conflict-free),
+  // then to default-ON. Wizard-written forks never carried the shipped
+  // file's policy keys at all, so this layer is also what makes kit policy
+  // reach THEM (found in the 2026-08-17 fork-conflict ruling).
+  const own = pages?.[key]
+  if (own !== undefined) return own !== false
+  return KIT_PAGE_DEFAULTS[key] !== false
 }
 
 /** Stock surfaces: default-ON unless `stocks: false`. */

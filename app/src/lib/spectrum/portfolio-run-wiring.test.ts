@@ -584,8 +584,19 @@ describe('the burn route rides the composed batch', () => {
     expect(burnCall, 'the burn quote must be fetched on mainnet, targeting native ETH').toBeTruthy()
     expect(calls.some((c) => c.buyToken.toLowerCase() === PRISM_V2_HOOK.toLowerCase())).toBe(false)
     const requiredCommitted = assembled.composed.args[0].filter((l) => !l.optional).reduce((t, l) => t + l.sellAmount, 0n)
-    const cutCeiling = (requiredCommitted * BigInt(assembled.composed.args[3].feeBps) * 7n) / 80_000n
+    // GENERATION-AWARE CEILING (the owner's Base decode 2026-08-18): gen-1
+    // burns 7/8 of the fee; a feeGeneration-2 contract burns ALL of it, so
+    // the route sizes against the WHOLE cut there — and must still sit
+    // UNDER it (over reverts on-chain; the 0.5% haircut is the margin).
+    const gen2 = assembled.composed.generation === 2
+    const fullCut = (requiredCommitted * BigInt(assembled.composed.args[3].feeBps)) / 10_000n
+    const cutCeiling = gen2 ? fullCut : (fullCut * 7n) / 8n
     expect(burnCall!.sellAmountRaw <= cutCeiling).toBe(true) // under, never over — over reverts on-chain
+    if (gen2) {
+      // …and the eighth gen-1 left behind is RECLAIMED: a gen-2 route sized
+      // at the old 7/8 would divert 12.5% of every fee by arithmetic
+      expect(burnCall!.sellAmountRaw > (fullCut * 7n) / 8n).toBe(true)
+    }
     expect(burnCall!.sellAmountRaw > 0n).toBe(true)
     expect(assembled.composed.args[3].burnSwapData).not.toBe('0x')
   })

@@ -752,3 +752,134 @@ describe('the 0x slippage seam — our floor is the binding constraint, never 0x
     expect(S_MAX_THIN_BPS - MAX_QUOTE_DRIFT_BPS).toBeGreaterThanOrEqual(S_MAX_BPS - DEEP_MARKET_DRIFT_BPS)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PROTECTION DIAL (the owner, live 2026-08-17: "we need the user to
+// override the slippage settings… so you can have no protection to get it
+// across the line" — a 17%-impact $LNOC leg was un-fillable at any honest
+// floor). An override replaces legToleranceCeilingBps at the SINGLE derivation
+// point, so the tolerance 0x embeds, the bound the floor derives under and the
+// number the review states cannot disagree. Four laws: a NUMBER keeps the whole
+// floor discipline inside the user's consented ceiling; 'none' floors at 1 wei
+// and says so in words; the read-failed law OUTRANKS consent; no override is
+// the pre-dial path untouched. (Restored pins — the first write was lost to a
+// refused write; the dial itself shipped in 5f5ad0db with these laws stated.)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the protection dial — per-leg floor overrides, consent-scoped, read-failed law untouched', () => {
+  const seen: { buyToken: string; slippageBps: number | undefined }[] = []
+  // records what was asked and answers like an HONEST route at this depth —
+  // the plausibility bracket judges the quote regardless of any override, so
+  // a thin (or unreadable → spot-passthrough) leg must fill near its
+  // depth-adjusted expectation (the 0x-seam block's own trick, one closure up)
+  const dialRecorder = (liquidityUsd: number | null): ZeroExFetcher => async (args) => {
+    seen.push({ buyToken: args.buyToken.toLowerCase(), slippageBps: args.slippageBps })
+    const q = await honestFetcher(args)
+    const notionalUsd = Number(args.sellAmountRaw) / 1e6
+    const spotOut = (args.sellAmountRaw * 10n ** 12n) / 10n
+    const adjusted = depthAwareExpectation(spotOut, notionalUsd, liquidityUsd)
+    return { ...q, buyAmount: ((adjusted * 9_990n) / 10_000n).toString() }
+  }
+  const thinTargets = { targets: [target('AAA', AAVE, 100, { liquidityUsd: 2_000 })] }
+
+  it('a NUMERIC override replaces the thin ceiling at THE one seam — asked slippage, floor bound and review number are ONE number', async () => {
+    // un-overridden, this exact leg rides S_MAX_THIN_BPS (the natural ruling) —
+    // the dial must REPLACE that ceiling, not decorate alongside it
+    seen.length = 0
+    const natural = await assembleZeroExBatchBuyUnchecked(assembleInput(thinTargets), dialRecorder(2_000))
+    expect(seen[0].slippageBps).toBe(S_MAX_THIN_BPS)
+    expect('floorOverride' in natural.legs[0]).toBe(false)
+
+    seen.length = 0
+    const out = await assembleZeroExBatchBuyUnchecked(
+      assembleInput({ ...thinTargets, floorOverrides: { [AAVE.toLowerCase()]: 2_500 } }),
+      dialRecorder(2_000),
+    )
+    // surface 1 — the tolerance 0x is asked to embed in its calldata
+    expect(seen[0].slippageBps).toBe(2_500)
+    // surface 2 — the bound the floor derived under, on the audit trail
+    expect(out.legs[0].floor.ceilingBps).toBe(2_500)
+    // surface 3 — the consent marker the review face states
+    expect(out.legs[0].floorOverride).toBe(2_500)
+    // and the floor discipline still ran INSIDE the consented ceiling — a
+    // number is the same law at the user's own bound, never protection-off
+    expect(out.legs[0].floor.sBps).toBeLessThanOrEqual(2_500)
+    expect(out.legs[0].minBuyAmountRaw).toBe((out.legs[0].buyAmountRaw * BigInt(10_000 - out.legs[0].floor.sBps)) / 10_000n)
+    expect(out.legs[0].minBuyAmountRaw > 1n).toBe(true)
+  })
+
+  it("override 'none': the composed floor is EXACTLY 1 wei, the route is asked for 9,999 bps, and the marker carries NO FLOOR for the face to say in words", async () => {
+    // the un-waived leg carries a REAL floor — the contrast that keeps the
+    // 1-wei sentinel below meaning "consented", never "computed"
+    const guarded = await assembleZeroExBatchBuyUnchecked(assembleInput(thinTargets), dialRecorder(2_000))
+    expect(guarded.legs[0].minBuyAmountRaw > 1n).toBe(true)
+
+    seen.length = 0
+    const out = await assembleZeroExBatchBuyUnchecked(
+      assembleInput({ ...thinTargets, floorOverrides: { [AAVE.toLowerCase()]: 'none' } }),
+      dialRecorder(2_000),
+    )
+    // 1 wei satisfies the contract's "must state a floor" shape while
+    // protecting nothing — exactly what was consented to…
+    expect(out.legs[0].minBuyAmountRaw).toBe(1n)
+    // …in the bytes the chain actually settles, not only the audit view
+    expect(out.composed.args[0][0].minBuyAmount).toBe(1n)
+    // the route is asked for maximum tolerance — whatever the pool gives
+    expect(seen[0].slippageBps).toBe(9_999)
+    // the face keys on THIS marker to state NO FLOOR in words (PortfolioFlow's
+    // no-floor sentence renders from floorOverride === 'none', never from a bps)
+    expect(out.legs[0].floorOverride).toBe('none')
+    // and the audit trail says no-protection honestly — 10,000 bps consumed
+    // under the 9,999 ask, never a flattering derived-looking number
+    expect(out.legs[0].floor.sBps).toBe(10_000)
+    expect(out.legs[0].floor.ceilingBps).toBe(9_999)
+  })
+
+  it("an UNREADABLE depth still refuses under consent — the read-failed law outranks the dial, for 'none' AND for a number", async () => {
+    // "no protection" is a choice about a MEASURED market, not a blindfold:
+    // waiving on a depth we could not read hits the waive guard's own sentence
+    const unreadable = { targets: [target('AAA', AAVE, 100, { liquidityUsd: null })] }
+    await expect(
+      assembleZeroExBatchBuyUnchecked(
+        assembleInput({ ...unreadable, floorOverrides: { [AAVE.toLowerCase()]: 'none' } }),
+        dialRecorder(null),
+      ),
+    ).rejects.toThrow(/cannot be waived on a depth we could not read/)
+    // a NUMERIC override fares no better — the floor stage refuses the
+    // unmeasured market term exactly as it did before the dial existed
+    await expect(
+      assembleZeroExBatchBuyUnchecked(
+        assembleInput({ ...unreadable, floorOverrides: { [AAVE.toLowerCase()]: 2_500 } }),
+        dialRecorder(null),
+      ),
+    ).rejects.toThrow(/could not be measured/)
+    await expect(
+      assembleZeroExBatchBuyUnchecked(
+        assembleInput({ ...unreadable, floorOverrides: { [AAVE.toLowerCase()]: 'none' } }),
+        dialRecorder(null),
+      ),
+    ).rejects.toThrow(BatchComposeRefusal)
+  })
+
+  it('NO override = the pre-dial path byte-for-byte — the overlay absent, empty, or aimed at an asset not in the plan changes NOTHING', async () => {
+    const base = await assembleZeroExBatchBuyUnchecked(assembleInput(), honestFetcher)
+    const empty = await assembleZeroExBatchBuyUnchecked(assembleInput({ floorOverrides: {} }), honestFetcher)
+    const elsewhere = await assembleZeroExBatchBuyUnchecked(
+      // LINK is not in this plan — a consent for an absent asset reaches nothing
+      assembleInput({ floorOverrides: { [LINK.toLowerCase()]: 'none' } }),
+      honestFetcher,
+    )
+    const bytes = encodePortfolioBatchBuy(base.composed)
+    expect(encodePortfolioBatchBuy(empty.composed)).toBe(bytes)
+    expect(encodePortfolioBatchBuy(elsewhere.composed)).toBe(bytes)
+    // and the audit trail is the PRE-DIAL derivation, absolutely, not merely
+    // self-consistent: deep ceilings at S_MAX_BPS (the before-the-dial number),
+    // the floor equation intact, no consent marker anywhere
+    for (const out of [base, empty, elsewhere]) {
+      for (const l of out.legs) {
+        expect('floorOverride' in l).toBe(false)
+        expect(l.floor.ceilingBps).toBe(S_MAX_BPS)
+        expect(l.minBuyAmountRaw).toBe((l.buyAmountRaw * BigInt(10_000 - l.floor.sBps)) / 10_000n)
+      }
+    }
+  })
+})

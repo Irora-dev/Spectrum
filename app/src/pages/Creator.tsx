@@ -40,7 +40,7 @@ import { usePrefersReducedMotion } from '../lib/motion'
 import { ClaimHandle } from '../components/creator/ClaimHandle'
 import { useHandleForAddress } from '../lib/spectrum/use-handles'
 import { flowHref } from '../lib/spectrum/flow-link'
-import { loadDraft } from '../lib/spectrum/allocation'
+import { readPortfolioDraft } from '../lib/spectrum/portfolio-handoff'
 import { ResumeLaunchCard } from '../components/launch/ResumeLaunchCard'
 import type { Address } from 'viem'
 import { unseededBasketsOf } from '../lib/spectrum/unseeded-baskets'
@@ -573,7 +573,7 @@ function ProductActions({
 function StudioRow() {
   const { address } = useAccount()
   const publishFlow = flowHref('publish')
-  const draft = useMemo(() => (address ? loadDraft(address) : null), [address])
+  const draft = useMemo(() => readPortfolioDraft(address), [address])
   const targets = draft?.targets ?? []
   if (!publishFlow) return null
   return (

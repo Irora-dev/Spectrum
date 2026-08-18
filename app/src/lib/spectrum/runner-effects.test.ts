@@ -4,6 +4,7 @@ import { encodeErrorResult, encodeFunctionResult, parseAbi, zeroAddress, type Ad
 import { adversarialWallet, type AdversarialWalletScript } from './adversarial-wallet'
 import { asFundingRaw, batcherAbi, composeBatchBuy, type BatchSimResult, type ComposedBatchBuy } from './batcher'
 import { composePortfolioBatchBuy, portfolioBatcherAbi } from './portfolio-batcher'
+import { directSwapWrapperFor } from './direct-swap-wrapper'
 import { INTERFACE_TAG_ADDRESS } from '../config/operator'
 import { BATCH_FEE_BPS, batchFeeBpsFor } from './allocation'
 import { Venue, type PoolKey } from '../pools/types'
@@ -22,8 +23,11 @@ import {
   asPreviewRefusal,
   poisonFloor,
   resetConfirmedSettlementDecimals,
+  PREVIEW_NOT_TRUSTWORTHY,
 } from './runner-effects'
+import { clearFailures, readFailures } from './failure-log'
 import { friendlyRevert, PORTFOLIO_HINTS } from './decode-revert'
+import { REFUEL_GAS_BUDGET, REFUEL_HEADROOM_X } from './refuel'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE PLUMBING'S BIRTH AUDIT — the adversarial wallet drives the FULL stack
@@ -136,6 +140,11 @@ interface FakeClientScript {
   /** law S2b's decimals() answer — omit for the canonical 6; an Error stages
    *  an unreadable token (which must refuse, never default). */
   decimals?: number | Error
+  /** the covered-destination read (the 2026-08-18 refuel law): native balance
+   *  answered by getBalance. Omit and the read THROWS — which is today's
+   *  behavior for every test that never scripted one, and lands the runner on
+   *  its unreadable-balance refusal, never on a made-up zero. */
+  balance?: bigint | Error
 }
 function fakeClient(chainId: number, script: FakeClientScript = {}): PublicClient {
   let callIndex = 0
@@ -164,6 +173,12 @@ function fakeClient(chainId: number, script: FakeClientScript = {}): PublicClien
     },
     async getGasPrice() {
       return 10n ** 9n
+    },
+    async getBalance() {
+      const v = script.balance
+      if (v == null) throw new Error('balance not scripted')
+      if (v instanceof Error) throw v
+      return v
     },
     async readContract(req?: { functionName?: string }) {
       // decimals() serves law S2b's verification; everything else on this stub
@@ -1383,6 +1398,36 @@ describe('the portfolio engine — SpectrumPortfolioBatcher end to end', () => {
     )
     const simZ = (await createRunnerEffects(zero.ctx).simulate(batchStep(8453))) as MeasuredSimulatedStep
     expect(simZ.gasCostUsd).toBeNull()
+
+    // legacy rung at ZERO (the :1079 sibling the full-cap sweep found dark):
+    // the legacy path had only the NEGATIVE case pinned, so zero admitted
+    // there painted the same $0.00 gas claim the portfolio pin forbids
+    const zeroL = rig({ atomic: true }, { 8453: fakeClient(8453, { callData: [goodResult(lc)] }) }, { nativeUsd: () => 0 })
+    const simZL = (await createRunnerEffects(zeroL.ctx).simulate(batchStep(8453))) as MeasuredSimulatedStep
+    expect(simZL.gasCostUsd).toBeNull()
+  })
+
+  it('P6′ PROBES the preview once per chain — the poisoned call actually runs, and a preview that ACCEPTS it is RECORDED untrustworthy while the run proceeds (record-not-block, the block’s own doctrine)', async () => {
+    // a FRESH chain: the probe's once-per-session memory is module-wide, so
+    // 8453's slot was consumed by whichever earlier test simulated there first
+    clearFailures()
+    const CHAIN = 10
+    const pc = portfolioComposed(batchFeeBpsFor(CHAIN))
+    // ONE scripted answer serves both calls (the fake replays its last entry):
+    // the real sim parses fine, and the probe's poisoned bytes get ANSWERED
+    // instead of reverted — a preview that accepts the impossible
+    const r = rig(
+      { atomic: true },
+      { [CHAIN]: fakeClient(CHAIN, { callData: [portfolioResult(pc)] }) },
+      { engine: 'portfolio', composePortfolioStep: async () => pc, shownFor: () => shownFromPortfolio(pc, CHAIN) },
+    )
+    const sim = (await createRunnerEffects(r.ctx).simulate(batchStep(CHAIN))) as MeasuredSimulatedStep
+    expect(sim.floorHolds).toBe(true) // records, never blocks
+    expect(
+      readFailures().some((f) => f.chainId === CHAIN && f.message === PREVIEW_NOT_TRUSTWORTHY),
+      'the poisoned self-test never ran or never recorded — a control that cannot fail is not evidence',
+    ).toBe(true)
+    clearFailures()
   })
 
   it('the happy path runs to done through compose → laws → gate → preview → P6′', async () => {
@@ -1725,6 +1770,46 @@ describe('the bridge step — quote-verbatim, approve-first, arrival-by-oracle',
     expect(state.steps[0].message).toMatch(/approval before this transfer did not confirm/)
     expect(r.sentTxs.filter((t) => t.chainId === 1 && t.data === BRIDGE_DATA)).toHaveLength(0)
   })
+
+  it('a destination that ALREADY CARRIES the top-up is covered: exactly-at-need proceeds with NO gas ask; one wei short refuses (the covered-wallet law, 2026-08-18)', async () => {
+    // The unreadable-price branch: no ctx.nativeUsd (this rig never sets one),
+    // so the top-up cannot be sized in from-token units and the ONLY question
+    // left is the covered-destination read. weiNeeded on 8453 at this stub's
+    // 1-gwei base fee is refuel.ts's own arithmetic: 1e9 × 3M × 2 = 6e15 wei,
+    // inside the [0.0005, 0.01] ETH clamps — computed here from the exported
+    // constants, never restated as a magic number.
+    const weiNeeded = 10n ** 9n * REFUEL_GAS_BUDGET * REFUEL_HEADROOM_X
+    const refuelStep: FundingStep = {
+      order: 1,
+      action: { kind: 'bridge', fromChainId: 1, toChainId: 8453, amountCents: 1_000, refuel: true, source: 'new-money' },
+    }
+    const fromClient = () =>
+      fakeClient(1, { allowance: 0n, receipts: [{ transactionHash: `0x${'a'.repeat(63)}1`, status: 'success', blockNumber: 1n }] })
+
+    // EXACTLY covered — the boundary IS the law: destNative === weiNeeded is
+    // not lacking, so the transfer proceeds and no gas leg rides the quote.
+    const quotesSeen: { fromAmountForGas?: bigint }[] = []
+    const covered = bridgeRig({
+      lifiQuote: async (req: unknown) => {
+        quotesSeen.push(req as { fromAmountForGas?: bigint })
+        return faithfulQuote() as never
+      },
+    })
+    ;(covered.ctx as { client: (id: number) => unknown }).client = (id: number) =>
+      id === 8453 ? fakeClient(8453, { balance: weiNeeded, callData: [goodResult(composedFor(8453))] }) : fromClient()
+    const sim = (await createRunnerEffects(covered.ctx).simulate(refuelStep)) as MeasuredSimulatedStep
+    expect((sim.request as { kind: string }).kind).toBe('bridge')
+    expect(quotesSeen).toHaveLength(1)
+    expect('fromAmountForGas' in quotesSeen[0]).toBe(false)
+
+    // one wei SHORT is genuinely uncovered — the unsizeable top-up refuses,
+    // naming what it could not do. Nothing was sent.
+    const short = bridgeRig()
+    ;(short.ctx as { client: (id: number) => unknown }).client = (id: number) =>
+      id === 8453 ? fakeClient(8453, { balance: weiNeeded - 1n, callData: [goodResult(composedFor(8453))] }) : fromClient()
+    await expect(createRunnerEffects(short.ctx).simulate(refuelStep)).rejects.toThrow(/arrival gas top-up/)
+    expect(short.sentTxs).toHaveLength(0)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1910,6 +1995,24 @@ describe('law S2b — settlement decimals: verified, scaled, fail-closed', () =>
     expect(state.steps[0].status).toBe('failed')
     expect(state.steps[0].message).toMatch(/decimals no real token has/)
     expect(r.sentTxs).toHaveLength(0)
+  })
+
+  it('the [2, 36] bounds are INCLUSIVE — a 2dp and a 36dp settlement both convert and run (the full-cap sweep found both edges dark)', async () => {
+    // $9.90 at 2dp = 990 raw — landing EXACTLY on the floor, so the edge
+    // re-proves S2's met-not-missed boundary on the way through
+    const r2 = rigAt({ allowance: 0n, decimals: 2, receipts: okReceipts }, 990n, { settlementDecimals: () => 2 })
+    const s2 = await runPlan(r2, [sellStep(1, 990)])
+    expect(s2.phase, s2.notes.join('|')).toBe('done')
+    resetConfirmedSettlementDecimals()
+    // a DIFFERENT sellRaw so the double-buy guard (which keys the plan, not
+    // the floor) reads this as a new plan, not a replay of the 2dp run
+    const step36: FundingStep = {
+      order: 1,
+      action: { kind: 'sell', chainId: 1, asset: SOLD, symbol: 'SLD', sellRaw: (4n * 10n ** 18n).toString(), decimals: 18, floorProceedsCents: 990 },
+    }
+    const r36 = rigAt({ allowance: 0n, decimals: 36, receipts: okReceipts }, 990n * 10n ** 34n, { settlementDecimals: () => 36 })
+    const s36 = await runPlan(r36, [step36])
+    expect(s36.phase, s36.notes.join('|')).toBe('done')
   })
 
   it('the verification is CACHED per (chain, token) — a later step never re-reads, so a mid-run RPC blip cannot refuse it', async () => {
@@ -2334,5 +2437,199 @@ describe('the sale fallback lane — LI.FI silent, the 0x proxy answers', () => 
     expect(zxCalled).toBe(false)
     expect(state.notes.join('|')).toMatch(/This sale could not be quoted:/)
     expect(r.sentTxs).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SALE STEP'S WRAPPER LANE (the owner's fee order, 2026-08-17: sells pay
+// the product fee too). These pins own the lane's CONDUCT inside the runner:
+// presence-gated (absent = today's behavior byte-for-byte), first when it
+// composes AND clears the plan's floor, exact pull-sized approvals to the
+// wrapper, verbatim proven bytes — and every refusal falls THROUGH to the
+// routed lanes instead of killing the sale.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the sale step’s wrapper lane — presence-gated, floor-first, pull-exact, fall-through', () => {
+  const SOLD3 = '0x4444444444444444444444444444444444444444' as Address
+  const WRAP_DATA = '0xfeefee0100000000000000000000000000000000000000000000000000000000000000cc' as Hex
+  const WRAPPER_1 = directSwapWrapperFor(1)!
+  const wlSellStep = (floor = 900): FundingStep => ({
+    order: 1,
+    action: { kind: 'sell', chainId: 1, asset: SOLD3, symbol: 'SLD3', sellRaw: (5n * 10n ** 18n).toString(), decimals: 18, floorProceedsCents: floor },
+  })
+  const sellRoute = (counter: 'settlement' | 'native' = 'settlement') =>
+    ({
+      ok: true as const,
+      route: {
+        chainId: 1,
+        asset: SOLD3,
+        assetDecimals: 18,
+        direction: 'sell' as const,
+        counter,
+        route: { kind: 'v3' as const, path: '0x00' as Hex, sixField: false, hubFee: 500, assetFee: 3000 },
+        depthUsd: 50_000,
+      },
+    })
+  // the lane's compose answer: pull = backed-out sell + fee, minBuy clears (or
+  // breaches) the plan's 6dp floor of 9_000_000
+  const composedAnswer = (minBuyRaw: bigint) => {
+    const pull = 5n * 10n ** 18n // the pull the fake lane reports (sell+fee ≤ sellRaw)
+    return {
+      ok: true as const,
+      swap: {
+        call: { to: WRAPPER_1, data: WRAP_DATA, value: 0n, feeRaw: 0n },
+        probedOutRaw: minBuyRaw + 100_000n,
+        minBuyRaw,
+        feeBps: 40,
+        feeRaw: 19_920_318_725_099_601n,
+        approval: { token: SOLD3, spender: WRAPPER_1, amountRaw: pull },
+        shown: { feeBps: 40, minBuyRaw, wrapper: WRAPPER_1 },
+      },
+    }
+  }
+  const wlRig = (over: Partial<RunnerEffectsContext> = {}) =>
+    rig(
+      { atomic: true, sendCalls: [], callsStatus: {} },
+      {
+        1: fakeClient(1, {
+          allowance: 0n,
+          receipts: [
+            { transactionHash: `0x${'a'.repeat(63)}1`, status: 'success', blockNumber: 1n },
+            { transactionHash: `0x${'a'.repeat(63)}2`, status: 'success', blockNumber: 2n },
+          ],
+        }),
+      },
+      {
+        settlementAddress: () => OTHER,
+        lifiQuote: async () => {
+          throw new Error('LI.FI must not be consulted when the wrapper lane rides')
+        },
+        ...over,
+      },
+    )
+
+  it('the lane rides when it composes and clears the floor: no LI.FI, approval = the PULL to the WRAPPER, bytes verbatim', async () => {
+    const r = wlRig({
+      directLane: {
+        discover: async () => sellRoute() as never,
+        quoteAndCompose: async () => composedAnswer(9_900_000n) as never,
+      },
+    })
+    const state = await runPlan(r, [wlSellStep()])
+    expect(state.phase, state.notes.join('|')).toBe('done')
+    expect(r.sentTxs).toHaveLength(2)
+    expect(r.sentTxs[0].to).toBe(SOLD3) // the approval, on the SOLD token…
+    // …approving the WRAPPER for the lane's exact pull (never the diamond)
+    expect(r.sentTxs[0].data).toContain(WRAPPER_1.slice(2).toLowerCase())
+    expect(r.sentTxs[1].to).toBe(WRAPPER_1)
+    expect(r.sentTxs[1].data).toBe(WRAP_DATA)
+    expect(r.sentTxs[1].value).toBe(0n)
+  })
+
+  it('a composed floor EXACTLY AT the plan’s floor RIDES the lane — met is met, the wrapper’s own exact-floor law mirrored here', async () => {
+    const r = wlRig({
+      directLane: {
+        discover: async () => sellRoute() as never,
+        quoteAndCompose: async () => composedAnswer(9_000_000n) as never, // == floorRaw exactly
+      },
+    })
+    const state = await runPlan(r, [wlSellStep()])
+    expect(state.phase, state.notes.join('|')).toBe('done')
+    expect(r.sentTxs[1].to).toBe(WRAPPER_1)
+    expect(r.sentTxs[1].data).toBe(WRAP_DATA)
+  })
+
+  it('a composed floor BELOW the plan’s floor falls through to LI.FI — the fee never breaches a floor silently', async () => {
+    let lifiAsked = false
+    const r = wlRig({
+      directLane: {
+        discover: async () => sellRoute() as never,
+        quoteAndCompose: async () => composedAnswer(8_999_999n) as never, // one under floorRaw 9_000_000
+      },
+      lifiQuote: (async () => {
+        lifiAsked = true
+        return {
+          tool: 'test-route',
+          toAmount: 10_000_000n,
+          toAmountMin: 9_900_000n,
+          approvalAddress: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae' as Address,
+          tx: { to: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae' as Address, data: '0xabcd' as Hex, value: 0n, gasLimit: null },
+          gasCostUsd: null,
+          crossChain: false,
+          nativeFeeRaw: 0n,
+          etaSec: null,
+        }
+      }) as never,
+    })
+    const state = await runPlan(r, [wlSellStep()])
+    expect(state.phase, state.notes.join('|')).toBe('done')
+    expect(lifiAsked).toBe(true)
+    expect(r.sentTxs[1].data).toBe('0xabcd') // the routed lane's bytes, not the wrapper's
+  })
+
+  it('a discover refusal falls through to LI.FI the same way', async () => {
+    let lifiAsked = false
+    const r = wlRig({
+      directLane: { discover: async () => ({ ok: false as const, reason: 'no pool' }) as never },
+      lifiQuote: (async () => {
+        lifiAsked = true
+        return {
+          tool: 'test-route',
+          toAmount: 10_000_000n,
+          toAmountMin: 9_900_000n,
+          approvalAddress: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae' as Address,
+          tx: { to: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae' as Address, data: '0xabcd' as Hex, value: 0n, gasLimit: null },
+          gasCostUsd: null,
+          crossChain: false,
+          nativeFeeRaw: 0n,
+          etaSec: null,
+        }
+      }) as never,
+    })
+    const state = await runPlan(r, [wlSellStep()])
+    expect(state.phase, state.notes.join('|')).toBe('done')
+    expect(lifiAsked).toBe(true)
+  })
+
+  it('a NATIVE sale never consults the lane — LI.FI is the native lane', async () => {
+    let discoverCalled = false
+    const r = wlRig({
+      directLane: {
+        discover: (async () => {
+          discoverCalled = true
+          return sellRoute() as never
+        }) as never,
+      },
+    })
+    const native: FundingStep = {
+      order: 1,
+      action: { kind: 'sell', chainId: 1, asset: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address, symbol: 'ETH', sellRaw: (10n ** 18n).toString(), decimals: 18, floorProceedsCents: 900 },
+    }
+    const state = await runPlan(r, [native])
+    expect(state.phase).toBe('refused') // the rig's lifi throws — the point is WHO was asked
+    expect(discoverCalled).toBe(false)
+  })
+
+  it('directLane ABSENT = today’s behavior byte-for-byte — the presence gate is the law', async () => {
+    let lifiAsked = false
+    const r = wlRig({
+      lifiQuote: (async () => {
+        lifiAsked = true
+        return {
+          tool: 'test-route',
+          toAmount: 10_000_000n,
+          toAmountMin: 9_900_000n,
+          approvalAddress: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae' as Address,
+          tx: { to: '0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae' as Address, data: '0xabcd' as Hex, value: 0n, gasLimit: null },
+          gasCostUsd: null,
+          crossChain: false,
+          nativeFeeRaw: 0n,
+          etaSec: null,
+        }
+      }) as never,
+    })
+    const state = await runPlan(r, [wlSellStep()])
+    expect(state.phase, state.notes.join('|')).toBe('done')
+    expect(lifiAsked).toBe(true)
+    expect(r.sentTxs[1].to.toLowerCase()).not.toBe(WRAPPER_1.toLowerCase())
   })
 })

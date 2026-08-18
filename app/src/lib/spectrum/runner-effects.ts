@@ -20,6 +20,8 @@ import { RunnerRefusal, type RunnerEffects, type SimulatedStep } from './executi
 import { showChainId, showSymbol } from './safe-copy'
 import { ALLOWANCE_HOLDER, createProxyZeroExFetcher, validateLegQuote, ZeroExQuoteRefusal, type ZeroExFetcher } from './zeroex-quote'
 import { probeWritable } from './submission-store'
+import { backOutWrapperFee, discoverDirectRoute, quoteAndComposeDirectSwap } from './direct-swap-lane'
+import { directSwapWrapperFor, wrapperFeeBpsFor } from './direct-swap-wrapper'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE WALLET PLUMBING (2026-08-04) — the effects the pure runner cannot do
@@ -125,6 +127,17 @@ export interface RunnerEffectsContext {
    *  proxy). Injected in tests; defaults to the proxy fetcher the token page
    *  already trades through. */
   zeroExQuote?: ZeroExFetcher
+  /** The sale step's WRAPPER lane (fee-charging direct route through
+   *  SpectrumDirectSwapWrapper). ⚠ PRESENCE-GATED, the `engine` field's own
+   *  law: the lane runs ONLY when the caller hands it in — a silent default
+   *  on a money path is the incident class this file refuses, and the real
+   *  discover/compose reach the network, which no hermetic test may do by
+   *  accident. Production callers pass the real functions; members left
+   *  undefined fall to them one by one. */
+  directLane?: {
+    discover?: typeof discoverDirectRoute
+    quoteAndCompose?: typeof quoteAndComposeDirectSwap
+  }
   lifiStatus?: typeof fetchLifiStatus
   /** WHICH CONTRACT THIS RUN SPEAKS (the executor migration, 2026-08-13).
    *  'legacy' (absent = legacy — the pre-migration default, byte-identical) =
@@ -584,8 +597,72 @@ export function createRunnerEffects(ctx: RunnerEffectsContext): RunnerEffects {
       // settlement token's VERIFIED decimals, refused on any disagreement).
       const settlementDec = await verifiedSettlementDecimals(client, ctx, chainId, settlement, scope)
       const floorRaw = centsToRawAt(step.action.floorProceedsCents, settlementDec)
+      // ── THE WRAPPER LANE, FIRST (the owner's fee order 2026-08-17: sells pay
+      // the product fee too — PrismBeat's measured finding was sells riding
+      // raw aggregator routes, feeless and invisible to the money map). When
+      // the sold asset routes to settlement through the direct-swap wrapper
+      // (a v3 path or a settlement-paired v4 pool), the sale rides it: 40 bps,
+      // 100% burn, FeeCharged on-chain. THE PLAN'S NUMBERS DO NOT MOVE — the
+      // fee is backed OUT of the outflow (pull = sell + fee ≤ the plan's
+      // sellRaw, never over) and S2's floor still binds on the wrapper's own
+      // enforced minimum (the settler of this lane): a floor the fee would
+      // breach refuses HERE, and the routed lanes below keep the sale alive —
+      // honest feeless coverage beats a dead sale. Native sales stay routed
+      // (LI.FI's native sentinel); an ETH-paired v4 route cannot deliver
+      // settlement and the lane refuses it by construction. Every branch that
+      // does not produce a PROVEN quote leaves `quote` null and changes
+      // nothing below — the wrapper lane can only add a lane, never break one.
+      let quote: LifiQuote | null = null
+      let approvalNeedRaw = sellRaw
+      const wrapperSeated = directSwapWrapperFor(chainId)
+      if (!isNativeSale && wrapperSeated) {
+        try {
+          const discover = ctx.directLane?.discover ?? discoverDirectRoute
+          const compose = ctx.directLane?.quoteAndCompose ?? quoteAndComposeDirectSwap
+          const found = await discover(chainId, asset, 'sell')
+          if (found.ok && found.route.counter === 'settlement') {
+            const backed = backOutWrapperFee(sellRaw, wrapperFeeBpsFor(chainId))
+            if (backed.sellRaw > 0n) {
+              const composed = await compose({
+                route: found.route,
+                sellAmountRaw: backed.sellRaw,
+                slippageBps: DEFAULT_SLIPPAGE_BPS,
+                holder: ctx.account,
+                nowSec: Math.floor((ctx.nowMs?.() ?? Date.now()) / 1000),
+                // the plan's floor IS the lane's floor (S2's number, wrapper-
+                // enforced on-chain) — without it the lane double-haircut and
+                // lost the floor race to the routed lanes on every default-
+                // slippage sale (measured live, the owner's CASHCAT sale)
+                minFloorRaw: floorRaw,
+              })
+              // the pull law: the wrapper takes sell + fee, so the exact
+              // approval is the LANE'S OWN number — a settlement-counter
+              // compose without one is malformed, and a hand-derived fallback
+              // here would be a second source for a pull the lane already
+              // owns (the mutation sweep flagged that arm as unreachable, so
+              // its absence now REFUSES the lane instead of hiding dead math)
+              if (composed.ok && composed.swap.approval != null && composed.swap.minBuyRaw >= floorRaw) {
+                quote = {
+                  tool: 'spectrum-wrapper',
+                  toAmount: composed.swap.probedOutRaw,
+                  toAmountMin: composed.swap.minBuyRaw,
+                  approvalAddress: wrapperSeated,
+                  tx: { to: composed.swap.call.to, data: composed.swap.call.data, value: composed.swap.call.value, gasLimit: null },
+                  gasCostUsd: null,
+                  crossChain: false,
+                  nativeFeeRaw: 0n,
+                  etaSec: null,
+                }
+                approvalNeedRaw = composed.swap.approval.amountRaw
+              }
+            }
+          }
+        } catch {
+          /* a lane refusal is not a sale refusal — the routed lanes below run */
+        }
+      }
       const quoteFn = ctx.lifiQuote ?? fetchLifiQuote
-      let quote: LifiQuote
+      if (quote == null)
       try {
         quote = await quoteFn({
           chainId,
@@ -684,9 +761,12 @@ export function createRunnerEffects(ctx: RunnerEffectsContext): RunnerEffects {
           args: [ctx.account, quote.approvalAddress],
         })) as bigint
         // pass the token+chain so a MEASURED direct-re-approve token skips the
-        // zero step and the user signs once instead of twice
-        const mode = approvalPlan(allowance, sellRaw, { chainId, token: asset })
-        const values = mode === 'none' ? [] : mode === 'zero-first' ? [0n, sellRaw] : [sellRaw]
+        // zero step and the user signs once instead of twice. The amount is
+        // the LANE'S OWN PULL: the routed lanes spend sellRaw, the wrapper
+        // lane pulls sell + fee (approvalNeedRaw carries whichever applies —
+        // the exact-approval law either way).
+        const mode = approvalPlan(allowance, approvalNeedRaw, { chainId, token: asset })
+        const values = mode === 'none' ? [] : mode === 'zero-first' ? [0n, approvalNeedRaw] : [approvalNeedRaw]
         approvals = values.map((value) => ({ token: asset, spender: quote.approvalAddress, value }))
       } catch {
         throw new RunnerRefusal('The sold token’s allowance could not be read, so the approval could not be planned. Nothing was sent.', scope)
@@ -761,12 +841,26 @@ export function createRunnerEffects(ctx: RunnerEffectsContext): RunnerEffects {
           )
         const usd = ctx.nativeUsd ? ctx.nativeUsd(toChainId) : null
         const units = refuelFromTokenUnits(weiNeeded, usd)
-        if (units == null)
-          throw new RunnerRefusal(
-            `Could not read a native-gas price on network ${showChainId(toChainId)} to size the arrival gas top-up — nothing was sent. Retry, or fund gas there separately.`,
-            'the network transfer',
-          )
-        if (units > 0n) fromAmountForGas = units
+        if (units == null) {
+          // AN UNREADABLE PRICE IS NOT ALWAYS A NEEDED TOP-UP (the owner live
+          // 2026-08-18: a whole plan refused here while his destination
+          // wallet already held gas). Before refusing, ask the one question
+          // that matters: does the destination ALREADY carry what the top-up
+          // would deliver? Covered → the transfer proceeds without one; only
+          // a top-up that is genuinely needed AND unsizeable refuses.
+          let destNative: bigint | null = null
+          try {
+            destNative = toClient ? await toClient.getBalance({ address: ctx.account }) : null
+          } catch {
+            destNative = null
+          }
+          if (destNative == null || destNative < weiNeeded)
+            throw new RunnerRefusal(
+              `Could not read a native-gas price on network ${showChainId(toChainId)} to size the arrival gas top-up — nothing was sent. Retry, or fund gas there separately.`,
+              'the network transfer',
+            )
+          // covered: no top-up rides this transfer
+        } else if (units > 0n) fromAmountForGas = units
       }
       const quoteFn = ctx.lifiQuote ?? fetchLifiQuote
       let quote: LifiQuote

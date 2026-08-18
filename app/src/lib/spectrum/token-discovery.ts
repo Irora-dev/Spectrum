@@ -287,7 +287,11 @@ export async function priceDiscovered(slug: string, addresses: readonly string[]
       // Robinhood Chain). Under it the holding stays UNPRICED and visible,
       // the honest state this module already promises; a genuinely-traded new
       // token crosses $1k of liquidity in its first hours.
-      const MIN_POOL_LIQUIDITY_USD = 1_000
+      // …and a seeded-just-over-the-floor ghost still fails the ACTIVITY bar:
+      // a real market trades; a stage does not (the owner 2026-08-18, the
+      // airdrop that beat the old floor).
+      const MIN_POOL_LIQUIDITY_USD = 2_500
+      const MIN_POOL_VOLUME_24H_USD = 50
       const best = new Map<string, { liq: number; price: number }>()
       for (const p of Array.isArray(pairs) ? pairs : []) {
         const addr = p.baseToken?.address?.toLowerCase()
@@ -296,6 +300,8 @@ export async function priceDiscovered(slug: string, addresses: readonly string[]
         if (price == null || !Number.isFinite(price) || price <= 0) continue
         const liq = p.liquidity?.usd ?? 0
         if (liq < MIN_POOL_LIQUIDITY_USD) continue
+        const vol24 = (p as { volume?: { h24?: number } }).volume?.h24 ?? 0
+        if (!(vol24 >= MIN_POOL_VOLUME_24H_USD)) continue
         if (liq >= (best.get(addr)?.liq ?? -1)) best.set(addr, { liq, price })
       }
       for (const [addr, v] of best) out.set(addr, v.price)

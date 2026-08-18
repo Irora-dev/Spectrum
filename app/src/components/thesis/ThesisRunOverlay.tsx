@@ -49,7 +49,8 @@ import { erc20BalanceAbi, swapRouterAbi } from '../../lib/spectrum/abis-v2'
 import { useNetworkSwitch, type NetworkSwitch } from '../WrongNetwork'
 import { ChainBadge } from '../ChainBadge'
 import { Bezel, EASE, Eyebrow } from '../home/Spine'
-import { BridgeRunnerGame } from '../allocate/BridgeRunnerGame'
+import { BridgeRunnerGame } from '../BridgeRunnerGame'
+import { RunBeam, RunProgressStyles } from '../run-progress'
 import {
   announceStep,
   centsToUsdcRaw,
@@ -1225,7 +1226,7 @@ export function ThesisRunOverlay({
       onClick={requestClose}
     >
       <div className="absolute inset-0 bg-void/90 backdrop-blur-md" aria-hidden />
-      <RunStyles />
+      <RunProgressStyles />
       <div
         ref={dialogRef}
         role="dialog"
@@ -1900,30 +1901,7 @@ function SuccessPlate({
  *  (the owner 2026-08-15 0008: "a little like moving light line below each card…
  *  keep that and use it") — the reuse law: the real component, never a
  *  lookalike. Hosts must also mount <RunProgressStyles /> once. */
-export function RunBeam({ accent }: { accent: string }) {
-  return (
-    <span aria-hidden className="pointer-events-none absolute inset-x-3 bottom-0 h-[2px] overflow-hidden">
-      <span className="trov-beam absolute inset-y-0 w-1/2" style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)` }} />
-    </span>
-  )
-}
-
-// ── self-contained keyframes (this overlay may not touch index.css) ─────────
-
-export function RunProgressStyles() {
-  return <RunStyles />
-}
-
-function RunStyles() {
-  return (
-    <style>{`
-@keyframes trov-beam { from { transform: translateX(-100%); } to { transform: translateX(200%); } }
-.trov-beam { animation: trov-beam 2.4s ease-in-out infinite; }
-@keyframes trov-shimmer { from { background-position: 200% 0; opacity: 1; } to { background-position: -60% 0; opacity: 0; } }
-.trov-shimmer { animation: trov-shimmer 1.6s ease-out 1 forwards; }
-@media (prefers-reduced-motion: reduce) {
-  .trov-beam, .trov-shimmer { animation: none; display: none; }
-}
-`}</style>
-  )
-}
+// moved to components/run-progress.tsx (the split's T7 — both products' run
+// surfaces mount these; a beam and a <style> tag should not drag this whole
+// runner into the portfolio side). Re-exported so callers are unchanged.
+export { RunBeam, RunProgressStyles }

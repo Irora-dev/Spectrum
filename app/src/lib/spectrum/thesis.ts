@@ -1,5 +1,5 @@
 import type { BasketSummary } from './basket-data'
-import type { ChainNeed } from './funding-plan'
+import type { ChainNeed } from './plan-shared-types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A THESIS — one idea a creator shipped, which the chain forced into several

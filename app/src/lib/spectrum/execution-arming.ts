@@ -5,7 +5,7 @@ import { SIMULATED, type AllocationDraft } from './allocation'
 import { isDevPreview } from './dev-preview'
 import { ZEROEX_COMPOSE_ENABLED } from './portfolio-batcher'
 import { showSymbol } from './safe-copy'
-import { isDemoLegAddress } from './thesis-run-types'
+import { isDemoLegAddress } from './plan-shared-types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EXECUTION ARMING — the one honest answer to "may THIS run be REAL?"

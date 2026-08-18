@@ -53,9 +53,8 @@ import { ThesisEditor } from '../components/ThesisEditor'
 import { PoweredByPrism } from '../components/PoweredByPrism'
 import { BundleForge } from '../components/BundleForge'
 import { resolveAsset, seedLaunchDraft } from '../components/launch/BasketBuilder'
-import { GUEST_SCOPE } from '../lib/spectrum/allocation'
 import { flowHref } from '../lib/spectrum/flow-link'
-import { seedDraftFromComposition } from '../lib/spectrum/seed-from-holdings'
+import { seedPortfolioDraftFrom } from '../lib/spectrum/portfolio-handoff'
 import { isRetryableDetection } from '../lib/pools'
 import { setActiveChainId } from '../lib/chain/active-chain'
 import { basketHref, chainFromSlug, resolveBasketRef } from '../lib/spectrum/short-url'
@@ -67,6 +66,7 @@ import { ClaimHandle } from '../components/creator/ClaimHandle'
 import { CreatorSetupModal } from '../components/creator/CreatorSetupModal'
 import { markTickerDeployed } from '../lib/spectrum/launch-journey'
 import { useHandleForAddress } from '../lib/spectrum/use-handles'
+import { refLinkFor } from '../lib/spectrum/referral'
 import { creatorPath } from '../lib/spectrum/handle-registry'
 import brand from '../brand.config'
 import { pageEnabled } from '../theme/brand'
@@ -99,9 +99,8 @@ function StartFromBasket({ holdings, chainId }: { holdings: Holding[]; chainId: 
   if (!flowHref('keep') || holdings.length < 2) return null
 
   function start() {
-    const scope = isConnected && address ? address : GUEST_SCOPE
-    seedDraftFromComposition(
-      scope,
+    seedPortfolioDraftFrom(
+      isConnected ? address : null,
       holdings.map((h) => ({ chainId, address: h.asset, symbol: h.symbol, weightPct: h.targetWeightPct })),
     )
     navigate('/create')
@@ -492,6 +491,49 @@ function CreatorByline({
   )
 }
 
+/** THE REFERRAL DOOR IN THE PILL ROW (owner 2026-08-18 0929: "a little click
+ *  to share your referral link… smallish icons with maybe like one word of
+ *  text"). One word, one icon, copies THIS basket's page with the viewer's
+ *  own ref — the sharer's claimed name when they have one, address otherwise
+ *  (ReferralCard's exact builder law; resolveRefInput has taken names since
+ *  desk 202). Hidden when no wallet is connected: with no identity there is
+ *  no referral, and a door to nowhere is worse than no door. */
+function RefLinkChip({ basket, chainId }: { basket: string; chainId: number }) {
+  const { address, isConnected } = useAccount()
+  const { lookup } = useHandleForAddress(address)
+  const [copied, setCopied] = useState(false)
+  if (!isConnected || !address) return null
+  const refWord = lookup.status === 'found' ? lookup.owner.display : address
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const path = typeof window !== 'undefined' ? window.location.pathname : `/basket/${chainId}/${basket}`
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(refLinkFor(refWord, origin, path))
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label="Copy your referral link for this basket"
+      title="Copy this page with your referral attached — buys through it credit you"
+      className={`press inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 font-mono text-[13px] transition-colors ${
+        copied ? 'border-teal/50 bg-teal/10 text-teal' : 'border-white/12 bg-white/[0.04] text-ink-dim hover:border-cyan/50 hover:text-cyan'
+      }`}
+    >
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </svg>
+      {copied ? 'Copied ✓' : 'Referral'}
+    </button>
+  )
+}
+
 /** The thesis alone — the byline moved to the hero's right column under the
  *  price (owner 2026-08-03 live: "created by can go in top right below price…
  *  horizontally with the thesis"). One component per hero column. */
@@ -510,13 +552,17 @@ function CreatorThesis({
     // INNER CARD (owner 2026-08-03 live: "add an inner card on the thesis
     // area in the basket hero") — a quiet glass surface lifting the creator's
     // words off the warp behind them. gap-6: within-card group step.
-    <div className="flex max-w-2xl flex-col gap-6 rounded-2xl border border-white/10 bg-black/30 p-5 backdrop-blur-md sm:p-6">
+    // LEGIBILITY PASS (owner 2026-08-18 0929 follow-up: "make the thesis text
+    // easier to read"): the thesis is the creator's words — the page's second
+    // read — and it sat in DIM ink at 15px on glass the warp bled through.
+    // Body ink, one step up in size, a book measure (62ch), steadier glass.
+    <div className="flex max-w-2xl flex-col gap-6 rounded-2xl border border-white/10 bg-black/45 p-5 backdrop-blur-md sm:p-6">
       <div>
         {meta?.tagline && (
-          <p className="max-w-[70ch] font-display text-lg font-bold leading-snug tracking-tight text-ink">{meta.tagline}</p>
+          <p className="max-w-[62ch] font-display text-lg font-bold leading-snug tracking-tight text-ink">{meta.tagline}</p>
         )}
         {meta?.thesis ? (
-          <p className={`max-w-[70ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-dim ${meta?.tagline ? 'mt-3' : ''}`}>
+          <p className={`max-w-[62ch] whitespace-pre-line text-[16px] leading-[1.7] text-ink ${meta?.tagline ? 'mt-3' : ''}`}>
             {meta.thesis}
           </p>
         ) : !meta?.tagline ? (
@@ -680,11 +726,9 @@ function MoneyStory({ ix, chainId }: { ix: BasketData; chainId: number }) {
           </>
         )}
       </div>
-      {!solid && (
-        <div className="mt-2 text-center font-mono text-[11px] text-ink-faint">
-          this basket is small enough that one trade can move these numbers. An indication, not a track record
-        </div>
-      )}
+      {/* the thin-book caveat line left on the owner's 2026-08-18 word
+          ("remove … text on the basket / bundle individual pages") — the
+          numbers stand on their own; the depth story lives in the docs */}
     </div>
   )
 }
@@ -1423,6 +1467,27 @@ export function Token() {
                   and the holdings header still counts the assets. */}
               {/* personal watchlist toggle for this basket (browser-only) */}
               <WatchButton basket={addr} chainId={chainId} variant="icon" className="h-8 w-8" />
+              {/* SHARE, RE-SURFACED IN THE ROW (owner 2026-08-18 0929, on
+                  creator-flow feedback: the share and referral doors are "too
+                  hidden" here). The standalone Share button left this page on
+                  the 2026-08-07 "people have the URL anyway" note; this is the
+                  recorded reversal, small — one icon in the pill family that
+                  raises the SAME ShareModal the launch banner and the ?share=1
+                  journey door raise. One surface, three doors. */}
+              <button
+                type="button"
+                onClick={() => setShareOpen(true)}
+                aria-label="Share this basket"
+                title="Share this basket — the card, share on X, copy the link"
+                className="press inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.04] text-ink-dim transition-colors hover:border-cyan/50 hover:text-cyan"
+              >
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+                  <path d="M16 6l-4-4-4 4" />
+                  <path d="M12 2v13" />
+                </svg>
+              </button>
+              <RefLinkChip basket={addr} chainId={chainId} />
             </div>
 
             {/* THE THESIS rides directly under the pills now (owner 2026-08-03

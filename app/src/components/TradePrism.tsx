@@ -12,10 +12,13 @@ import { clampSlippageBps } from '../lib/spectrum/hook-data'
 import { erc20ApproveAbi } from '../lib/spectrum/abis-v2'
 import { approvalPlan } from '../lib/spectrum/migrate-math'
 import { PRISM_CLAIM_CHAIN_ID, PRISM_V2_HOOK } from '../lib/prism/claim'
-import { PERMIT2, encodePrismPoolSwap, permit2Abi, quotePrismPool, universalRouterAddress } from '../lib/prism/pool'
-import { directSwapWrapperFor, swapWithFeeCall } from '../lib/spectrum/direct-swap-wrapper'
+import { PERMIT2, PRISM_POOL_KEY, encodePrismPoolSwap, permit2Abi, quotePrismPool, universalRouterAddress } from '../lib/prism/pool'
+import { directSwapWrapperFor, swapWithFeeCall, wrapperFeeBpsFor } from '../lib/spectrum/direct-swap-wrapper'
+import { lintWrapperCalldata } from '../lib/spectrum/calldata-lint'
+import { backOutWrapperFee } from '../lib/spectrum/direct-swap-lane'
+import { encodeUrV4SellToWeth } from '../lib/spectrum/universal-router'
+import { deploymentFor, feeGenerationFor } from '../lib/chain/deployments'
 import { INTERFACE_TAG_ADDRESS } from '../lib/config/operator'
-import { batchFeeBpsFor } from '../lib/spectrum/allocation'
 import { PixelRainbow } from './PoweredByPrism'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,16 +107,27 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
     queryFn: async (): Promise<
       { source: 'lifi'; toAmount: bigint; toAmountMin: bigint; lq: LifiQuote } | { source: 'pool'; toAmount: bigint; toAmountMin: bigint }
     > => {
-      // FEE-FIRST ON BUYS (owner 2026-08-16: "ensure fees are kept for stuff
-      // outside the main batcher"): with the wrapper seated, the POOL path
-      // leads — it is PRISM's real market (the hooked v4 pool aggregators
-      // cannot reach) and the wrapper captures the house fee. The aggregator
-      // becomes the fallback. Displayed source must match the executed one,
-      // so this order mirrors trade() exactly.
-      const wrapperSeated = dir === 'buy' && !!directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) && !!INTERFACE_TAG_ADDRESS
+      // FEE-FIRST, BOTH DIRECTIONS (owner 2026-08-16 "ensure fees are kept
+      // for stuff outside the main batcher"; sells joined 2026-08-17 once the
+      // contracts lane fork-confirmed the WETH-out payload and the
+      // feeGeneration-2 wrapper shipped the PRISM Permit2 skip): with the
+      // wrapper seated, the POOL path leads — it is PRISM's real market (the
+      // hooked v4 pool aggregators cannot reach) and the wrapper captures the
+      // house fee. The aggregator becomes the fallback. Displayed source must
+      // match the executed one, so this order — and the sell's backed-out
+      // input — mirrors trade() exactly.
+      const wrapperSeated =
+        !!directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) &&
+        (dir === 'buy' ? !!INTERFACE_TAG_ADDRESS : feeGenerationFor(PRISM_CLAIM_CHAIN_ID) === 2)
       const poolQuote = async () => {
         if (!universalRouterAddress()) throw new Error('No Universal Router configured.')
-        const out = await quotePrismPool(clientFor(PRISM_CLAIM_CHAIN_ID), dir, amountRaw)
+        // a wrapper SELL pulls sell + fee, so the fee backs OUT of the typed
+        // amount (you part with what you typed, never more) — the quoted
+        // input must be the same backed-out number the execution signs
+        const quoteIn =
+          dir === 'sell' && wrapperSeated ? backOutWrapperFee(amountRaw, wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID)).sellRaw : amountRaw
+        if (quoteIn <= 0n) throw new Error('Amount too small to quote.')
+        const out = await quotePrismPool(clientFor(PRISM_CLAIM_CHAIN_ID), dir, quoteIn)
         const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
         return { source: 'pool' as const, toAmount: out, toAmountMin: minOut }
       }
@@ -176,17 +190,28 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
       // display quote used — the shown source must be the executed source.
       setBusy('trade')
       const client = clientFor(PRISM_CLAIM_CHAIN_ID)
-      let exec: { to: `0x${string}`; data: `0x${string}`; value: bigint; gas?: bigint; spender: `0x${string}` | null }
-      // THE FEE RAIL (owner 2026-08-16: "ensure fees are kept for stuff
-      // outside the main batcher"): with the wrapper seated, BUYS lead with
-      // the POOL path — PRISM's real market, and the wrapper charges the
-      // house fee on top (fee/8 operator, 7/8 burned). Aggregator falls back.
+      let exec: {
+        to: `0x${string}`
+        data: `0x${string}`
+        value: bigint
+        gas?: bigint
+        spender: `0x${string}` | null
+        /** the wrapper's exact ERC-20 pull (sell + fee) when it differs from
+         *  amountRaw — the approval's number, never re-derived */
+        pull?: bigint
+        /** proceeds arrive as WETH (the wrapper cannot deliver native out) */
+        wethOut?: boolean
+      }
+      // THE FEE RAIL (owner 2026-08-16 "ensure fees are kept for stuff
+      // outside the main batcher"; the fee is 100% burn on a feeGeneration-2
+      // chain, 7/8-burn with an operator eighth on gen-1): with the wrapper
+      // seated the POOL path leads both directions. Aggregator falls back.
       const poolExec = async (): Promise<typeof exec> => {
         if (!universalRouterAddress()) throw new Error('No Universal Router configured.')
-        const out = await quotePrismPool(client, dir, amountRaw)
-        const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
-        const tx = encodePrismPoolSwap(dir, amountRaw, minOut)
         if (dir === 'buy') {
+          const out = await quotePrismPool(client, dir, amountRaw)
+          const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
+          const tx = encodePrismPoolSwap(dir, amountRaw, minOut)
           const wrapped = swapWithFeeCall({
             chainId: PRISM_CLAIM_CHAIN_ID,
             sellToken: null,
@@ -194,19 +219,65 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
             buyToken: PRISM_V2_HOOK,
             minBuyAmount: minOut,
             poolData: tx.data,
-            feeBps: batchFeeBpsFor(PRISM_CLAIM_CHAIN_ID),
+            // ⚠ the WRAPPER's rate, not the batcher's 25: no 0x skim exists
+            // on this lane (the ruled fee model 2026-08-16; this call
+            // undercharged at 25 until 2026-08-17)
+            feeBps: wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID),
             feeRecipient: INTERFACE_TAG_ADDRESS,
             nowSec: Math.floor(Date.now() / 1000),
           })
           if (wrapped) return { to: wrapped.to, data: wrapped.data, value: wrapped.value, spender: null }
+          return { ...tx, spender: null }
         }
-        // SELL = PRISM in → NATIVE out, which the wrapper refuses this
-        // generation (NativeOutputUnsupported). Sells keep the direct path
-        // until the WETH-out payload is fork-confirmed by the contracts lane
-        // (desk ask, 2026-08-16) — never a from-memory router command layout
-        // on a money lane. The Universal Router pulls ERC-20 input through
+        // SELL through the FEE RAIL (wired 2026-08-17 — the WETH-out payload
+        // the contracts lane fork-confirmed, DirectSwapWrapperSellFork.t.sol
+        // 4/4: WRAP_ETH carries the CONTRACT_BALANCE sentinel so nothing
+        // strands on the router, and the feeGeneration-2 build skips the
+        // Permit2 approve PRISM hard-refuses). PRISM in → WETH out, the same
+        // asset as ETH, unwrap any time. The wrapper PULLS sell + fee, so the
+        // fee backs OUT of the typed amount and the pull IS the approval.
+        const wrapper = directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID)
+        const weth = deploymentFor(PRISM_CLAIM_CHAIN_ID).weth
+        if (wrapper && weth && feeGenerationFor(PRISM_CLAIM_CHAIN_ID) === 2) {
+          const backed = backOutWrapperFee(amountRaw, wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID))
+          if (backed.sellRaw > 0n) {
+            const out = await quotePrismPool(client, dir, backed.sellRaw)
+            const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
+            const nowSec = Math.floor(Date.now() / 1000)
+            const poolData = encodeUrV4SellToWeth({
+              poolKey: PRISM_POOL_KEY,
+              amountIn: backed.sellRaw,
+              amountOutMin: minOut,
+              deadline: nowSec + 1200,
+            })
+            const wrapped = swapWithFeeCall({
+              chainId: PRISM_CLAIM_CHAIN_ID,
+              sellToken: PRISM_V2_HOOK,
+              sellAmount: backed.sellRaw,
+              buyToken: weth as `0x${string}`,
+              minBuyAmount: minOut,
+              poolData,
+              feeBps: wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID),
+              feeRecipient: INTERFACE_TAG_ADDRESS,
+              nowSec,
+            })
+            if (wrapped)
+              return {
+                to: wrapped.to,
+                data: wrapped.data,
+                value: wrapped.value,
+                spender: wrapper,
+                pull: backed.sellRaw + wrapped.feeRaw,
+                wethOut: true,
+              }
+          }
+        }
+        // No wrapper (or a pre-fee-model generation): the direct router path,
+        // native ETH out. The Universal Router pulls ERC-20 input through
         // Permit2, not a direct allowance — spender: null marks that path.
-        return { ...tx, spender: null }
+        const out = await quotePrismPool(client, dir, amountRaw)
+        const minOut = (out * BigInt(10_000 - slipBps)) / 10_000n
+        return { ...encodePrismPoolSwap(dir, amountRaw, minOut), spender: null }
       }
       const lifiExec = async (): Promise<typeof exec> => {
         const lq = await fetchLifiQuote({
@@ -219,7 +290,9 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
         })
         return { to: lq.tx.to, data: lq.tx.data, value: lq.tx.value, gas: lq.tx.gasLimit ?? undefined, spender: lq.approvalAddress }
       }
-      const wrapperSeated = dir === 'buy' && !!directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) && !!INTERFACE_TAG_ADDRESS
+      const wrapperSeated =
+        !!directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) &&
+        (dir === 'buy' ? !!INTERFACE_TAG_ADDRESS : feeGenerationFor(PRISM_CLAIM_CHAIN_ID) === 2)
       if (wrapperSeated) {
         try {
           exec = await poolExec()
@@ -239,16 +312,20 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
       if (dir === 'sell') {
         setBusy('approve')
         if (exec.spender) {
-          // Aggregator route: plain ERC-20 approve of ITS spender (house
-          // approvalPlan handles reset-to-zero tokens; PRISM is standard).
+          // Aggregator/wrapper route: plain ERC-20 approve of ITS spender
+          // (house approvalPlan handles reset-to-zero tokens; PRISM is
+          // standard toward normal spenders — only Permit2 approvals are the
+          // token's fixed-infinity special case). The amount is the route's
+          // own pull: the wrapper takes sell + fee, the aggregator amountRaw.
+          const need = exec.pull ?? amountRaw
           const allowance = await client.readContract({
             address: PRISM_V2_HOOK,
             abi: erc20ApproveAbi,
             functionName: 'allowance',
             args: [address, exec.spender],
           })
-          const plan = approvalPlan(allowance, amountRaw)
-          for (const value of plan === 'none' ? [] : plan === 'zero-first' ? [0n, amountRaw] : [amountRaw]) {
+          const plan = approvalPlan(allowance, need)
+          for (const value of plan === 'none' ? [] : plan === 'zero-first' ? [0n, need] : [need]) {
             const ah = await writeContractAsync({
               address: PRISM_V2_HOOK,
               abi: erc20ApproveAbi,
@@ -299,6 +376,19 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
         setBusy('trade')
       }
 
+      // THE CROSS-CHECK, then the simulation (two independent gates, in that
+      // order): when these bytes head for the fee wrapper, an independent
+      // decode re-judges the money laws — rate, exact native value, floor
+      // present, deadline horizon — before any RPC sees them. Strict: this
+      // lane has no consent surface, so every finding refuses in its own words.
+      if (exec.to === directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID)) {
+        const findings = lintWrapperCalldata({
+          data: exec.data,
+          value: exec.value,
+          expected: { nowSeconds: Math.floor(Date.now() / 1000), feeRecipient: INTERFACE_TAG_ADDRESS ?? undefined },
+        })
+        if (findings.length > 0) throw new Error(findings[0].sentence)
+      }
       // Simulate-then-sign (house rule): the exact bytes must pass eth_call
       // before a wallet ever sees them — a bad route/encoding stops HERE.
       await client.call({ account: address, to: exec.to, data: exec.data, value: exec.value })
@@ -323,6 +413,21 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
           )
           .reduce((acc, l) => acc + l.args.value, 0n)
         setDone({ label: `Bought ${fmtPrism(delivered)} PRISM`, hash })
+      } else if (exec.wethOut) {
+        // Wrapper route: proceeds arrive as WETH — measured from the WETH
+        // Transfer logs to the seller, never the quote. Same asset as ETH;
+        // the label says so in the house words.
+        const weth = deploymentFor(PRISM_CLAIM_CHAIN_ID).weth
+        const received = parseEventLogs({ abi: transferAbi, logs: receipt.logs, eventName: 'Transfer' })
+          .filter((l) => l.address.toLowerCase() === (weth ?? '').toLowerCase() && l.args.to.toLowerCase() === address.toLowerCase())
+          .reduce((acc, l) => acc + l.args.value, 0n)
+        setDone({
+          label:
+            received > 0n
+              ? `Sold ${fmtPrism(amountRaw)} PRISM for ${fmtEth(received)} WETH (wrapped ETH — same asset, unwrap any time)`
+              : `Sold ${fmtPrism(amountRaw)} PRISM`,
+          hash,
+        })
       } else {
         // ETH received = balance delta with this tx's own gas added back. If
         // something else moved the balance in the same block, say less, not more.
@@ -614,12 +719,13 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
               <p className="mt-3 text-center font-mono text-[10px] text-ink-faint">
                 Ethereum mainnet · the route enforces your minimum · what arrives is measured from the
                 transaction, never the quote{dir === 'sell' ? ' · selling approves the route exact-amount first' : ''}
-                {/* the fee this buy actually pays, stated where the buy is
+                {/* the fee this trade actually pays, stated where it is
                     signed (audit 2026-08-16: the wrapper's cut was charged and
                     disclosed nowhere on this card) — only when the wrapper is
-                    seated, which is when it is charged */}
-                {dir === 'buy' && directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) != null
-                  ? ` · a ${(batchFeeBpsFor(PRISM_CLAIM_CHAIN_ID) / 100).toFixed(1)}% Spectrum fee is added on top and buys & burns PRISM`
+                    seated, which is when it is charged. Sells state it too
+                    (wired 2026-08-17) plus the WETH arrival fact. */}
+                {directSwapWrapperFor(PRISM_CLAIM_CHAIN_ID) != null && (dir === 'buy' || feeGenerationFor(PRISM_CLAIM_CHAIN_ID) === 2)
+                  ? ` · a ${(wrapperFeeBpsFor(PRISM_CLAIM_CHAIN_ID) / 100).toFixed(1)}% Spectrum fee is ${dir === 'buy' ? 'added on top' : 'taken inside the amount you sell'} and buys & burns PRISM${dir === 'sell' ? ' · proceeds arrive as WETH (same as ETH, unwrap any time)' : ''}`
                   : ''}
               </p>
             </>

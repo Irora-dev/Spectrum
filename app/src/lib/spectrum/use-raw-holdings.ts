@@ -134,8 +134,16 @@ export function useRawHoldings(address: string | string[] | undefined) {
           /* fixture absent or failed to load — the real sweep stands alone */
         }
       }
+      // THE AIRDROP BAR (raw-holdings' `suspect` law): rows with no credible
+      // market and no explicit ask leave the book here — every surface
+      // downstream (bento, holdings, sweeps, exports) inherits the cut from
+      // this one seam — and the COUNT survives so the page can say so in one
+      // quiet line instead of hiding the hiding.
+      const suspects = holdings.filter((h) => h.suspect)
+      const visible = holdings.filter((h) => !h.suspect)
       return {
-        holdings,
+        holdings: visible,
+        suspectCount: suspects.length,
         chainsFailed: failedChains.size,
         /** Chains whose unlisted-token DISCOVERY failed or truncated — their
          *  books may be missing tokens nobody listed (never silent: audit
@@ -146,7 +154,7 @@ export function useRawHoldings(address: string | string[] | undefined) {
         // tell a per-chain row whether ITS figure is a real zero or a silence.
         failedChainIds: [...failedChains],
         unreadable,
-        unpriced: holdings.filter((h) => h.usd == null).length,
+        unpriced: visible.filter((h) => h.usd == null).length,
       }
     },
   })
