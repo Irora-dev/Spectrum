@@ -1,7 +1,7 @@
 {
-  "version": "2026.08.21c",
-  "note": "A discoverability release for the Bankr skill, measured against the live registry rather than against the contract alone. The skill's description now carries the natural-language triggers a selecting agent matches on, and tags beside them, so an agent can recognise when baskets are the job. Nothing about the server, its tools, or the safety model changed. The submission checklist also gained the registry README step it was missing.",
-  "impact": "safe",
+  "version": "2026.08.21d",
+  "note": "Four chrome fixes and one boot fix. The top menu no longer runs underneath the design toggle and the chain pill: it measures the room it actually has, steps entries into More when it runs short, and centres between the chrome rather than on the page when centring is what collides. Because the menu is absolutely positioned, that overlap was also swallowing the covered control's clicks. The banner carousel's active dot no longer paints a white box on the light plane. Light is now the plane a visitor lands on, the toggle still reaching the operator's own brand style, and an operator flips DEFAULT_MODE in app/src/theme/design-mode.ts to have their own style greet visitors instead. The chat opens a fresh thread on each new visit while still surviving a reload. And a Setup-studio draft held in browser storage can no longer white-screen the site.",
+  "impact": "config",
   "sacred": [],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"

@@ -7,6 +7,50 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.21d
+
+No money path moved: nothing here touches launch, swap, the shared money modules or the executor,
+and no dependency changed. It is the site chrome, the chat's session boundary, and one boot fix.
+
+**Read this before updating if you have picked a `style`.** Light is now the plane a visitor lands
+on. The design toggle still reaches your own `brand.config` style, and a viewer who presses it is
+obeyed in both directions from then on — but a visitor who has never touched it now arrives on the
+enterprise light plane rather than on your style. If your site should greet people in the design
+you chose, set `DEFAULT_MODE` to `'default'` in `app/src/theme/design-mode.ts`; that one constant is
+the whole switch. The Setup studio is already exempt: while a draft exists, the style you are
+drafting is the style you see, or the tool would be misreporting its own output on every reload.
+
+**The top menu stops colliding with the chrome.** The centred menu is absolutely positioned, so it
+cannot push anything aside — past a certain width it simply ran underneath the design toggle and the
+chain pill, and because a positioned element also wins the hit test, the controls it covered stopped
+taking clicks. A breakpoint cannot decide when that happens, because the bar's width is not a
+build-time constant: a claimed name adds an entry, a connected wallet adds a readout and widens the
+account pill, and an operator's own link set changes it again. So the menu measures the row's centre,
+the wordmark's right edge and the control cluster's left edge, then does two things — entries step
+into the More dropdown, least-costly first, and the menu centres in the gap between the chrome
+instead of on the page when centring is what collides. Centring was most of the problem: bounded by
+the narrower side, a page-centred menu threw away the difference between the two. Nothing is removed
+and no route changed; a wide window still shows the full bar, page-centred.
+
+**The white box under the banner.** On the light plane the banner carousel's active dot painted a
+solid white rectangle with square corners, centred below the message. The dots are deliberately
+surface-less tap targets whose visible mark is an inner span, and the light plane's convention of
+styling every `aria-pressed` button as a white card was landing on the invisible target. The dots
+carry `aria-current` now, which is both the correct role for which-of-several-is-showing and outside
+that convention.
+
+**The chat opens fresh on a new visit.** A first view — a new tab, a new window, tomorrow — starts a
+clean thread, while a reload inside the same visit still restores the conversation, its draft and its
+stage exactly as before. Note the edge: a basket draft no longer outlives the tab it was built in.
+Persistence within a visit is unchanged.
+
+**A Setup draft can no longer white-screen a site.** The studio's draft is applied at module scope
+before the app mounts, so a draft the brand layer could not read through threw there and the site
+never rendered — and it stayed broken, because the draft remained in browser storage and every
+reload threw again. A draft written by an older version of the kit was enough to do it. The draft is
+now merged over your committed brand before it is applied, so it cannot be missing a field, and a
+draft that still cannot be applied is ignored in favour of the committed brand.
+
 ## 2026.08.21c
 
 Documentation only. No code, no tools, no safety-model change; the MCP server is

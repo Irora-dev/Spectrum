@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
 import { NetworkToggle } from './NetworkToggle'
 import { WalletButton } from './WalletButton'
@@ -128,6 +128,7 @@ export const moreLinks: { to: string; label: string }[] = [...moreVisitorLinks, 
 export function useMoreLinks() {
   const { address } = useAccount()
   const { data: allBaskets } = useAllBaskets()
+  const handle = useMyHandle()
   const isCreator = useMemo(() => {
     const me = address?.toLowerCase()
     return !!me && (allBaskets ?? []).some((b) => b.deployer?.toLowerCase() === me)
@@ -136,12 +137,23 @@ export function useMoreLinks() {
     () =>
       // the profile door from the mall (owner 2026-08-15 11:43: "I also need
       // to be able to get to it from the main menu from the mall") — dynamic,
-      // because the public page is /creator/<this wallet>
+      // because the public page is /creator/<this wallet>, or /creator/<name>
+      // once one is claimed (same page, but the name is the URL a person hands
+      // out, so the menu points at that one whenever it exists)
       isCreator && address
-        ? [...moreVisitorLinks, ...moreCreatorLinks, { to: `/creator/${address}`, label: 'Your creator profile' }]
+        ? [...moreVisitorLinks, ...moreCreatorLinks, { to: `/creator/${handle ?? address}`, label: 'Your creator profile' }]
         : moreVisitorLinks,
-    [isCreator, address],
+    [isCreator, address, handle],
   )
+}
+
+/** The viewer's own claimed name, if any. Rides the handle registry query that
+ *  is already cached for handle resolution elsewhere, so both the primary bar
+ *  and the More list read one source instead of two copies of the lookup. */
+function useMyHandle(): string | null {
+  const { address } = useAccount()
+  const { data: reg } = useHandleRegistry()
+  return reg?.status === 'ok' && address ? (reg.map.byAddress.get(address.toLowerCase())?.handle ?? null) : null
 }
 
 
@@ -204,6 +216,120 @@ function DesignModeToggle() {
       </span>
     </button>
   )
+}
+
+// ── THE MENU YIELDS INSTEAD OF COLLIDING ─────────────────────────────────────
+// Because the centered menu is ABSOLUTELY positioned it cannot push anything
+// aside: past a certain width it simply runs underneath the chrome on either
+// side, and being positioned it also wins the hit test, so the controls it
+// covers stop taking clicks. Measured on the review build at 1280: the More
+// button spanned 907→1025 and the design toggle began at 957, i.e. 68px of
+// overlap and a dead toggle (owner 2026-08-21: "these overlap with learn and
+// more going over the light/dark and chains — fix it by putting the profile
+// and learn into the dropdown when overlapping").
+//
+// A BREAKPOINT CANNOT DECIDE THIS, which is why the old lg/xl guards never
+// held: the bar's width is not a build-time constant. A claimed name adds
+// Profile, a connected wallet adds the book readout and widens the account
+// pill, and an operator's own link set changes it again. So this measures the
+// three things that actually determine the answer — where the row's centre is,
+// where the logo ends, where the control cluster begins — and steps entries
+// into the More dropdown, cheapest first, until the menu fits between them.
+//
+// Each entry's width is cached while it is on screen, so a demoted entry's
+// cost is still known when the window grows and it can be promoted back.
+//
+// AND IT SPENDS THE ROOM THE CHROME LEAVES. Centring on the ROW is what makes
+// the collision arrive early: the logo is 173px and the control cluster 291px,
+// so a row-centred menu is bounded by the NARROWER side and throws away ~118px
+// of real estate on the left. When true centring would collide, the menu
+// centres in the gap BETWEEN the two blocks instead — which is what closes the
+// last 8px at 1280/1440, the width where demoting alone still left the menu
+// touching the toggle. It only ever shifts when the alternative is an overlap,
+// so a roomy window keeps the pristine page-centred menu.
+const NAV_CLEARANCE_PX = 20
+
+/** Refs to wire, how many of `order` belong in the dropdown, and the nudge (px)
+ *  that keeps the menu off the chrome. */
+function useNavFit(order: string[]) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const leftRef = useRef<HTMLAnchorElement>(null)
+  const navRef = useRef<HTMLElement>(null)
+  const rightRef = useRef<HTMLDivElement>(null)
+  const widths = useRef(new Map<string, number>())
+  const [fit, setFit] = useState({ demoted: 0, shift: 0 })
+  const { demoted } = fit
+  // the routes are the identity here; the array is rebuilt every render
+  const orderKey = order.join('|')
+
+  const measure = useCallback(() => {
+    const row = rowRef.current
+    const nav = navRef.current
+    const left = leftRef.current
+    const right = rightRef.current
+    if (!row || !nav || !left || !right) return
+    const navRect = nav.getBoundingClientRect()
+    // width 0 = the menu is below its breakpoint (display:none), where the
+    // mobile tab bar is the navigation and none of this applies
+    if (navRect.width === 0) return
+    const routes = orderKey ? orderKey.split('|') : []
+    // remember what each demotable entry costs while it is rendered
+    for (const el of nav.querySelectorAll<HTMLElement>('[data-nav-w]')) {
+      const to = el.dataset.navW
+      if (to) widths.current.set(to, el.getBoundingClientRect().width)
+    }
+    const gap = parseFloat(getComputedStyle(nav).columnGap) || 0
+    const cost = (to: string) => (widths.current.get(to) ?? 0) + gap
+    // reconstruct the width the menu would have with NOTHING demoted, so the
+    // decision is taken against a stable number rather than against the
+    // narrowed menu this render is already showing (which would oscillate)
+    let full = navRect.width
+    for (const to of routes.slice(0, demoted)) full += cost(to)
+    const rowRect = row.getBoundingClientRect()
+    // left-1/2 + -translate-x-1/2 centres the menu on the row's padding box
+    const centre = rowRect.left + rowRect.width / 2
+    // the clear span between the logo and the control cluster
+    const boxL = left.getBoundingClientRect().right + NAV_CLEARANCE_PX
+    const boxR = right.getBoundingClientRect().left - NAV_CLEARANCE_PX
+    const gapCentre = Math.round((boxL + boxR) / 2 - centre)
+    // Fewest demotions that fit, and page-centred whenever that is one of the
+    // ways it fits — a menu only leaves the centre to avoid a collision.
+    let next = routes.length
+    let shift = 0
+    let width = full
+    let settled = false
+    for (let i = 0; i <= routes.length && !settled; i++) {
+      const half = width / 2
+      if (centre - half >= boxL && centre + half <= boxR) {
+        next = i
+        settled = true
+      } else if (width <= boxR - boxL) {
+        next = i
+        shift = gapCentre
+        settled = true
+      } else if (i < routes.length) {
+        width -= cost(routes[i])
+      }
+    }
+    // Nothing fits even stripped to the bone (a very narrow desktop window):
+    // sit in the gap, which is the position that overlaps least.
+    if (!settled) shift = gapCentre
+    setFit((prev) => (prev.demoted === next && prev.shift === shift ? prev : { demoted: next, shift }))
+  }, [demoted, orderKey])
+
+  // BEFORE PAINT: the first render always carries the full set (demoted = 0),
+  // so measuring in a layout effect is what keeps the overflowing state from
+  // ever reaching the screen on a narrow window.
+  useLayoutEffect(measure, [measure])
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => measure())
+    for (const el of [rowRef.current, leftRef.current, navRef.current, rightRef.current]) if (el) ro.observe(el)
+    return () => ro.disconnect()
+  }, [measure])
+
+  return { rowRef, leftRef, navRef, rightRef, demoted, shift: fit.shift }
 }
 
 // ── the More dropdown ─────────────────────────────────────────────────────────
@@ -384,12 +510,7 @@ export function Nav() {
   // only the second earns a permanent seat in the chrome. Everyone else keeps
   // the dropdown entry exactly as before, so the nav does not grow for people
   // who have not asked it to.
-  // the viewer's own claimed name, if any (the registry is already fetched for
-  // handle resolution elsewhere, so this rides the same cached query)
-  const { address: navAddress } = useAccount()
-  const { data: handleReg } = useHandleRegistry()
-  const myHandle =
-    handleReg?.status === 'ok' && navAddress ? (handleReg.map.byAddress.get(navAddress.toLowerCase())?.handle ?? null) : null
+  const myHandle = useMyHandle()
   const primaryLinks = useMemo(() => {
     const withBadge =
       claimBadge > 0
@@ -406,6 +527,45 @@ export function Nav() {
   // person reading them. Shared with the mobile sheet via the hook.
   const moreForViewer = useMoreLinks()
 
+  // WHAT YIELDS, AND IN WHAT ORDER. The owner named the two that were visibly
+  // colliding, so those go first: Learn (a reference surface the footer carries
+  // on every page, so losing its seat costs a reader nothing), then Profile
+  // (the 2026-08-16 ruling promoted it INTO the bar on purpose, so it holds
+  // that seat as long as one exists and only steps back into the menu it came
+  // from when there is genuinely no room).
+  //
+  // The list CONTINUES past his two on purpose. With a disconnected wallet
+  // Learn is the only demotable entry, and demoting it still left 74px of
+  // overlap at 1024 and 8px at 1280 — the pool ran dry while the defect was
+  // still on screen. Swap and Baskets are the last resorts, reached only in a
+  // window too narrow for four entries, where the alternative is a menu lying
+  // across the chain pill. CHAT AND PORTFOLIO NEVER MOVE: they lead the bar by
+  // explicit ruling (2026-08-19 and 2026-08-02), so the bar can shrink to them
+  // and stop.
+  const profileTo = myHandle ? `/creator/${myHandle}` : null
+  const demotable = useMemo(
+    () =>
+      ['/learn', profileTo, '/swap', '/explore'].filter(
+        (to): to is string => !!to && (to === profileTo || links.some((l) => l.to === to)),
+      ),
+    [profileTo],
+  )
+  const { rowRef, leftRef, navRef, rightRef, demoted, shift } = useNavFit(demotable)
+  const inDropdown = useMemo(() => new Set(demotable.slice(0, demoted)), [demotable, demoted])
+  const barLinks = primaryLinks.filter((l) => !inDropdown.has(l.to))
+  // Demoted entries lead the dropdown, in the order they held in the bar, so a
+  // person hunting the seat that just vanished finds it at the top of the menu
+  // it moved into.
+  const moreShown = useMemo(() => {
+    const promoted = primaryLinks.filter((l) => inDropdown.has(l.to)).map((l) => ({ to: l.to, label: l.label }))
+    // ONE ROW PER PAGE: a claimed name owns exactly one entry — 'Profile' in
+    // the bar, or 'Profile' at the head of this menu once demoted. The
+    // dropdown's own address-keyed row is the same page, and the owner's
+    // 2026-08-21 menu showed both of them at once.
+    const base = profileTo ? moreForViewer.filter((l) => l.label !== 'Your creator profile') : moreForViewer
+    return promoted.length ? [...promoted, ...base] : base
+  }, [primaryLinks, inDropdown, moreForViewer, profileTo])
+
   // The book readout's one condition: a connected wallet, on a build where the
   // Portfolio page exists. Undefined keeps PortfolioTotal unmounted, so its
   // reads never start for a visitor who has not connected.
@@ -419,7 +579,7 @@ export function Nav() {
   // backdrop-blur translucency; page modals at z-[60]+ still cover the nav.
   return (
     <header className="sticky top-0 z-50 border-b border-line bg-void/70 backdrop-blur">
-      <div className="relative flex items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+      <div ref={rowRef} className="relative flex items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
         {/* left — logo */}
         {/* The PrismMark glyph (a light prism) is optional chrome — operators may
             keep it or drop it when rebranding the default theme. */}
@@ -427,7 +587,7 @@ export function Nav() {
             share one row, the prism glyph alone carries the brand below 520px. */}
         {/* the wordmark's LINK was 24px tall (mobile audit 2026-08-05); the
             mark itself is unchanged, the target now clears a thumb */}
-        <Link to="/" className="flex min-h-[36px] shrink-0 items-center gap-2.5">
+        <Link ref={leftRef} to="/" className="flex min-h-[36px] shrink-0 items-center gap-2.5">
           <PrismMark size={24} />
           {/* wrapper span, not a class on the wordmark: .spectrum-wordmark sets
               its own display and would win the specificity fight with `hidden` */}
@@ -438,13 +598,24 @@ export function Nav() {
 
         {/* center — menu (desktop). Roomier from xl only: at lg the absolutely-
             centered menu sits close to the wordmark/wallet (the old collision
-            defect), so the extra padding/gap waits for the headroom. */}
-        <nav className={`absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 xl:gap-2.5 ${fullNavAt === 'md' ? 'md:flex' : 'lg:flex'}`}>
-          {primaryLinks.map((l) => (
+            defect), so the extra padding/gap waits for the headroom. Entries
+            step into More when even that is not enough room — useNavFit. */}
+        {/* marginLeft, not a transform: -translate-x-1/2 owns the transform (in
+            v4 the `translate` property), and stacking a second one on top of it
+            would double the offset. A margin on an absolutely positioned box
+            just moves it. */}
+        <nav
+          ref={navRef}
+          style={shift ? { marginLeft: shift } : undefined}
+          className={`absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 xl:gap-2.5 ${fullNavAt === 'md' ? 'md:flex' : 'lg:flex'}`}
+        >
+          {barLinks.map((l) => (
             <NavLink
               key={l.to}
               to={l.to}
               end={l.end}
+              /* what this entry costs the bar, read back by useNavFit */
+              data-nav-w={l.to}
               className={({ isActive }) =>
                 `px-3.5 py-1.5 font-mono text-base uppercase tracking-[0.18em] transition-colors xl:px-6 ${
                   isActive ? 'text-cyan' : 'text-ink-dim hover:text-ink'
@@ -462,11 +633,11 @@ export function Nav() {
               {l.to === '/portfolio' && !l.badge && bookAddress && <PortfolioTotal address={bookAddress} />}
             </NavLink>
           ))}
-          <MoreMenu links={moreForViewer} />
+          <MoreMenu links={moreShown} />
         </nav>
 
         {/* right — network + wallet (mobile primary nav = the bottom tab bar) */}
-        <div className="flex items-center gap-2">
+        <div ref={rightRef} className="flex items-center gap-2">
           <DesignModeToggle />
           <NetworkToggle />
           {WALLET_ENABLED && <WalletButton />}

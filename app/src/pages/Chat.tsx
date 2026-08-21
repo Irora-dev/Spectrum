@@ -642,11 +642,15 @@ function ActionBlock({
   action,
   onPick,
   onDeployed,
+  superseded = false,
 }: {
   action: AgentAction
   onPick: (line: string) => void
   /** a DeployCard success bubbles the live basket up (the bundle flow feeds on it) */
   onDeployed?: (b: { chainId: number; address: Address; symbol: string }) => void
+  /** a LATER turn overtook this card — a single-chain create whose draft has
+   *  since gone multichain must not still offer to deploy that chain alone */
+  superseded?: boolean
 }) {
   switch (action.kind) {
     case 'text':
@@ -660,6 +664,13 @@ function ActionBlock({
     case 'positions':
       return <PositionRows chainId={action.chainId} rows={action.rows} onPick={onPick} />
     case 'create':
+      if (superseded)
+        return (
+          <p className="text-[13px] leading-snug text-ink-faint">
+            This draft has since grown across chains, so it is a bundle now and the launch below makes every chain. Ask
+            again if you only want {CHAINS[action.chainId]?.name}.
+          </p>
+        )
       return (
         <CreateCard
           action={action}
@@ -1017,9 +1028,19 @@ function BubbleCopy({ actions }: { actions: AgentAction[] }) {
 }
 
 export function MessageList({ msgs, onPick, onDeployed }: { msgs: Msg[]; onPick: (line: string) => void; onDeployed: (b: { chainId: number; address: Address; symbol: string }) => void }) {
+  // A SINGLE-CHAIN CREATE CARD GOES INERT ONCE THE DRAFT OUTGROWS IT (owner
+  // 2026-08-21). The chat emits a compose card as soon as one chain has 2+ legs.
+  // If the draft then gains a pick on another chain it becomes a BUNDLE, and the
+  // finalized card's one-button launch deploys that chain itself — but the older
+  // card is still sitting above with its Deploy armed and its action frozen in
+  // the message log, so pressing it deploys the chain a SECOND time. Two baskets,
+  // one intent. A later crossDraft turn is the signal that the draft moved on,
+  // so every create card before it stands down.
+  const firstCrossDraft = msgs.findIndex((m) => m.role === 'agent' && (m.actions ?? []).some((a) => a.kind === 'crossDraft'))
+  const supersededAt = (mi: number) => firstCrossDraft !== -1 && mi < firstCrossDraft
   return (
     <>
-      {msgs.map((m) =>
+      {msgs.map((m, mi) =>
         m.role === 'user' ? (
           <div key={m.id} className="chat-msg flex w-full flex-col items-end gap-1">
             <div
@@ -1041,7 +1062,15 @@ export function MessageList({ msgs, onPick, onDeployed }: { msgs: Msg[]; onPick:
                 ) : (
                   <div className="flex flex-col gap-4">
                     {(m.actions ?? []).map((a, i) => (
-                      <ActionBlock key={i} action={a} onPick={onPick} onDeployed={onDeployed} />
+                      <ActionBlock
+                        key={i}
+                        action={a}
+                        onPick={onPick}
+                        onDeployed={onDeployed}
+                        /* a single-chain create card that a LATER turn has
+                           overtaken — see supersededAt (owner 2026-08-21) */
+                        superseded={supersededAt(mi)}
+                      />
                     ))}
                   </div>
                 )}

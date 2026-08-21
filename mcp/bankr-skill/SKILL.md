@@ -5,7 +5,7 @@ tags: [baskets, index, defi, trading, base, ethereum, mcp, onchain, erc20]
 metadata:
   homepage: https://spectrumindexes.xyz
   install: external
-  version: "2026.08.21c"
+  version: "2026.08.21d"
 ---
 
 # Spectrum Baskets

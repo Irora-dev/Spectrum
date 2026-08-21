@@ -125,7 +125,19 @@ export function BannerCarousel() {
             type="button"
             onClick={() => setIndex(i)}
             aria-label={`Show message ${i + 1} of ${slides.length}`}
-            aria-pressed={i === active}
+            /* aria-CURRENT, not aria-pressed. Two reasons, and the second one
+               is a bug the first would have kept re-creating. (1) A dot is not
+               a toggle: it says which of N messages is showing, which is what
+               aria-current means. (2) The paper plane styles EVERY
+               button[aria-pressed='true'] as a white card with a shadow (the
+               pressed-chip convention, index.css) — a rule written for chips
+               that have a surface. These buttons deliberately have none, so on
+               light mode the active dot's invisible 40x36 tap target painted
+               solid white with square corners: "a weird box in the center
+               below the banner" (owner 2026-08-21). Measured white in
+               enterprise, transparent in spectral, which is why it only ever
+               showed up on the light plane. */
+            aria-current={i === active ? 'true' : undefined}
             /* THE BUTTON IS A TRANSPARENT TAP TARGET (36px thumb, px-3/py-4); the
                VISIBLE dot is the inner span. The old bg-clip-content trick let
                the whole rounded button paint faint white on the light plane —

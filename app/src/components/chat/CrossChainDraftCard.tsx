@@ -8,10 +8,12 @@
 //
 // House pieces only, never lookalikes: tokenVisual colours the tiles, AssetLogo
 // draws the disc, showSymbol guards every ticker, ChainLogo names each asset's
-// chain. Weights are a LOCAL planning view (equal by default): the real weights
-// lock at deploy in the compose card, and spoken weights ("70/30") already ride
-// that path. The REAL BundleCard is emitted separately by the agent once the
-// chains deploy; this card only announces the wrap is ready, never mounts it.
+// chain. Weights start equal and BIND (owner 2026-08-21 — they used to be a
+// local planning view that never reached deploy, which made "set your weights"
+// a false invitation): Finalize speaks them on the same channel spoken weights
+// have always used, and the agent renormalises them PER CHAIN because each chain
+// becomes its own basket. The REAL BundleCard is emitted separately by the agent
+// once the chains deploy; this card only announces the wrap is ready.
 import { useMemo, useState } from 'react'
 import type { Address } from 'viem'
 import type { AgentAction } from './agent'
@@ -77,8 +79,9 @@ export function CrossChainDraftCard({
 
   // WEIGHTS, adjustable (owner "their weights you can toggle"). Raw units per
   // leg, equal to start; the DISPLAY is each leg's share of the running sum, so
-  // it always totals 100 and a stepper never needs a re-normalise pass. A
-  // planning view: the deploy card locks the real weights.
+  // it always totals 100 and a stepper never needs a re-normalise pass. These
+  // are the numbers that DEPLOY: Finalize speaks them and the agent carries them
+  // through, renormalised for each chain's own basket.
   const [raw, setRaw] = useState<Record<string, number>>({})
   const weightRaw = (l: Leg) => raw[legKey(l)] ?? 10
   const sum = legs.reduce((s, l) => s + weightRaw(l), 0) || 1
@@ -193,7 +196,16 @@ export function CrossChainDraftCard({
             <button
               type="button"
               disabled={legs.length < 2}
-              onClick={() => onPick('finalize basket')}
+              onClick={() => {
+                // THE STEPPERS NOW BIND (owner 2026-08-21: they were cosmetic —
+                // the card invited you to set weights that never reached deploy).
+                // They travel on the SPOKEN channel that already exists and is
+                // driver-tested: parseInlineWeights reads "40% AAVE" into bySym,
+                // so the finalize handler can carry them per chain. No new
+                // transport, and a plain "finalize basket" still works.
+                const spoken = legs.map((l) => `${pctOf(l)}% ${showSymbol(l.symbol)}`).join(' ')
+                onPick(`finalize basket ${spoken}`)
+              }}
               className="press w-full rounded-xl px-5 py-3 text-center font-display text-sm font-bold uppercase tracking-[0.06em] text-void transition-transform enabled:hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-40"
               style={{ background: GRADIENT }}
             >

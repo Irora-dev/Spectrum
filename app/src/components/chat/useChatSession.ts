@@ -117,8 +117,37 @@ function ctxLooksSane(ctx: unknown): boolean {
   if (c.deployedBaskets != null && !Array.isArray(c.deployedBaskets)) return false
   return true
 }
+/** ONE FRESH THREAD PER VISIT (owner 2026-08-21: "chat should always start
+ *  fresh for first viewer"). The 2026-08-19 persistence greenlight was about
+ *  surviving a REFRESH, and that still holds exactly: sessionStorage lives as
+ *  long as the tab does, so the first view of a visit opens on a clean thread
+ *  while a reload inside that visit still restores everything. A new tab, a new
+ *  window, or a return tomorrow is a new visit — nobody lands mid-conversation.
+ *
+ *  ⚠ This DOES drop a live basket draft on a new visit, which the stale-session
+ *  rule above deliberately kept forever. That is the cost of "always", and it
+ *  is one constant to reverse if a returning creator's draft should outlive the
+ *  tab. When storage throws (private mode, quota) we treat the visit as
+ *  already-seen and restore: silently discarding a draft is the worse failure. */
+const VISIT_KEY = 'specter-chat-visit'
+function firstViewOfVisit(): boolean {
+  try {
+    if (sessionStorage.getItem(VISIT_KEY)) return false
+    sessionStorage.setItem(VISIT_KEY, '1')
+    return true
+  } catch {
+    return false
+  }
+}
 function loadSession(): PersistShape | null {
   try {
+    // Ahead of every other check, the draft exemption included: a fresh visit
+    // gets a fresh thread, and the stored session goes rather than lingering
+    // for the next in-visit reload to restore.
+    if (firstViewOfVisit()) {
+      clearSession()
+      return null
+    }
     const raw = localStorage.getItem(PERSIST_KEY)
     if (!raw) return null
     const p = JSON.parse(raw) as PersistShape

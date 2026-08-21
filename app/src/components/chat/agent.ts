@@ -62,7 +62,7 @@ export type AgentAction =
    *  all assets across chains read as ONE idea up top, split into per-chain
    *  basket sections beneath (each with its own deploy door), the bundle wrap
    *  as the finale — replaces the old spans-chains text + steps entirely. */
-  | { kind: 'crossDraft'; buckets: { chainId: number; picks: { address: Address; symbol: string }[] }[]; deployed: { chainId: number; address: Address; symbol: string }[]; mode?: 'building' | 'finalized' }
+  | { kind: 'crossDraft'; buckets: { chainId: number; picks: { address: Address; symbol: string }[]; weights?: number[] }[]; deployed: { chainId: number; address: Address; symbol: string }[]; mode?: 'building' | 'finalized' }
 
 export interface AgentContext {
   chainId: number
@@ -1739,9 +1739,37 @@ async function handleInner(rawText: string, ctxIn: AgentContext, depth = 0): Pro
     // never be a time where a user has multiple options") — a rail of "Deploy
     // on <chain>" chips is that state wearing a different hat. Saying it still
     // works; it is just never offered as a set of choices.
-    if (/^finali[sz]e( (my|the))?( basket| bundle| it)?$|^finali[sz]e$/.test(core)) {
+    // the trailing "40% AAVE 30% CRV" the canvas speaks is optional — a bare
+    // "finalize basket" typed by a person still matches exactly as before
+    if (/^finali[sz]e( (my|the))?( basket| bundle| it)?( \d{1,2}% ?[a-z0-9$ %]+)?$|^finali[sz]e$/.test(core)) {
       if (!anyBucket(ctx)) return { actions: [say('Nothing to finalize yet. Name a couple of assets and a draft starts.')], ctx, chips: STEER }
-      const buckets = draftBuckets(ctx)
+      const rawBuckets = draftBuckets(ctx)
+      // THE CANVAS WEIGHTS NOW BIND (owner 2026-08-21: they were cosmetic).
+      // They arrive on the spoken channel as bySym, and each chain becomes its
+      // OWN basket, so the shares are renormalised PER CHAIN — a leg that was
+      // 30% of the whole bundle is a different share of its own chain's basket.
+      // Any chain whose legs are not all named falls back to the equal split
+      // rather than deploying a half-read vector.
+      const spoken = parseInlineWeights(text)
+      const buckets = rawBuckets.map((b) => {
+        if (!spoken) return b
+        const named: number[] = []
+        for (const p of b.picks) {
+          const n = spoken.bySym?.[p.symbol.toUpperCase()]
+          if (typeof n !== 'number' || n <= 0) return b
+          named.push(n)
+        }
+        const total = named.reduce((a, n) => a + n, 0)
+        if (total <= 0) return b
+        const w = named.map((n) => Math.max(1, Math.round((n / total) * 100)))
+        const drift = 100 - w.reduce((a, x) => a + x, 0)
+        if (drift !== 0) {
+          let mi = 0
+          for (let i = 1; i < w.length; i++) if (w[i] > w[mi]) mi = i
+          w[mi] = Math.max(1, w[mi] + drift)
+        }
+        return { ...b, weights: w }
+      })
       const liveChains = buckets.filter((b) => b.picks.length > 0).length
       if (liveChains >= 2) {
         return {

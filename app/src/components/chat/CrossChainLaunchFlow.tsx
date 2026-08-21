@@ -65,6 +65,9 @@ export interface LaunchPick {
 export interface LaunchBucket {
   chainId: number
   picks: LaunchPick[]
+  /** the weights the canvas SET, already renormalised for this chain's own
+   *  basket. Absent = the user never set any, so the equal split stands. */
+  weights?: number[]
 }
 /** A chain's basket, live on chain. */
 interface LiveLeg {
@@ -282,6 +285,7 @@ export function CrossChainLaunchFlow({
             key={b.chainId}
             chainId={b.chainId}
             picks={b.picks}
+            weights={b.weights}
             name={name.trim()}
             symbol={symbol.trim().toUpperCase()}
             seedUsd={seedEach}
@@ -418,6 +422,7 @@ export function CrossChainLaunchFlow({
 function ChainStep({
   chainId,
   picks,
+  weights: setWeights,
   name,
   symbol,
   seedUsd,
@@ -429,6 +434,8 @@ function ChainStep({
 }: {
   chainId: number
   picks: LaunchPick[]
+  /** what the canvas set for THIS chain, already renormalised; undefined = equal */
+  weights?: number[]
   name: string
   symbol: string
   seedUsd: number
@@ -450,7 +457,12 @@ function ChainStep({
   // wallet is asked ONCE, at the moment the signature is next
   useDeployAutoSwitch({ sw, status: state.status, targetChainId: chainId, connected: isConnected, walletChainId })
 
-  const weights = useMemo(() => equalSplit(picks.length), [picks.length])
+  // the canvas's numbers if the user set them, the equal split if not. Guarded
+  // on length and total so a malformed vector can never reach a deploy.
+  const weights = useMemo(() => {
+    if (setWeights && setWeights.length === picks.length && setWeights.reduce((a, b) => a + b, 0) === 100) return setWeights
+    return equalSplit(picks.length)
+  }, [setWeights, picks.length])
 
   // ── step 1: resolve + mine, once, when it is this chain's turn
   const prepared = useRef(false)
