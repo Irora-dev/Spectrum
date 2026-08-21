@@ -1,10 +1,8 @@
 {
-  "version": "2026.08.21b",
-  "note": "A numbers-clarity release, and the fixes an install test of 2026.08.21 turned up. The trade console shows ONE price and it is the quote: the protection floor is no longer rendered as an amount anywhere, because two currency figures in the same register is what let a guaranteed minimum be read as an expected payout. The protection is stated in full as the slippage tolerance, where it is also adjustable, and it now says what it does. A measured cost-vs-NAV row answers the question behind the misread: what this fill or exit actually costs against the mark, at this size. Also: the MCP quickstart now names the install step it needed, the bundler says what is missing instead of throwing a module stack, the Bankr skill and the generated tool manifests carry the right version, and the MCP suite joined the release gate that would have caught them.",
-  "impact": "config",
-  "sacred": [
-    "swap"
-  ],
+  "version": "2026.08.21c",
+  "note": "A discoverability release for the Bankr skill, measured against the live registry rather than against the contract alone. The skill's description now carries the natural-language triggers a selecting agent matches on, and tags beside them, so an agent can recognise when baskets are the job. Nothing about the server, its tools, or the safety model changed. The submission checklist also gained the registry README step it was missing.",
+  "impact": "safe",
+  "sacred": [],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"
 }

@@ -7,6 +7,28 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.21c
+
+Documentation only. No code, no tools, no safety-model change; the MCP server is
+byte-identical to 2026.08.21b apart from the version it reports.
+
+**The Bankr skill, measured against the registry instead of against the contract.** Read
+across all 134 skills published in `BankrBot/skills`, this skill already led the field on the
+things that are hard to fake — it is the only one carrying a security-disclosure contact, one
+of three with an explicit refusal grammar, one of ten that addresses prompt injection, and its
+`catalog.json` uses exactly the universal field set, which matters because extra fields are
+what get a folder silently skipped from discovery. Where it lagged was the shop window: its
+description was well under the registry median and carried none of the natural-language
+trigger phrases that a selecting agent matches on, which roughly a third of skills provide.
+The description now states plainly what a basket is, that floors come from live simulation,
+that the skill holds no keys and cannot send, which chains it covers, and the phrases that
+should reach for it — reading a basket, buying, selling a fraction, creating one, redeeming in
+kind, migrating to a new version. Tags sit beside it.
+
+The submission checklist gained the step it was missing: the registry's own README table is
+hand-maintained rather than generated, and a folder-only pull request can publish a skill that
+nobody finds from the front page.
+
 ## 2026.08.21b
 
 Sacred: swap — the trade console's number display only. No floor, simulation, approval or

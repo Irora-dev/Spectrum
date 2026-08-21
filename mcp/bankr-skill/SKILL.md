@@ -1,10 +1,11 @@
 ---
 name: Spectrum Baskets
-description: "Discover, read, create, and trade Spectrum on-chain baskets from a conversation. Buy, sell, migrate, deploy, and exit, with every floor derived from a live simulation and every transaction returned for your wallet to sign. Compose-first, never autonomous by default."
+description: "Discover, read, create, and trade Spectrum on-chain baskets from a conversation. A basket is one ERC-20 holding a weighted mix of tokens on one chain; this skill reads them with pricing provenance and composes the transactions to buy, sell, migrate, deploy, and exit. Every floor comes from a live simulation rather than a guess, and every transaction is returned for your own wallet to sign: the skill holds no keys and cannot send. Works on Base, Ethereum, and Robinhood Chain. Triggers: \"what is in this basket\", \"read $TICKER\", \"buy $50 of this basket\", \"sell half my basket\", \"create a basket of X and Y\", \"redeem in kind\", \"migrate into the new version\", \"what baskets are there on Base\"."
+tags: [baskets, index, defi, trading, base, ethereum, mcp, onchain, erc20]
 metadata:
   homepage: https://spectrumindexes.xyz
   install: external
-  version: "2026.08.21b"
+  version: "2026.08.21c"
 ---
 
 # Spectrum Baskets
