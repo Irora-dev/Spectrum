@@ -1181,14 +1181,61 @@ export function DexSwapCard({
                   signature never carried. The number still shows, because it is
                   the best estimate we have; what changes is that it stops
                   claiming to be the floor. */}
+              {/* THE TWO NUMBERS SIT TOGETHER (SpectrumContracts w-166, 2026-08-21).
+                  A user read this floor as the payout and reported ~10% slippage on
+                  a basket whose measured exit cost is 2.6% FLAT at every size. Their
+                  fork numbers fit exactly: marks 132 → expected 128.6 → the 300bps
+                  floor 124.7, which is the "125" they saw. The expected figure was
+                  in the receive box far above, so opening the details left the FLOOR
+                  as the only receive-shaped number on screen. Now they are adjacent
+                  and the floor says what it is for. Second user in a week to read a
+                  protection number as a price. */}
+              {/* ONE PRICE ON SCREEN — THE QUOTE (owner 2026-08-21, after w-166:
+                  "ensure we dont show the protection numbers, we try to show the
+                  quote price"). Showing expected and the floor side by side was
+                  half a fix: two currency figures in the same register is the
+                  condition that let a floor be read as a payout in the first
+                  place. So the floor is no longer rendered as an AMOUNT anywhere.
+                  Nothing is hidden by that — the protection is still fully stated
+                  as the slippage tolerance below (and it is adjustable there),
+                  which is a percentage and cannot be mistaken for a price. */}
               <div className="flex items-center justify-between gap-3">
-                <span className="text-ink-faint">
-                  {dex.quote?.floorBasis === 'nav' ? 'Expected minimum' : 'Minimum received'}
-                </span>
+                <span className="text-ink-faint">Quote</span>
                 <span className="tabular-nums">
-                  {dex.quote ? `${fmtAmt(dex.quote.minOutRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : paySymbol}` : '—'}
+                  {dex.quote ? `${fmtAmt(dex.quote.outRaw, receiveDecimals)} ${dir === 'buy' ? `$${ix?.symbol ?? ''}` : paySymbol}` : '—'}
                 </span>
               </div>
+              {dex.quote?.floorBasis === 'nav' && (
+                <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
+                  This route could not be simulated, so the quote is an estimate and the protection
+                  actually signed is measured live at the moment you confirm.
+                </p>
+              )}
+              {/* THE COST, MEASURED, NOT ESTIMATED (SpectrumContracts w-166 ask 2).
+                  They suggested the caveat could carry a quantitative exit cost from
+                  statically-known parts (basket fee + each leg's pool tier). The
+                  holdings do not carry leg tiers client-side, but this quote already
+                  measures the whole thing live at THIS size — navDeviationPct was
+                  computed and only ever used to trigger a warning below −3%. Shown
+                  plainly it reads −2.6% for the basket in that report, which is
+                  exactly the figure their fork measured, and it answers the question
+                  the user actually had. */}
+              {navDeviationPct != null && (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-ink-faint">{dir === 'sell' ? 'Cost vs NAV mark' : 'Fill vs NAV mark'}</span>
+                    <span className="tabular-nums">
+                      {navDeviationPct >= 0 ? '+' : ''}
+                      {navDeviationPct.toFixed(2)}%
+                    </span>
+                  </div>
+                  <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
+                    {dir === 'sell'
+                      ? 'What the exit costs against what your shares mark at: the basket fee above, plus each leg’s own pool fee. Measured on this size, not a guess.'
+                      : 'How this fill sits against NAV: the basket fee above, plus each leg’s own pool fee, plus any drift in the mix. Measured on this size, not a guess.'}
+                  </p>
+                </>
+              )}
               {dex.quote?.floorBasis === 'nav' && (
                 <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
                   An estimate — this route could not be simulated, so the floor actually signed is
@@ -1241,6 +1288,16 @@ export function DexSwapCard({
                   </span>
                 </span>
               </div>
+              {/* THE PROTECTION, STATED IN FULL, AS A PERCENTAGE (owner 2026-08-21).
+                  With the floor no longer shown as an amount, this row is the only
+                  place the protection is disclosed — so it says what the tolerance
+                  DOES rather than leaving the reader to infer it. A percentage
+                  cannot be misread as a payout, which is the whole point. */}
+              <p className="font-mono text-[10px] leading-relaxed text-ink-faint">
+                Your protection: the trade reverts rather than filling more than{' '}
+                {(slippageBps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}% below the quote above. Wider
+                tolerance fills more often and protects less.
+              </p>
               <p className="border-t border-white/[0.07] pt-2.5 text-[9px] uppercase leading-relaxed tracking-wider text-ink-faint">
                 Multi-leg routes run as sequenced transactions, each simulated before you sign.
               </p>

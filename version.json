@@ -1,11 +1,9 @@
 {
-  "version": "2026.08.21",
-  "note": "The conversational release: the whole product becomes operable by talking to it. A chat surface (Agent Specter) runs every money flow in place — buy, sell, create, the cross-chain launch, redeem, migrate, a linked new version, and claiming your accrued fees — each one signing in the visitor's own wallet and none of them handing the reader off to another page. One flow gets one button: a reply never puts two armed money primaries on screen at once, and a flow carries through to its end (deploy, then the first deposit with a bridge when a chain is short, then the share options) rather than stopping at the transaction. An MCP server ships in the kit so agents can read baskets and compose lawful calls without holding keys. The enterprise light plane is a full second skin, not an inversion. Fixes carried by this release include a deploy card that could pay a second launch fee during an in-flight first deposit, and a multi-segment route that served a blank page on a cold load.",
+  "version": "2026.08.21b",
+  "note": "A numbers-clarity release, and the fixes an install test of 2026.08.21 turned up. The trade console shows ONE price and it is the quote: the protection floor is no longer rendered as an amount anywhere, because two currency figures in the same register is what let a guaranteed minimum be read as an expected payout. The protection is stated in full as the slippage tolerance, where it is also adjustable, and it now says what it does. A measured cost-vs-NAV row answers the question behind the misread: what this fill or exit actually costs against the mark, at this size. Also: the MCP quickstart now names the install step it needed, the bundler says what is missing instead of throwing a module stack, the Bankr skill and the generated tool manifests carry the right version, and the MCP suite joined the release gate that would have caught them.",
   "impact": "config",
   "sacred": [
-    "executor",
-    "swap",
-    "launch"
+    "swap"
   ],
   "yanked": [],
   "updateManifestUrl": "https://raw.githubusercontent.com/Irora-dev/Spectrum/main/version.json"

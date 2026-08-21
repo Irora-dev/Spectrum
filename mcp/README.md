@@ -6,11 +6,13 @@ It has zero dependencies of its own. The protocol layer is about a hundred lines
 
 ## Quickstart
 
-Build the server once, then register it with your MCP client. The build bundles the app's own money modules into a single self-contained file, `mcp/dist/server.mjs`, which `mcp/run.sh` starts. Node is the only requirement.
+Build the server once, then register it with your MCP client. The build bundles the app's own money modules into a single self-contained file, `mcp/dist/server.mjs`, which `mcp/run.sh` starts. Node 20+ is the only thing you need installed globally; the build borrows esbuild from the app's dependencies, so a fresh clone installs those first.
 
 ```sh
-cd app && npm run mcp:build
+cd app && npm install && npm run mcp:build
 ```
+
+Already run `npm install` in `app/` for the site itself? Then `npm run mcp:build` alone is enough.
 
 For Claude Code, one line registers it:
 

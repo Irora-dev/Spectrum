@@ -1,0 +1,10 @@
+# Repo-root ignores. The per-package ignores (app/, mcp/, create/, extension/,
+# registry/) cover their own build output; this file exists because there was no
+# root one, and a vitest run started from the REPO ROOT wrote
+# node_modules/.vite/... which then got committed and shipped to the public
+# mirror in v2026.08.21 (harmless content, but a fresh clone of the kit came out
+# with a stray node_modules directory in it).
+node_modules/
+.vite/
+.DS_Store
+*.log

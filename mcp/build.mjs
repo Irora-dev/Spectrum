@@ -9,10 +9,24 @@
 // key list is the measured inventory (the product-split spike's NEXT-SEAMS
 // catalogue) — regenerate with:
 //   grep -rhoE 'import\.meta\.env\.[A-Z0-9_]*' app/src | sort -u
-import { build } from '../app/node_modules/esbuild/lib/main.js'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// esbuild lives in the app's node_modules (vite ships it), so a FRESH CLONE has
+// not got it yet. Say that in one sentence instead of throwing a raw
+// ERR_MODULE_NOT_FOUND stack at someone on their first minute with the kit —
+// which is exactly what the v2026.08.21 install test walked into.
+const ESBUILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'node_modules', 'esbuild', 'lib', 'main.js')
+if (!existsSync(ESBUILD)) {
+  console.error(
+    'mcp build: the app\'s dependencies are not installed yet, and the bundler comes from there.\n' +
+      '           Run this first:  cd app && npm install\n' +
+      '           Then:            npm run mcp:build',
+  )
+  process.exit(1)
+}
+const { build } = await import(ESBUILD)
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 

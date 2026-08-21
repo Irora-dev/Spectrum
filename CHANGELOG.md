@@ -7,6 +7,38 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.21b
+
+Sacred: swap — the trade console's number display only. No floor, simulation, approval or
+byte-verification law moved; what changed is which figures a reader is shown. The floor is
+still computed and still signed, at exactly one site.
+
+**One price on screen, and it is the quote.** A user reported roughly ten percent
+round-trip cost on a basket whose exit was then measured at 2.6 percent, flat, at ten
+percent, fifty percent and full position — so the cost is fees, not impact, and the figure
+they had read as their payout was the guaranteed minimum the contract refuses to fill
+below. The floor is no longer rendered as an amount anywhere. Nothing is hidden by that:
+the protection is stated in full as the slippage tolerance, which is where it is also
+adjustable, and it now says what it does rather than leaving it to be inferred — the trade
+reverts rather than filling more than that percentage below the quote. A percentage cannot
+be mistaken for a payout, which is the point.
+
+**And the question behind the misread now has an answer on screen.** A measured
+cost-against-NAV row states what this fill or exit actually costs against the mark, at the
+size asked for, naming its parts: the basket fee plus each leg's own pool fee. It is
+measured from the same live simulation the floor comes from, not estimated.
+
+**Fixes from installing 2026.08.21 as a stranger would.** The MCP quickstart said Node was
+the only requirement and led with the build, which borrows its bundler from the app's
+dependencies — so the first documented command ended in a module-resolution stack on a
+fresh clone. The quickstart names the install step, and the build now says what is missing
+in one sentence. A stray test-cache file had been committed, so a fresh clone of the kit
+arrived carrying a `node_modules` directory; it is gone, and a repo-root ignore file now
+exists where there was none. The Bankr skill's declared version and the generated tool
+manifests had stayed on the previous release, because they are derived from the version and
+only move when the build runs. They are correct, and the MCP suite — which carries the test
+written for exactly that drift — joined the release gate that had not been running it.
+
 ## 2026.08.21
 
 Sacred: executor, swap, launch — the trade card's pay side now honours a caller-stated

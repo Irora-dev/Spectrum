@@ -4,7 +4,7 @@ description: "Discover, read, create, and trade Spectrum on-chain baskets from a
 metadata:
   homepage: https://spectrumindexes.xyz
   install: external
-  version: "2026.08.18"
+  version: "2026.08.21b"
 ---
 
 # Spectrum Baskets
