@@ -752,7 +752,10 @@ export function BasketBento({
         // an eased curve. A transparent→colour two-stop ramp interpolates
         // through grey and shows a visible onset band (owner: "too harsh");
         // same-tone alpha stops fade with no edge at all.
-        const vignTone = `color-mix(in srgb, ${vis.color} 36%, #000)`
+        // the fade's GROUND rides a plane var: void-black on the dark styles
+        // (default), white on paper — a 64%-black wash under every tile read
+        // as mud on light mode (owner 2026-08-19)
+        const vignTone = `color-mix(in srgb, ${vis.color} var(--bento-vign-mix, 36%), var(--bento-vign-base, #000))`
         const vignette = it.footer
           ? `linear-gradient(180deg, ${(
               [
@@ -916,8 +919,9 @@ export function BasketBento({
             }}
           >
             <div
-              className={`relative h-full w-full overflow-hidden ${selectable ? 'cursor-pointer' : ''} ${entrance === 'fill' ? 'bento-fill-host' : ''}`}
+              className={`bento-tile-plate relative h-full w-full overflow-hidden ${selectable ? 'cursor-pointer' : ''} ${entrance === 'fill' ? 'bento-fill-host' : ''}`}
               style={{
+                ['--tile-color' as never]: vis.color,
                 // the signal's geometry: pill for cash, sharp for stock, the
                 // house radius otherwise (signal-less tiles keep exactly 12)
                 borderRadius: tileRadius,
@@ -1115,28 +1119,14 @@ export function BasketBento({
                     <span className="block truncate font-num font-semibold leading-none tabular-nums text-white" style={{ fontSize: clamp(minDim * 0.08, 12, 20), ...textTrans }}>
                       {it.footer.amount}
                     </span>
-                    {/* THE FOOTER STACK's second line: price only (the owner
-                        2026-08-06 12:18 — "just show the price of the asset
-                        and the amount that you have; the percentage should
-                        only show when you hover… it pops up with the chart").
-                        The hover card (expandable) carries price + 24h + the
-                        sparkline; touch keeps the tap-to-unfold bar. Cash
-                        says cash: a stable's price is a vacuous number. */}
-                    {/* the cash tile's "cash" line is GONE (the owner 2026-08-06
-                        14:24: "in the bottom left it says cash — that should
-                        just be removed, that shouldn't say anything for a cash
-                        position"). The tile is green, pill-shaped and tickered
-                        CASH; a fourth statement of the same fact was the "one
-                        fact, one place" rule broken on a single tile. */}
-                    {bH >= 96 &&
-                      (signal?.kind === 'cash' ? null : it.footer.price ? (
-                        <span
-                          className="mt-2 block truncate font-num leading-none tabular-nums text-white/75"
-                          style={{ fontSize: clamp(minDim * 0.12, 9, 11.5), ...textTrans }}
-                        >
-                          {it.footer.price}
-                        </span>
-                      ) : null)}
+                    {/* THE PER-ASSET PRICE LINE IS GONE (the owner 2026-08-18:
+                        "remove the price for each asset on its bento asset
+                        card as its redundant since you see the price anyways
+                        when you hover" — reversing his own 2026-08-06 12:18
+                        price-on-the-tile call). The hover card (expandable)
+                        stays the price's one home: price + 24h + sparkline;
+                        touch keeps the tap-to-unfold bar. The tile states the
+                        HOLDING only — one fact, one place. */}
                   </span>
                 </div>
               )}

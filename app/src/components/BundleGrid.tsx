@@ -64,7 +64,7 @@ export function BundleCard({ r }: { r: RankedBundle }) {
       to={publishedBundleHref(bundle, bundle.by)}
       className="group relative flex flex-col overflow-hidden rounded-2xl border border-white/[0.12] bg-white/[0.02] p-5 press hover:border-cyan/40"
     >
-      <div aria-hidden className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-cyan/[0.07] blur-3xl transition-opacity group-hover:opacity-150" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-cyan/[0.07] blur-3xl transition-opacity group-hover:opacity-150" />
 
       <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0">

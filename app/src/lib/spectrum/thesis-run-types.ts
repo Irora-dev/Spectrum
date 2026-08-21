@@ -24,21 +24,9 @@ import type { Address } from 'viem'
 
 export type ThesisRunDirection = 'buy' | 'sell'
 
-/** One chain's spendable state, read fresh at plan time. Money in integer
- *  cents, gas in native wei — the funding-plan law: two unit axes, never mixed. */
-export interface PerChainFunds {
-  chainId: number
-  /** Settlement-token balance, raw (6dp USDC-family). */
-  usdcRaw: bigint
-  /** The same, floored to integer cents for plan math. */
-  usdcCents: number
-  /** Native balance, wei. */
-  nativeRaw: bigint
-  /** Estimated wei this chain's steps will need. null = COULD NOT READ — the
-   *  law from funding-plan: unreadable gas refuses the chain by name, never
-   *  guesses. */
-  gasNeedRaw: bigint | null
-}
+// PerChainFunds lives in plan-shared-types.ts (the seam both planners share);
+// re-exported so this module's callers are unchanged.
+export { isDemoLegAddress, THESIS_DEMO_ADDR_RE, type PerChainFunds } from './plan-shared-types'
 
 /** What one leg needs, after netting the wallet's own funds on its chain. */
 export interface LegFunding {
@@ -179,17 +167,9 @@ export interface ThesisRun {
   demo: boolean
 }
 
-/** Demo basket address pattern — MUST match demo-baskets.ts's DEMO_RE, which
- *  cannot be imported here (that module is dev-only by law; a static import
- *  would drag it into the production bundle). The paired test
- *  (thesis-run-types.test.ts) asserts the two regexes accept and reject the
- *  same strings, so a drift fails red instead of shipping a run that arms
- *  against a synthetic address. */
-export const THESIS_DEMO_ADDR_RE = /de50([0-9a-f]{4})$/i
-
-export function isDemoLegAddress(address: string): boolean {
-  return THESIS_DEMO_ADDR_RE.test(address)
-}
+// THESIS_DEMO_ADDR_RE + isDemoLegAddress moved to plan-shared-types.ts (the
+// portfolio compose path arms against the same mark); the paired mint/test
+// guard in thesis-run-types.test.ts still stands on the re-export above.
 
 /** The persistence key for a run. Signer-scoped so one wallet's resume can
  *  never offer another wallet's half-finished money movement. */

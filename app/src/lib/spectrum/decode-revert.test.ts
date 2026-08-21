@@ -110,14 +110,17 @@ describe('launchPriceUnavailable — a failed price read says only what it knows
   it('surfaces the factory’s OWN revert, in the factory’s own terms', () => {
     const err = { shortMessage: 'reverted', data: toFunctionSelector('SlotNotOpen()') }
     const msg = launchPriceUnavailable(err)
-    expect(msg).toContain('another basket just launched')
-    expect(msg).toContain('10-block breather')
+    // no mechanism claim (owner 2026-08-21: no cooldown on basket creation) —
+    // the hint states the refusal and the safe retry, nothing it cannot prove
+    expect(msg).toContain('not accepting a new launch')
+    expect(msg).toContain('try again shortly')
     expect(msg).not.toMatch(/auction/i)
+    expect(msg).not.toMatch(/10-block|breather|cooldown/i)
   })
 
   it('decodes a revert carried as a bare signature in the message too', () => {
     const err = { shortMessage: `reverted with the following signature: ${toFunctionSelector('SlotNotOpen()')}` }
-    expect(launchPriceUnavailable(err)).toContain('10-block breather')
+    expect(launchPriceUnavailable(err)).toContain('not accepting a new launch')
   })
 
   it('says the honest thing when the read failed for network reasons', () => {

@@ -57,11 +57,11 @@
       ]
     },
     "plan-legs": {
-      "at": "2026-08-16",
-      "digest": "sha256:c326395cda113e4f",
+      "at": "2026-08-19",
+      "digest": "sha256:1e8d045a9329a14d",
       "sites": 92,
       "mutants": 92,
-      "killed": 80,
+      "killed": 81,
       "partial": false,
       "survivors": [
         {
@@ -77,13 +77,6 @@
           "col": 31,
           "op": "<= → <",
           "text": "if (!(sum > 0) || totalCents <= 0) return weights.map(() => 0)"
-        },
-        {
-          "sig": "plan-legs:186:105:<= → <",
-          "line": 186,
-          "col": 105,
-          "op": "<= → <",
-          "text": "const depthUnreadable = t.liquidityUsd == null || !Number.isFinite(t.liquidityUsd) || t.li"
         },
         {
           "sig": "plan-legs:355:94:> → >=",
@@ -272,142 +265,114 @@
       ]
     },
     "funding-plan": {
-      "at": "2026-08-16",
-      "digest": "sha256:86e07b3f7948d343",
+      "at": "2026-08-19",
+      "digest": "sha256:3c0a34661a86a405",
       "sites": 100,
       "mutants": 100,
-      "killed": 81,
+      "killed": 85,
       "partial": false,
       "survivors": [
         {
-          "sig": "funding-plan:288:47:<= → <",
-          "line": 288,
+          "sig": "funding-plan:282:47:<= → <",
+          "line": 282,
           "col": 47,
           "op": "<= → <",
           "text": "if (!Number.isFinite(needCents) || needCents <= 0) return 0"
         },
         {
-          "sig": "funding-plan:289:57:<= → <",
-          "line": 289,
+          "sig": "funding-plan:283:57:<= → <",
+          "line": 283,
           "col": 57,
           "op": "<= → <",
           "text": "if (!Number.isFinite(availableCents) || availableCents <= 0) return 0"
         },
         {
-          "sig": "funding-plan:298:47:<= → <",
-          "line": 298,
+          "sig": "funding-plan:292:47:<= → <",
+          "line": 292,
           "col": 47,
           "op": "<= → <",
           "text": "if (!Number.isFinite(drawCents) || drawCents <= 0) return 0"
         },
         {
-          "sig": "funding-plan:299:53:<= → <",
-          "line": 299,
+          "sig": "funding-plan:293:53:<= → <",
+          "line": 293,
           "col": 53,
           "op": "<= → <",
           "text": "if (!Number.isFinite(surplusCents) || surplusCents <= 0) return 0"
         },
         {
-          "sig": "funding-plan:376:14:<= → <",
-          "line": 376,
-          "col": 14,
-          "op": "<= → <",
-          "text": "if (raw <= 0n)"
-        },
-        {
-          "sig": "funding-plan:436:19:> → >=",
-          "line": 436,
+          "sig": "funding-plan:430:19:> → >=",
+          "line": 430,
           "col": 19,
           "op": "> → >=",
           "text": "if (sells.length > 0) {"
         },
         {
-          "sig": "funding-plan:439:50:>= → >",
-          "line": 439,
-          "col": 50,
-          "op": ">= → >",
-          "text": "if (inv.gasNeedRaw != null && inv.nativeRaw >= inv.gasNeedRaw) continue"
-        },
-        {
-          "sig": "funding-plan:532:32:> → >=",
-          "line": 532,
+          "sig": "funding-plan:526:32:> → >=",
+          "line": 526,
           "col": 32,
           "op": "> → >=",
           "text": ".filter((r) => r.shortCents > 0)"
         },
         {
-          "sig": "funding-plan:540:21:> → >=",
-          "line": 540,
+          "sig": "funding-plan:534:21:> → >=",
+          "line": 534,
           "col": 21,
           "op": "> → >=",
           "text": "if (r.shortCents > 0 && newMoneyLeft > 0 && newMoneyChain != null) {"
         },
         {
-          "sig": "funding-plan:557:21:> → >=",
-          "line": 557,
+          "sig": "funding-plan:551:21:> → >=",
+          "line": 551,
           "col": 21,
           "op": "> → >=",
           "text": "if (r.shortCents > 0 && needsCarrier.has(r.chainId)) {"
         },
         {
-          "sig": "funding-plan:573:21:> → >=",
-          "line": 573,
+          "sig": "funding-plan:567:21:> → >=",
+          "line": 567,
           "col": 21,
           "op": "> → >=",
           "text": "if (r.shortCents > 0) {"
         },
         {
-          "sig": "funding-plan:576:48:<= → <",
-          "line": 576,
+          "sig": "funding-plan:570:48:<= → <",
+          "line": 570,
           "col": 48,
           "op": "<= → <",
           "text": "if (srcChain === r.chainId || available <= 0) continue"
         },
         {
-          "sig": "funding-plan:597:77:> → >=",
-          "line": 597,
+          "sig": "funding-plan:591:77:> → >=",
+          "line": 591,
           "col": 77,
           "op": "> → >=",
           "text": "const inbound = bridges.filter((b) => b.toChainId === chainId && b.cents > 0)"
         },
         {
-          "sig": "funding-plan:597:66:&& → ||",
-          "line": 597,
-          "col": 66,
-          "op": "&& → ||",
-          "text": "const inbound = bridges.filter((b) => b.toChainId === chainId && b.cents > 0)"
-        },
-        {
-          "sig": "funding-plan:607:82:=== → !==",
-          "line": 607,
-          "col": 82,
-          "op": "=== → !==",
-          "text": "const local = [...resolvedById.get(chainId)!.drawn].some((d) => d.fromChainId === chainId)"
-        },
-        {
-          "sig": "funding-plan:632:16:<= → <",
-          "line": 632,
+          "sig": "funding-plan:626:16:<= → <",
+          "line": 626,
           "col": 16,
           "op": "<= → <",
           "text": "if (b.cents <= 0 || bridgeSourceRefused.has(b.fromChainId)) continue"
         },
         {
-          "sig": "funding-plan:680:80:> → >=",
-          "line": 680,
+          "sig": "funding-plan:674:80:> → >=",
+          "line": 674,
           "col": 80,
           "op": "> → >=",
           "text": "const liveBridges = bridges.filter((b) => liveIds.has(b.toChainId) && b.cents > 0 && !brid"
         },
         {
-          "sig": "funding-plan:689:33:> → >=",
-          "line": 689,
+          "sig": "funding-plan:683:33:> → >=",
+          "line": 683,
           "col": 33,
           "op": "> → >=",
           "text": "const shift = liveSells.length > 0 ? 1 : 0"
         },
         {
-          "sig": "funding-plan:754:23:> → >=",
-          "line": 754,
+          "sig": "funding-plan:748:23:> → >=",
+          "line": 748,
           "col": 23,
           "op": "> → >=",
           "text": "if (liveSells.length > 0) {"

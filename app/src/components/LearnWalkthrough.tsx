@@ -103,7 +103,7 @@ function LeaguePoolSlide({ poolUsd, onClose }: { poolUsd?: string; onClose: () =
           to the race instead of showing a placeholder figure */}
       {poolUsd ? (
         <div className="relative overflow-hidden rounded-2xl border border-teal/25 bg-teal/[0.04] p-8 text-center">
-          <div aria-hidden className="pointer-events-none absolute -top-16 left-1/2 h-40 w-72 -translate-x-1/2 rounded-full bg-teal/15 blur-3xl" />
+          <div aria-hidden className="ambient-bloom pointer-events-none absolute -top-16 left-1/2 h-40 w-72 -translate-x-1/2 rounded-full bg-teal/15 blur-3xl" />
           <div className="relative font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">Score to beat</div>
           <div className="relative mt-2 font-num text-5xl font-light tabular-nums text-teal">{poolUsd}</div>
           <div className="relative mt-1 font-mono text-[10px] text-ink-faint">out-earn it and the fees stream to you</div>
@@ -114,7 +114,7 @@ function LeaguePoolSlide({ poolUsd, onClose }: { poolUsd?: string; onClose: () =
           onClick={onClose}
           className="press group relative flex items-center justify-between gap-4 overflow-hidden rounded-2xl border border-teal/25 bg-teal/[0.04] px-6 py-5 transition-colors hover:border-teal/50"
         >
-          <div aria-hidden className="pointer-events-none absolute -top-16 left-1/3 h-40 w-72 -translate-x-1/2 rounded-full bg-teal/15 blur-3xl" />
+          <div aria-hidden className="ambient-bloom pointer-events-none absolute -top-16 left-1/3 h-40 w-72 -translate-x-1/2 rounded-full bg-teal/15 blur-3xl" />
           <div className="relative">
             <div className="font-display text-lg font-bold uppercase tracking-tight text-ink">See this season&rsquo;s race</div>
             <div className="mt-1 text-sm text-ink-dim">The live standings and who the fees are flowing to.</div>

@@ -173,6 +173,7 @@ function BuySuccessCard({
   share,
   onClose,
   previewWallet,
+  stayHere,
 }: {
   symbol: string
   seeding?: boolean
@@ -185,6 +186,10 @@ function BuySuccessCard({
   share?: { url: string; xHref: string } | null
   onClose: () => void
   previewWallet?: boolean
+  /** The host keeps the user after a buy (the chat owns the whole flow), so
+   *  Done is the primary and the portfolio becomes the quiet link. Default
+   *  false preserves the owner's 2026-08-16 ruling everywhere else. */
+  stayHere?: boolean
 }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
@@ -284,14 +289,35 @@ function BuySuccessCard({
           key rides run-landed so its tile glows on arrival, and /portfolio's
           own onboarding gate covers a first-timer. A quiet stay-here escape
           keeps the old close for whoever wants this page. */}
-      <SeePortfolioButton token={token} onClose={onClose} />
-      <button
-        type="button"
-        onClick={onClose}
-        className="press mt-2 w-full py-2 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink"
-      >
-        stay on this page
-      </button>
+      {/* HOST DECIDES (owner 2026-08-21, the one-button audit). His 2026-08-16
+          ruling — the primary lands on the portfolio — still governs the swap
+          and token pages, where navigating onward IS the next step. In a host
+          that owns the whole flow (the chat), leaving mid-flow is the one thing
+          the primary must not do, so the two swap places. */}
+      {stayHere ? (
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="press mt-3 w-full rounded-xl py-3 font-display text-sm font-bold uppercase tracking-[0.15em] text-black"
+            style={{ background: 'linear-gradient(90deg,var(--color-teal),var(--color-cyan))' }}
+          >
+            Done
+          </button>
+          <SeePortfolioLink token={token} onClose={onClose} />
+        </>
+      ) : (
+        <>
+          <SeePortfolioButton token={token} onClose={onClose} />
+          <button
+            type="button"
+            onClick={onClose}
+            className="press mt-2 w-full py-2 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink"
+          >
+            stay on this page
+          </button>
+        </>
+      )}
     </div>
   )
 }
@@ -381,6 +407,26 @@ function SeePortfolioButton({ token, onClose }: { token: { address: string; chai
   )
 }
 
+/** The same destination as SeePortfolioButton, demoted to a quiet link for a
+ *  host that keeps the user (the chat owns the whole flow). Same run-landed
+ *  write, so the tile still glows whenever they do go. */
+function SeePortfolioLink({ token, onClose }: { token: { address: string; chainId: number }; onClose: () => void }) {
+  const navigate = useNavigate()
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        writeRunLanded([`${token.chainId}:${token.address.toLowerCase()}`])
+        onClose()
+        navigate('/portfolio')
+      }}
+      className="press mt-2 w-full py-2 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink"
+    >
+      see it in your portfolio ↗
+    </button>
+  )
+}
+
 export function SwapPendingOverlay({
   open,
   dir,
@@ -401,6 +447,7 @@ export function SwapPendingOverlay({
   usdRaw,
   previewWallet,
   onRetry,
+  stayHere,
 }: {
   open: boolean
   dir: 'buy' | 'sell'
@@ -416,6 +463,10 @@ export function SwapPendingOverlay({
    *  error face's primary button IS the retry the copy promises (audit
    *  2026-08-16: "you can close and retry" rendered beside only a Close). */
   onRetry?: () => void
+  /** The host owns the whole flow and must not hand the user off mid-way (the
+   *  chat). Flips the post-buy primary from "see it in your portfolio" to
+   *  "Done"; everywhere else the owner's 2026-08-16 ruling stands. */
+  stayHere?: boolean
   /** The basket being traded — its identity is the overlay's centerpiece, and
    *  the done state offers "Add to wallet". */
   token?: { address: string; chainId: number }
@@ -507,6 +558,7 @@ export function SwapPendingOverlay({
             share={share}
             onClose={onClose}
             previewWallet={previewWallet}
+            stayHere={stayHere}
           />
         ) : (
         <>

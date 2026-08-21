@@ -353,3 +353,24 @@ run on chain data alone. Creator thesis/identity persist per-browser, plus two z
 ways to show them to everyone: commit the signed blob into `app/metadata/` (ships in the
 build), or point `VITE_METADATA_BASE_URL` at a static file host you control. The wizard
 never asks for a database because there isn't one.
+
+## Agents (MCP) — optional
+
+Your basket site can be operated by AI agents. The kit ships an MCP server at
+`mcp/` (Model Context Protocol) whose tools are the app's own money modules:
+discover and read baskets, and compose lawful buy / sell / migrate / create /
+exit transactions — floors always derived from a live simulation, never the
+agent. Build it once and register it in any MCP client:
+
+```sh
+cd app && npm run mcp:build     # bundles mcp/dist/server.mjs (self-contained)
+# then point your MCP client's command at:  <kit>/mcp/run.sh
+```
+
+It holds no keys and never signs by default — compose tools return
+`{to,data,value}` + a plain-English review for your own wallet. Fully
+autonomous sending is opt-in behind `MCP_OPERATOR_KEY` (env, never logged) and
+bounded to payloads the server itself composed. Live buys/sells need an RPC
+that honours `eth_call` state overrides (a public endpoint usually does not —
+seat an operator RPC); reads, create, and the exit work on any RPC. Full
+detail and the safety model: `mcp/README.md`.

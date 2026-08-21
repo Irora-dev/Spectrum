@@ -1,7 +1,7 @@
 import { parseUnits, type Address } from 'viem'
 import { Venue, type PoolKey } from '../pools/types'
 import { DEPTH_FLOOR_PCT } from './insights'
-import { DEFAULT_MAX_PRICE_AGE_MS } from './swap-quote'
+import { DEFAULT_MAX_PRICE_AGE_MS } from './quote-freshness'
 import type { BatcherLegInput, BatchSimResult } from './batcher'
 import { skippedLegs } from './batcher'
 import { showSymbol } from './safe-copy'

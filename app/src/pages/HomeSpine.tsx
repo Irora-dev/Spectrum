@@ -16,7 +16,13 @@ import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { useCountUp, usePrefersReducedMotion } from '../lib/motion'
 import { HeroIntro, heroIntroWillPlay } from '../components/HeroIntro'
 import { SpectrumWordmark } from '../components/SpectrumWordmark'
-import { ConvictionCard, HeroBento, HERO_BENTO_RESERVE_CLASS } from '../components/home/Showcase'
+import { ConvictionCard, HERO_BENTO_RESERVE_CLASS } from '../components/home/Showcase'
+import homeBgBubbles from '../assets/home-bg-bubbles.svg'
+// the LIVE chat replaces the demo portfolio readout in the hero's straddle
+// slot (owner 2026-08-20: "the left and right cards from the chat with all
+// the chat functionality so you can use it on the homepage") — lazy so the
+// mascot sprites stay off the first paint
+const ChatEmbed = lazy(() => import('./Chat').then((m) => ({ default: m.Chat })))
 import { MadeBasket } from '../components/MadeBasket'
 import { IntroArt } from '../components/home/IntroArt'
 import homeHeroArt from '../assets/home-hero-v2.jpg'
@@ -495,22 +501,41 @@ export function HomeSpine() {
   const t = useCountUp(tvl, tvl > 0, 1200)
   const n = useCountUp(all.length, all.length > 0, 900)
 
+  // the pastel-orbs backdrop (owner: 60% on light) — this ROUTED homepage owns
+  // it; the effect previously lived in the unrouted pages/Home.tsx and never ran
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--chat-bg-url', `url(${homeBgBubbles})`)
+    const t = requestAnimationFrame(() => root.style.setProperty('--chat-bg-live', 'var(--home-bg-opacity, 0)'))
+    return () => {
+      cancelAnimationFrame(t)
+      root.style.setProperty('--chat-bg-live', '0')
+      root.style.removeProperty('--chat-bg-url')
+    }
+  }, [])
+
   return (
     <div>
       <HeroIntro onDone={() => setIntroDone(true)} />
 
       <HeroBlock introDone={introDone} />
 
-      {/* THE PORTFOLIO CARD STRADDLES THE HERO (owner 1826: "move the portfolio
-          card up so it's halfway over the hero and halfway over the next
-          section" — his original 22:15 ask, re-instated now that the hero
-          reserves the room; see HERO_BENTO_RESERVE_CLASS on the hero section).
+      {/* THE CHAT STRADDLES THE HERO (owner 1826's straddle law + owner
+          2026-08-20 "move the chat much much closer to the buttons in hero").
+          The pull MIRRORS HERO_BENTO_RESERVE_CLASS exactly — same percentage,
+          same containing block — so the chat's top lands where the reserve
+          begins: right under the hero copy, with the hero's own inner pb-16 as
+          the only clearance. The bento's overlap class stayed behind in
+          Showcase when the chat took this slot, which left the whole reserve
+          as dead air between the CTAs and the chat.
           It lives OUTSIDE the hero <section> deliberately: that section carries
           overflow-hidden to mask the art, so anything inside it would be CLIPPED
           rather than overlapping. Sitting here and pulling itself up is what lets
           it cross the boundary. z-20 so it rides over the art, not under it. */}
-      <div className="relative z-20">
-        <HeroBento baskets={all} />
+      <div className="relative z-20 px-4 sm:px-6 lg:[margin-top:-21.923%]">
+        <Suspense fallback={<div className="mx-auto h-[560px] w-full max-w-[1480px] rounded-[24px] border border-white/[0.08] bg-white/[0.02] lg:h-[680px]" aria-hidden />}>
+          <ChatEmbed embed />
+        </Suspense>
       </div>
 
       {WALLET_ENABLED && (
@@ -591,7 +616,10 @@ export function HomeSpine() {
             size="display"
             title={
               <>
-                Managing a portfolio across chains
+                {/* two lines TOTAL at >=sm: the ink sentence holds one line
+                    (em-shrink keeps the clamp), the spectral line is the
+                    second (owner 2026-08-17). Phones keep the 08-06 ruling. */}
+                <span className="sm:whitespace-nowrap">Managing a portfolio across chains</span>
                 <br />
               </>
             }
@@ -635,7 +663,7 @@ export function HomeSpine() {
             thesis, hold it and get paid [when others] hold it too — remove
             the description and have the Create a basket button which takes
             you to the create page"). The door rides the flow's own gate. */}
-        <div className="flex flex-wrap items-end justify-between gap-8">
+        <div className="flex flex-wrap items-center justify-between gap-8">
           <Reveal>
             {/* two lines and larger (owner 17:39: "craft the thesis, hold it, let
                 others hold it too needs to be two lines and make it larger") —
@@ -671,7 +699,7 @@ export function HomeSpine() {
       {/* DISCOVERY — his line, and the data behind why it is the right line */}
       {convictions.length > 0 && (
         <section className="py-12 sm:py-16 lg:py-24">
-          <div className="flex flex-wrap items-end justify-between gap-8">
+          <div className="flex flex-wrap items-center justify-between gap-8">
             <Reveal>
               {/* no eyebrow pill, no description (owner 17:01) — two lines,
                   bigger, and the cards below are the argument. The ch cap was
@@ -692,7 +720,9 @@ export function HomeSpine() {
               </h2>
             </Reveal>
             <Reveal delay={120}>
-              <IslandCta to="/explore" tone="quiet">
+              {/* same voice as "Create a basket" (owner 2026-08-17): the two
+                  section CTAs are peers, so they wear the same fill */}
+              <IslandCta to="/explore">
                 See all baskets
               </IslandCta>
             </Reveal>
@@ -787,7 +817,11 @@ export function HomeSpine() {
                     size="md"
                     /* the full face (chart + bento) needs real width: one per
                        screen on phones, two-up from lg via the grid below */
-                    className="min-w-0 shrink-0 basis-[88%] snap-start sm:basis-auto sm:shrink lg:min-w-[420px] lg:max-w-[520px]"
+                    /* grow to the section's full edge (owner 2026-08-17: the bundles rail
+                       must align with the upper grid's right-hand side) — 2-up
+                       from lg, filling the row instead of stopping at 520px */
+                    className="min-w-0 shrink-0 basis-[88%] snap-start sm:flex-1 sm:basis-auto sm:shrink lg:min-w-[420px]"
+
                   />
                 ))}
               </div>

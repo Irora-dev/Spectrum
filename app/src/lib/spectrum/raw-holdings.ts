@@ -8,6 +8,8 @@ import { Venue } from '../pools/types'
 import { nativeEthUsdOnChain, v4LegUsd } from '../pools/v4-usd'
 import { v3LegUsd } from '../pools/v3-usd'
 import type { AssetExposure, ExposureBreakdown } from './exposure'
+import { PRISM_CLAIM_CHAIN_ID, PRISM_V2_HOOK } from '../prism/claim'
+import { PRISM_POOL_KEY } from '../prism/pool'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RAW HOLDINGS — what the wallet holds DIRECTLY, before anything is minted.
@@ -120,6 +122,23 @@ export function planExtraTokens(
 
 async function priceHolding(chainId: number, asset: Address, decimals: number, ethUsd: number | null): Promise<number | null> {
   if (ethUsd == null) return null
+  const a = asset.toLowerCase()
+  // the canonical wrap IS the quote asset every pool here prices against —
+  // it can never route "against ETH", and it never needs to: 1 WETH = 1
+  // native by construction (owner 2026-08-20 1033, via Daylight w-145)
+  try {
+    if (a === chainCfg(chainId).weth?.toLowerCase()) return ethUsd
+  } catch {
+    /* an unconfigured chain just falls through to discovery */
+  }
+  // a SELF-HOOKED v4 token (PRISM: token == hook == its only venue) never
+  // surfaces in findBestPool's discovery — but the app already pins its pool
+  // key, and a v4 pool prices off its own slot0 (the doctrine lp-positions
+  // proves on the same pool). Reuse the real key, never re-derive.
+  if (chainId === PRISM_CLAIM_CHAIN_ID && a === PRISM_V2_HOOK.toLowerCase()) {
+    const p = await v4LegUsd(chainId, { ...PRISM_POOL_KEY }, decimals, ethUsd).catch(() => null)
+    if (p != null) return p
+  }
   try {
     const found = await findBestPool(asset, chainId)
     const best = found.best

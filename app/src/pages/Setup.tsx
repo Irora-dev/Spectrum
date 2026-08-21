@@ -85,6 +85,7 @@ const STYLES: { id: DesignStyle; blurb: string }[] = [
   { id: 'prism', blurb: 'Pure-black, crisp, cyan' },
   { id: 'umbra', blurb: 'Solid near-black fintech' },
   { id: 'sylvan', blurb: 'Organic green / lime' },
+  { id: 'enterprise', blurb: 'Clean light · enterprise' },
 ]
 const PAGE_LABELS: Record<PageKey, string> = {
   discover: 'Discover / Explore', launch: 'Launch + Composer', trade: 'Swap (buy / sell)',

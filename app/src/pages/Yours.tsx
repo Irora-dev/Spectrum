@@ -163,7 +163,7 @@ function Shell({ children, enterIndex = 0, glow, bright = false }: { children: R
         {bright && (
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-60"
+            className="shell-bright-wash pointer-events-none absolute inset-0 opacity-60"
             style={{
               background:
                 'linear-gradient(120deg, color-mix(in srgb, var(--color-cyan) 10%, transparent) 0%, color-mix(in srgb, var(--color-violet-bright) 12%, transparent) 45%, transparent 80%)',
@@ -171,7 +171,7 @@ function Shell({ children, enterIndex = 0, glow, bright = false }: { children: R
           />
         )}
         {glow && (
-          <span aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full opacity-20 blur-3xl" style={{ background: glow }} />
+          <span aria-hidden className="ambient-bloom pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full opacity-20 blur-3xl" style={{ background: glow }} />
         )}
         {children}
       </div>
@@ -954,16 +954,22 @@ export function Yours() {
   const [welcome] = useState(() => shouldWelcome())
   // THE RUN LANDING (the owner 2026-08-15): the completion plate hands over what
   // changed; those tiles glow with the bento's own arrival ring, once.
-  // SAME-PAGE DELIVERY TOO (the owner live 2026-08-18: "run completing… you
-  // don't see the change in the portfolio bento grid"): the manage flow runs
-  // ON this page, so a mount-time read alone never heard those landings — the
-  // flow now announces on its way off the screen and this listener spends the
-  // handoff the moment it can actually be seen.
-  const [landedKeys, setLandedKeys] = useState(() => takeRunLanded().keys)
+  // STATEFUL + EVENT-FED since 2026-08-17 ("you don't see any pop up… or an
+  // update"), and DEFER-ANNOUNCED since 2026-08-18: the manage flow runs ON
+  // this page, so a mount-time read alone never fired for it — the run now
+  // writes its landing at done, the flow announces on its way OFF the screen
+  // (never behind its own overlay), and this listener spends the handoff at
+  // the first moment it can actually be seen. The book queries refetch so the
+  // bento shows the NEW mix, and the change rows render as the arrival plate.
+  const qc = useQueryClient()
+  const [landed, setLanded] = useState(() => takeRunLanded())
+  const [plateDismissed, setPlateDismissed] = useState(false)
   useEffect(() => {
     const onLanded = () => {
-      const more = takeRunLanded()
-      if (more.keys.size > 0) setLandedKeys((prev) => new Set([...prev, ...more.keys]))
+      const next = takeRunLanded()
+      if (next.keys.size === 0) return
+      setLanded((prev) => ({ keys: new Set([...prev.keys, ...next.keys]), changes: [...prev.changes, ...next.changes] }))
+      setPlateDismissed(false)
     }
     window.addEventListener(RUN_LANDED_EVENT, onLanded)
     return () => window.removeEventListener(RUN_LANDED_EVENT, onLanded)
@@ -975,20 +981,20 @@ export function Yours() {
   // unbounded-ish window on the young chain, so after a landing the book
   // refetches every 3s for 30s — the tile appears the first poll after the
   // node catches up, and the polling stops itself either way.
-  const qcLanded = useQueryClient()
   useEffect(() => {
-    if (landedKeys.size === 0) return
-    void qcLanded.invalidateQueries({ queryKey: ['spectrum', 'raw-holdings'] })
+    if (landed.keys.size === 0) return
+    void qc.invalidateQueries({ queryKey: ['spectrum', 'raw-holdings'] })
     const started = Date.now()
     const id = window.setInterval(() => {
       if (Date.now() - started > 30_000) {
         window.clearInterval(id)
         return
       }
-      void qcLanded.invalidateQueries({ queryKey: ['spectrum', 'raw-holdings'] })
+      void qc.invalidateQueries({ queryKey: ['spectrum', 'raw-holdings'] })
     }, 3_000)
     return () => window.clearInterval(id)
-  }, [landedKeys, qcLanded])
+  }, [landed, qc])
+  const landedKeys = landed.keys
   // ⚠ LAND ON THE PICTURE, NOT THE TOP OF THE PAGE (the owner 2026-08-15: "View
   // your portfolio… should take you immediately back to the bento grid… and you
   // see the new assets/reweighting happen live"). `landedKeys` is already the
@@ -2999,6 +3005,45 @@ export function Yours() {
                     /* one spectral pass over the whole map the moment you land
                        from a completed run — celebration, not a state */
                     <RunProgressStyles />
+                  )}
+                  {/* THE ARRIVAL PLATE (owner 2026-08-17): the run's confirmed
+                      changes, right where the eye lands — the same dollars the
+                      review showed, now marked landed. Dismissible; spent with
+                      the landing (never re-renders on an ordinary visit). */}
+                  {landed.changes.length > 0 && !plateDismissed && (
+                    <div className="relative mb-4 overflow-hidden rounded-2xl border border-teal/30 bg-teal/[0.06] px-4 py-3.5 sm:px-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-teal">run landed ✓</div>
+                          <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1.5">
+                            {landed.changes.slice(0, 8).map((c) => {
+                              const d = c.toUsd - c.fromUsd
+                              return (
+                                <span key={c.key} className="inline-flex items-baseline gap-1.5 font-mono text-[12px] tabular-nums">
+                                  <span className="font-display text-[12px] font-bold uppercase tracking-wide text-ink">${showSymbol(c.symbol)}</span>
+                                  <span className="text-ink-faint">${Math.round(c.fromUsd).toLocaleString()} →</span>
+                                  <span className="text-ink">${Math.round(c.toUsd).toLocaleString()}</span>
+                                  <span className={d >= 0 ? 'text-teal' : 'text-amber-300/90'}>
+                                    {d >= 0 ? '+' : '−'}${Math.round(Math.abs(d)).toLocaleString()}
+                                  </span>
+                                </span>
+                              )
+                            })}
+                            {landed.changes.length > 8 && (
+                              <span className="font-mono text-[11px] text-ink-faint">+{landed.changes.length - 8} more</span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPlateDismissed(true)}
+                          aria-label="Dismiss"
+                          className="press grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-faint hover:bg-white/5 hover:text-ink"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
                   )}
                   {mixView === 'bento' && (
                     <div id="bento-grid" ref={bentoRef} className="scroll-mt-24">

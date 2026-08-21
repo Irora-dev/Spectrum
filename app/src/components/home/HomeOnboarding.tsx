@@ -165,7 +165,7 @@ export function HomeOnboarding() {
           same single-column render every viewport below lg already gets). */}
       {canSeed ? (
         <>
-          <div className={publishHref ? 'mt-8 grid gap-4 lg:grid-cols-2' : 'mt-8 grid gap-4'}>
+          <div className={publishHref ? 'mt-14 grid gap-4 lg:grid-cols-2' : 'mt-14 grid gap-4'}>
             <DoorCard
               /* owner 2026-08-03 late: 'build sounds intimidating but manage
                  sounds like something you already do' */

@@ -103,8 +103,10 @@ export function Layout({ children }: { children: ReactNode }) {
             could be made smaller/less text" — the station's viewport budget
             subtracts this footer, so every trimmed pixel goes to the grid):
             paddings a step down, the disclaimer compressed to its clauses. */}
-        <div className="mx-auto flex max-w-[1000px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
-          <div className="flex flex-col gap-0.5">
+        {/* CENTERED (owner 2026-08-19): the footer reads as one centered stack —
+            brand line, attribution, links — instead of a left/right split. */}
+        <div className="mx-auto flex max-w-[1000px] flex-col items-center gap-y-2 px-4 py-3 text-center sm:px-6">
+          <div className="flex flex-col items-center gap-0.5">
             <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
               {brand.name} · {brand.tagline || 'onchain baskets'}
             </span>
@@ -117,7 +119,7 @@ export function Layout({ children }: { children: ReactNode }) {
               2026-08-06 — nine 15px-tall targets across three wrapped lines),
               so the min-height IS the vertical rhythm and an extra gap would
               only pad an already-taller footer. */}
-          <nav className="flex flex-wrap items-center gap-x-4 gap-y-0 sm:gap-x-5 sm:gap-y-2">
+          <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-0 sm:gap-x-5 sm:gap-y-2">
             {FOOTER_LINKS.map((l) => (
               <Link
                 key={l.to}
@@ -138,7 +140,7 @@ export function Layout({ children }: { children: ReactNode }) {
             form. Compressed 2026-08-13 (the owner: "smaller/less text") — every
             disclaiming CLAUSE survives; only the wording around them shrank. */}
         <div className="mx-auto max-w-[1000px] border-t border-line/60 px-4 py-2 sm:px-6">
-          <p className="max-w-4xl font-mono text-[9px] leading-snug tracking-[0.05em] text-ink-faint/70">
+          <p className="mx-auto max-w-4xl text-center font-mono text-[9px] leading-snug tracking-[0.05em] text-ink-faint/70">
             Informational only — not an offer, solicitation, or financial, investment, legal, or tax advice.
             Software without warranty; basket tokens are created and issued by their deployers, who are solely
             responsible for them. Onchain assets carry risk, including total loss. Verify on-chain yourself.

@@ -96,17 +96,15 @@ export const feeChargedEvent = {
 } as const
 export const FEE_CHARGED_TOPIC0 = toEventSelector(feeChargedEvent)
 
-/** The divert disclosure — the incident's own event. No export in this repo
- *  carries its ABI (header note); shape mirrors FeeCharged's (sink, amount). */
-export const BURN_DIVERTED_SIGNATURE = 'BurnDiverted(address,uint256)'
-export const burnDivertedEvent = {
-  type: 'event',
-  name: 'BurnDiverted',
-  inputs: [
-    { name: 'sink', type: 'address', indexed: true },
-    { name: 'amount', type: 'uint256', indexed: false },
-  ],
-} as const
+/** The divert disclosure — the incident's own event, now the REAL shape from
+ *  abis-v2 (this module's first cut mirrored a guessed 2-arg form; the guess
+ *  was fail-closed — a real divert decoded as unknown → unrecognized — and a
+ *  live 2026-08-18 Base divert proved the actual 4-arg shape, so the mirror
+ *  is retired for the export). `reason` carries the burn swap's own revert
+ *  bytes; surfacing its selector names WHY the share diverted. */
+export const BURN_DIVERTED_SIGNATURE = 'BurnDiverted(address,address,uint256,bytes)'
+export { burnDivertedEvent } from './abis-v2'
+import { burnDivertedEvent } from './abis-v2'
 export const BURN_DIVERTED_TOPIC0 = toEventSelector(burnDivertedEvent)
 
 /** Canonical ERC-20 Transfer — abis-v2.ts exports only function fragments
@@ -174,7 +172,7 @@ export type ReceiptFact =
       refunded: bigint
     }
   | { kind: 'fee-charged'; burnSink: string; burnCut: bigint }
-  | { kind: 'burn-diverted'; sink: string; amount: bigint }
+  | { kind: 'burn-diverted'; sink: string; amount: bigint; fundingAsset: string; reason: `0x${string}` }
   /** An ERC-20 transfer of `asset` to `to` — a leg delivery when it matches. */
   | { kind: 'delivery'; asset: string; to: string; amount: bigint }
   /** A money-contract log this module could not read — law 6's raw material. */
@@ -722,8 +720,8 @@ export function decodeReceiptFacts(args: {
             abi: [burnDivertedEvent],
             data: log.data as `0x${string}`,
             topics: log.topics as EventTopics,
-          }).args as { sink: string; amount: bigint }
-          facts.push({ kind: 'burn-diverted', sink: d.sink.toLowerCase(), amount: d.amount })
+          }).args as { sink: string; fundingAsset: string; amount: bigint; reason: `0x${string}` }
+          facts.push({ kind: 'burn-diverted', sink: d.sink.toLowerCase(), amount: d.amount, fundingAsset: d.fundingAsset.toLowerCase(), reason: d.reason })
         } catch {
           facts.push(unknown)
         }

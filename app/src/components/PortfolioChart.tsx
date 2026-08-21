@@ -26,8 +26,29 @@ import { useChartPart } from './dither-kit/chart-context'
 
 // Concrete hexes (mirroring index.css tokens): the dither engine paints to
 // canvas via hexToRgb, which cannot resolve a CSS var() string.
-const UP = '#35e0ff'
-const DOWN = '#ff4db8'
+// the plane's own accents, resolved live (the InsightCard pattern): the void
+// draws its light cyan/magenta, paper draws the violet/berry authority inks —
+// hardcoding the void hexes here left the up-line near-invisible on light
+// mode (#35e0ff on white ≈ 1.6:1) and reintroduced the hue the 2026-08-19
+// re-ink removed. Re-reads on brandchange so the design-mode toggle repaints.
+const FALLBACK_UP = '#35e0ff'
+const FALLBACK_DOWN = '#ff4db8'
+function usePlaneAccents(): { up: string; down: string } {
+  const read = () => {
+    const cs = getComputedStyle(document.documentElement)
+    return {
+      up: cs.getPropertyValue('--color-cyan').trim() || FALLBACK_UP,
+      down: cs.getPropertyValue('--color-magenta').trim() || FALLBACK_DOWN,
+    }
+  }
+  const [accents, setAccents] = useState(read)
+  useEffect(() => {
+    const on = () => setAccents(read())
+    window.addEventListener('spectrum:brandchange', on)
+    return () => window.removeEventListener('spectrum:brandchange', on)
+  }, [])
+  return accents
+}
 
 const RANGES: ChartRange[] = ['24H', '7D', '30D']
 
@@ -162,7 +183,7 @@ function ChartSkeleton({ quiet = false }: { quiet?: boolean }) {
             <animateTransform attributeName="transform" type="translate" from="0 0" to="-200 0" dur="7s" repeatCount="indefinite" />
           )}
           <path d={`${wave} V100 H0 Z`} fill="url(#chart-skel-fade)" />
-          <path d={wave} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="1.5" vectorEffect="non-scaling-stroke">
+          <path d={wave} className="chart-skel-wave" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="1.5" vectorEffect="non-scaling-stroke">
             {!noMotion && <animate attributeName="stroke-opacity" values="0.6;1;0.6" dur="2.4s" repeatCount="indefinite" />}
           </path>
         </g>
@@ -250,6 +271,7 @@ export function PortfolioChart({
     [points],
   )
 
+  const { up: UP, down: DOWN } = usePlaneAccents()
   const { change, deltaUsd, startUsd, accent } = useMemo(() => {
     if (points.length < 2) return { change: null as number | null, deltaUsd: 0, startUsd: 0, accent: UP }
     const first = points[0].value
@@ -262,7 +284,7 @@ export function PortfolioChart({
     // the whole truth, so the percent is null and the card omits it.
     const chg = first >= 0.01 ? ((last - first) / first) * 100 : null
     return { change: chg, deltaUsd: last - first, startUsd: first, accent: chg != null && chg < 0 ? DOWN : UP }
-  }, [points])
+  }, [points, UP, DOWN])
 
   // The mix's identity colours, weight-proportioned (top 5 carry the gradient).
   const palette = useMemo(() => {

@@ -842,8 +842,12 @@ describe('A12 pins — corrupt persisted fields drop, never render', () => {
 describe('batchFeeBpsFor — the per-generation fee resolver (production fee model, 2026-08-16)', () => {
   it('every deployed chain is GENERATION 2 since the gen-3 ceremony (2026-08-16) and resolves to the 25bps rate', () => {
     for (const id of [1, 8453, 4663]) expect(batchFeeBpsFor(id)).toBe(GEN2_BATCH_FEE_BPS)
-    // an unscaffolded chain stays gen-1 by default — the resolver's floor
-    expect(batchFeeBpsFor(999999)).toBe(BATCH_FEE_BPS)
+    // an unscaffolded chain resolves the 100%-BURN default since 2026-08-19 —
+    // the coercion flipped fail-closed (deployments.ts: unknown→2; the old
+    // unknown→1 direction was the measured eighth-of-every-fee leak). The
+    // rate is unreachable there by construction anyway: no batcher is seated,
+    // so no batch composes on an unscaffolded chain.
+    expect(batchFeeBpsFor(999999)).toBe(GEN2_BATCH_FEE_BPS)
   })
   it('the gen-2 constant is 25 bps — 0.25% ours, 100% burn (0x’s ~15bps makes ~0.4% all-in)', () => {
     expect(GEN2_BATCH_FEE_BPS).toBe(25)

@@ -562,7 +562,7 @@ export function HeroBento({ baskets }: { baskets: BasketSummary[] }) {
           <Bezel
             glow="var(--color-violet)"
             panel="bg-void/95"
-            className="shadow-[0_64px_140px_-40px_rgba(0,0,0,0.95)]"
+            className="showcase-shadow"
           >
             {/* the prism runs the full top edge — the house mark for the one
                 object on a page that matters most (the publish card and the

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { showName, showSymbol } from '../lib/spectrum/safe-copy'
+import homeBgBubbles from '../assets/home-bg-bubbles.svg'
 import { Link } from 'react-router'
 import { basketHref } from '../lib/spectrum/short-url'
 import { useCountUp } from '../lib/motion'
@@ -98,7 +99,7 @@ function HomeSwap({ baskets }: { baskets: BasketSummary[] }) {
         <div
           aria-hidden
           className="pointer-events-none absolute -inset-x-8 -top-10 bottom-0 opacity-25 blur-3xl"
-          style={{ background: `radial-gradient(55% 60% at 50% 0%, ${sig}, transparent 72%)` }}
+          style={{ background: `radial-gradient(44% 32% at 50% 0%, ${sig}, transparent 68%)` }}
         />
         <div className="relative mx-auto grid max-w-5xl gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)] lg:items-start">
           <DexSwapCard chainId={chainId} onBasketChange={setSelected} />
@@ -193,7 +194,7 @@ function FeaturedBundle({ chainId }: { chainId: number }) {
       to={publishedBundleHref(top.bundle, top.bundle.by)}
       className="group relative mt-4 flex flex-col gap-4 overflow-hidden rounded-3xl border border-white/12 bg-panel/60 p-5 press hover:border-cyan/40 sm:flex-row sm:items-center sm:p-6"
     >
-      <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-violet/15 blur-3xl" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-violet/15 blur-3xl" />
       <div className="relative min-w-0 flex-1">
         <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Featured bundle</div>
         <h3 className="mt-1.5 truncate font-display text-2xl font-bold leading-tight text-ink sm:text-3xl">
@@ -374,14 +375,16 @@ function StatsStrip({ creators, baskets, tvlUsd }: { creators: number; baskets: 
   return (
     <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-panel">
       <div aria-hidden className="absolute inset-x-0 top-0 h-px" style={{ background: 'linear-gradient(90deg, transparent, rgba(53,224,255,0.5), rgba(123,92,255,0.5), rgba(255,77,184,0.5), transparent)' }} />
-      <div aria-hidden className="pointer-events-none absolute -left-20 -top-24 h-64 w-64 rounded-full bg-cyan/10 blur-[100px]" />
-      <div aria-hidden className="pointer-events-none absolute -right-20 -bottom-24 h-64 w-64 rounded-full bg-magenta/10 blur-[100px]" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -left-20 -top-24 h-64 w-64 rounded-full bg-cyan/10 blur-[100px]" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-20 -bottom-24 h-64 w-64 rounded-full bg-magenta/10 blur-[100px]" />
       <div className="relative grid grid-cols-3 divide-x divide-white/[0.07]">
         {cells.map((s) => (
           <div key={s.l} className="px-4 py-10 text-center sm:py-12">
             <div
-              className={`font-num text-4xl font-light leading-none tabular-nums sm:text-6xl ${s.grad ? 'spectral-text font-normal' : 'text-ink'}`}
-              style={s.grad ? undefined : { textShadow: '0 0 30px rgba(255,255,255,0.10)' }}
+              /* the white bloom lives in a CLASS now (hero-stat-glow) so the
+                 light plane can stand it down — an inline shadow was
+                 unreachable from the design-mode CSS */
+              className={`font-num text-4xl font-light leading-none tabular-nums sm:text-6xl ${s.grad ? 'spectral-text font-normal' : 'text-ink hero-stat-glow'}`}
             >
               {s.v}
             </div>
@@ -425,6 +428,19 @@ const CreateSurface = lazy(() =>
 export function Home() {
   const activeChainId = useActiveChainId()
   const { data, isLoading, isError } = useAllBaskets()
+  // the pastel-orbs backdrop on the light plane only (owner 2026-08-20: "the
+  // spectrum homepage bg on light mode, 60% visible") — rides the chat's
+  // body::after layer; --home-bg-opacity is 0 on dark, 0.6 on paper
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--chat-bg-url', `url(${homeBgBubbles})`)
+    const t = requestAnimationFrame(() => root.style.setProperty('--chat-bg-live', 'var(--home-bg-opacity, 0)'))
+    return () => {
+      cancelAnimationFrame(t)
+      root.style.setProperty('--chat-bg-live', '0')
+      root.style.removeProperty('--chat-bg-url')
+    }
+  }, [])
   // Post-intro entrance (owner 16:44): as the intro fades, the SIDE animations
   // come in first, THEN the hero text. When no intro plays (SPA nav, reduced
   // motion, already seen) everything starts visible — no re-animation.

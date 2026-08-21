@@ -7,6 +7,64 @@ version FROM `version.json`, so bumping the json is the whole code-side release 
 Releases touching the launch/trading money paths carry a `Sacred:` line naming them
 (how releases work end to end: `docs/RELEASES.md`).
 
+## 2026.08.21
+
+Sacred: executor, swap, launch — the trade card's pay side now honours a caller-stated
+settlement context, the post-buy hand-off became host-decided, and the launch card's busy
+state gained the first-deposit phase it was missing. No floor, approval, simulation or
+byte-verification law moved; the sacred smoke and the money proof are green against live
+chains.
+
+**The product is operable by talking to it.** A chat surface runs every money flow in
+place: buying, selling, creating a basket, launching one across chains, redeeming in kind,
+migrating into a successor, publishing a bundle, recording a new version, and claiming the
+fees a basket has accrued to you. Every one of them signs in the visitor's own wallet, and
+none of them sends the reader to another page to finish. The brain is deterministic — a
+regex intent layer over the app's own money modules, with the language pass, the QA bank
+and an endless orientation catch-all so a question can never dead-end. An operator may
+point `VITE_AGENT_ENDPOINT` at their own language model without giving up any of that: the
+contract lets a remote brain speak, suggest, and delegate one message back through the
+deterministic machinery, and carries no field in which an action payload could travel, so
+it cannot fabricate a trade. Absent, erroring, or malformed all mean the deterministic
+brain answers exactly as it would have.
+
+**One flow, one button.** A reply never puts two armed money primaries on screen at once.
+A cross-chain launch takes one press and then walks itself: each chain's basket mined,
+signed and live in turn, the first deposit riding the same signature where the wallet can
+batch, a bridge offered when a chain is short, the bundle wrap firing on its own, and the
+share options at the end. A multi-buy is one press over one card at a time rather than
+four cards at once. An escape hatch is a text link, never a rival button. Where a flow
+still needs a second decision, that decision is the wallet's, which is consent, not
+friction we forgot to remove.
+
+**Agents can operate a site.** `mcp/` ships in the kit: a zero-dependency MCP server that
+bundles the app's own money modules and exposes them as tools. It holds no keys and never
+sends. Reads answer with provenance; composes return the calldata, the value, and review
+sentences a person can check; refusals are sentences that fire before any chain read. A
+Bankr skill and a deep-link lane ship beside it, and `/mcp` documents the surface from the
+generated manifest rather than a hand-kept list.
+
+**The enterprise light plane** is a designed second skin rather than an inversion: its own
+ink family, plate and hairline ladders, focus and scrim roles audited separately, charts
+and error voices resolving live tokens, and the WebGL edge standing down where paper is
+opaque.
+
+**Creator surfaces**: `/creators` is action-first — pick what you're bullish on with the
+real picker, see how baskets work, create in one click — and `/creators/explore` ranks
+creators by value created since launch, with rows that mount live content only in view.
+
+Fixes worth naming. The launch card's busy state omitted the first-deposit phase, so its
+primary re-armed mid-deposit and a second press could deploy a second basket and pay a
+second launch fee; that phase is now part of busy. A multi-segment route shipped without
+its asset rewrite and served the SPA fallback where a module was expected, which is a blank
+page on a cold load and invisible to in-app navigation; the rule is added and a test now
+enforces one for every nested route. A disambiguation rail sent bare tickers while its
+ordinal path sent actions, so tapping and answering could resolve differently; both now
+send the same thing. A pay-side preference outranked a caller's stated settlement context,
+which could read a dollar amount as native coin; context is checked first. The bridge
+modal promised a hand-back that only the standalone swap page provides; the sentence now
+matches the host.
+
 ## 2026.08.18
 
 Sacred: executor, swap, launch — the sale step gains a fee lane, the single-swap paths

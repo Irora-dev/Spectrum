@@ -52,12 +52,32 @@ export const hexToRgb = (v: string): Rgb | null => {
 export const toward = (c: Rgb, t: number): Rgb =>
   c.map((x) => Math.round(x + (255 - x) * t)) as unknown as Rgb
 
+/** The paper plane (enterprise light mode) — read live at derivation time so
+ *  any repaint after a plane flip picks the right direction. */
+export const onPaper = (): boolean =>
+  typeof document !== "undefined" && document.documentElement.getAttribute("data-style") === "enterprise"
+
+/** Line/star tints, PLANE-AWARE: on the void plane a series pops by lightening
+ *  toward white; on paper that same lightening is toward-invisible (owner
+ *  2026-08-20: "on light mode all the charts are hard to see"), so paper
+ *  deepens toward pigment instead. One seam, every chart in the family. */
+export const tint = (c: Rgb, t: number): Rgb =>
+  onPaper() ? (c.map((x) => Math.round(x * (1 - t * 0.75))) as unknown as Rgb) : toward(c, t)
+
+/** The FILL itself deepens on paper: the dither engine paints every cell and
+ *  border from seed.fill at alpha, and the pale identity pastels that glow on
+ *  void wash out on white. A 30 percent deepen keeps the hue, gains pigment;
+ *  void keeps the exact original. */
+export const paperFill = (c: Rgb): Rgb => (onPaper() ? (c.map((x) => Math.round(x * 0.7)) as unknown as Rgb) : c)
+
 export const seedOfColor = (color: SeriesColor): Seed => {
   const preset = PALETTE[color as DitherColor]
-  if (preset) return preset
+  // preset line/star literals are PRE-LIGHTENED for the void plane — on paper,
+  // re-derive them from the fill so they deepen instead
+  if (preset) return onPaper() ? { fill: paperFill(preset.fill), line: tint(preset.fill, 0.45), star: tint(preset.fill, 0.72) } : preset
   const base = hexToRgb(color)
   if (!base) return PALETTE.grey
-  return { fill: base, line: toward(base, 0.45), star: toward(base, 0.72) }
+  return { fill: paperFill(base), line: tint(base, 0.45), star: tint(base, 0.72) }
 }
 
 export const isDitherColor = (value: unknown): value is DitherColor =>
@@ -95,7 +115,7 @@ export function seedRamp(stops: { color: string; weight: number }[], cols: numbe
       const b = centres[k + 1]
       rgbv = lerp(a.rgb, b.rgb, (u - a.at) / (b.at - a.at || 1))
     }
-    out.push({ fill: rgbv, line: toward(rgbv, 0.45), star: toward(rgbv, 0.72) })
+    out.push({ fill: paperFill(rgbv), line: tint(rgbv, 0.45), star: tint(rgbv, 0.72) })
   }
   return out
 }

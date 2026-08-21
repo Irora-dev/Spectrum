@@ -14,6 +14,9 @@
 # /thesis/:deployer/:slug is TWO segments deep (a creator's cross-chain idea), so a
 # refresh requests /thesis/<deployer>/assets/* — same shape as the bundle rule above.
 /thesis/:deployer/assets/*  /assets/:splat  200
+# /creators/explore is nested (doc dir /creators/), added 2026-08-21 with the creator
+# leaderboard. The /creator/assets/* rule above is the SINGULAR route and cannot cover it.
+/creators/assets/*  /assets/:splat  200
 # The SHORT links (2026-08-01): /t/<chain>/<ref>, /c/<address>, /b/<creator>/<slug>.
 # These are the forms the app now MINTS, so every shared link lands here — without
 # these lines each one is a white screen on cold load while working perfectly in-app.

@@ -57,7 +57,7 @@ export function AssetHoverCard({
         // TWO layers: the token tint is a whisper OVER a near-opaque dark base
         // (the old single gradient left the top ~9% opaque — see-through over
         // the washes; owner note 2026-07-06 ×2).
-        background: `linear-gradient(165deg, ${vis.color}12, transparent 55%), rgba(4,4,8,0.98)`,
+        background: `linear-gradient(165deg, ${vis.color}12, transparent 55%), var(--hover-card-base, rgba(4,4,8,0.98))`,
         backdropFilter: 'blur(12px)',
       }}
     >

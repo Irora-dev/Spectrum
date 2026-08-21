@@ -2,7 +2,7 @@
 // and separate from the CLI so they're unit-testable (node --test). They emit the two
 // files the operator app reads: app/src/brand.config.ts + app/.env.local.
 
-export const STYLES = ['spectral', 'aurora', 'prism', 'umbra', 'sylvan']
+export const STYLES = ['spectral', 'aurora', 'prism', 'umbra', 'sylvan', 'enterprise']
 export const MAX_SITE_NAME = 32
 // Toggleable pages (default-on); MIRRORS PageToggles/PAGE_KEYS in
 // src/theme/brand.ts — keep in sync by hand (this file can't import from the

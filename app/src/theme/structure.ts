@@ -80,6 +80,27 @@ export const STRUCTURE_PRESETS: Record<DesignStyle, StyleStructure> = {
   // Dark editorial — solid organic cards, hairline border, no blur, SHARP corners (2–4px,
   // like the Lumen reference), a SERIF display (Newsreader) over a sans body. Reads nothing
   // like the technical glass styles.
+  // Enterprise: flat white cards with hairline borders, one soft elevation,
+  // no blur, tighter radii, Inter for display. scheme 'light' is what flips
+  // the browser's own form/scrollbar rendering — the projector emits it.
+  enterprise: {
+    cardBg: 'var(--color-panel)',
+    cardBorder: '1px solid var(--color-line)',
+    // the owner's spec (2026-08-17): "subtle drop shadow behind all cards,
+    // with a tapered gradient that's gentle bottom/right" — a layered stack
+    // whose offsets grow down-and-right while alpha decays, which is what a
+    // tapered shadow IS; each layer alone is near-invisible
+    cardShadow:
+      '0 1px 2px rgba(16, 18, 28, 0.05), 1px 3px 6px rgba(16, 18, 28, 0.045), 2px 6px 12px rgba(16, 18, 28, 0.035), 3px 10px 22px rgba(16, 18, 28, 0.025)',
+    cardBlur: 'none',
+    fieldBg: 'var(--color-panel)',
+    fieldBorder: '1px solid var(--color-line-bright)',
+    radii: { md: '6px', lg: '8px', xl: '10px', '2xl': '12px', '3xl': '16px' },
+    scheme: 'light',
+    // display rides Space Grotesk — the wide-grotesk enterprise voice, already
+    // in the bundle as the numeric face; Inter stays the body workhorse
+    fonts: { display: SPACE_GROTESK, numeric: SPACE_GROTESK, body: INTER },
+  },
   sylvan: {
     cardBg: 'var(--color-panel)',
     cardBorder: '1px solid color-mix(in srgb, var(--color-ink) 8%, transparent)',
@@ -104,6 +125,10 @@ export function structureToCssVars(style: DesignStyle): Record<string, string> {
     '--st-card-blur': s.cardBlur,
     '--st-field-bg': s.fieldBg,
     '--st-field-border': s.fieldBorder,
+    // the scheme is a REAL CSS property set inline by applyBrand's loop — it
+    // wins over index.css's static dark default, so a light style actually
+    // flips native form controls/scrollbars, not just our own paint
+    'color-scheme': s.scheme,
     '--radius-md': s.radii.md,
     '--radius-lg': s.radii.lg,
     '--radius-xl': s.radii.xl,

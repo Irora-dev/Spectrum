@@ -149,7 +149,7 @@ function StandingRow({
       }`}
     >
       {rank <= 3 && (
-        <div aria-hidden className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-cyan/10 blur-3xl" />
+        <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-cyan/10 blur-3xl" />
       )}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         {/* rank + who */}

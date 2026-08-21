@@ -477,7 +477,7 @@ function CreatorByline({
         )}
       </div>
       <div className="relative shrink-0">
-        <div aria-hidden className="absolute -inset-1 rounded-full opacity-60 blur-[9px]" style={{ background: sig }} />
+        <div aria-hidden className="ambient-bloom absolute -inset-1 rounded-full opacity-60 blur-[9px]" style={{ background: sig }} />
         <div className="relative overflow-hidden rounded-full ring-2 ring-white/15">
           <BasketAvatar
             address={creator.address ?? basket}

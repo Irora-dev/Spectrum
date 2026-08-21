@@ -894,14 +894,24 @@ export function Creator() {
   ) : null
 
   const hero = (
-    <CreatorHero
-      profile={profile}
-      identityMeta={identityMeta ?? null}
-      isMe={isMe}
-      onEdit={openStudio}
-      ownerBar={ownerBar}
-      handle={pageHandle.lookup.status === 'found' ? pageHandle.lookup.owner : null}
-    />
+    <>
+      {/* back to the creators leaderboard (owner QoL 2026-08-21) — navigational,
+          no data cost; connects a profile to where it is ranked. */}
+      <Link
+        to="/creators/explore"
+        className="press -mb-2 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-ink"
+      >
+        <span aria-hidden>←</span> Creators
+      </Link>
+      <CreatorHero
+        profile={profile}
+        identityMeta={identityMeta ?? null}
+        isMe={isMe}
+        onEdit={openStudio}
+        ownerBar={ownerBar}
+        handle={pageHandle.lookup.status === 'found' ? pageHandle.lookup.owner : null}
+      />
+    </>
   )
 
   const studio = isMe ? (

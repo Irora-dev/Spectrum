@@ -12,13 +12,25 @@ import { chainCfg, SUPPORTED_CHAIN_IDS } from '../../lib/chain/chains'
 import { isRetryableDetection } from '../../lib/pools'
 import { formatUnits, parseEther } from 'viem'
 import type { FundingAction } from '../../lib/spectrum/funding-plan'
-import { resolveAsset } from '../launch/BasketBuilder'
-import { ThesisRunOverlay } from '../thesis/ThesisRunOverlay'
+// the basket product reaches this flow through ONE declared bridge — see
+// components/graduation.tsx for the contract (publish, buy-through-the-
+// basket-runner, seed safety; deleted with this flow at removal week)
+import {
+  groupBundleDraft,
+  isBundleDraft,
+  loadThesisRun,
+  PublishBundleModal,
+  readThesisFunds,
+  resolveAsset,
+  runProgress,
+  seedGuard,
+  seedThesisOf,
+  ThesisRunOverlay,
+  thesisRef,
+  type BundleGroup,
+} from '../graduation'
 import { RunBeam, RunProgressStyles } from '../run-progress'
-import { seedThesisOf } from '../reshape/seed-plan'
 import { listBasketsForChain } from '../../lib/spectrum/basket-data'
-import { thesisRef } from '../../lib/spectrum/thesis-url'
-import { loadThesisRun, runProgress } from '../../lib/spectrum/thesis-run'
 import { preflightLegs, preflightWords, shouldPreflight, type LegFillVerdict } from '../../lib/spectrum/leg-preflight'
 import { createProxyZeroExFetcher } from '../../lib/spectrum/zeroex-quote'
 import { batcherFor } from '../../lib/spectrum/execution-arming'
@@ -30,10 +42,8 @@ import { discoverDirectRoute, quoteAndComposeDirectSwap } from '../../lib/spectr
 import { DirectLegCard, type DirectLegSpec } from './DirectLegCard'
 import { INTERFACE_TAG_ADDRESS } from '../../lib/config/operator'
 import { bridgeRows, pollBridge } from '../../lib/spectrum/bridge-pending'
-import { announceRunLanded, writeRunLanded } from '../../lib/spectrum/run-landed'
+import { announceRunLanded, writeRunLanded, type RunLandedChange } from '../../lib/spectrum/run-landed'
 import { stepKeyOf, type RunStepState } from '../../lib/spectrum/execution-runner'
-import { PublishBundleModal } from '../reshape/PublishBundleModal'
-import { groupBundleDraft, isBundleDraft, type BundleGroup } from '../reshape/publish-bundle-model'
 import { AssetLogo } from '../AssetLogo'
 import { unifyAssets } from '../../lib/spectrum/asset-unify'
 import { appendExec } from '../../lib/spectrum/exec-log'
@@ -51,7 +61,6 @@ import { LinkedWallets } from '../portfolio/LinkedWallets'
 import { TrimBar } from '../TrimBar'
 import { LimitTicket } from './LimitTicket'
 import { classifyTier } from '../../lib/spectrum/market-tiers'
-import { seedGuard } from '../../lib/spectrum/seed-guard'
 import { useMarketData } from '../../lib/spectrum/use-market-tiers'
 import {
   addTarget,
@@ -120,12 +129,12 @@ import { PRISM_CLAIM_CHAIN_ID, PRISM_V2_HOOK } from '../../lib/prism/claim'
 import { encodePrismPoolSwap, quotePrismPool } from '../../lib/prism/pool'
 import { failuresAsText, recordFailure } from '../../lib/spectrum/failure-log'
 import { clientFor } from '../../lib/chain/rpc'
+import { receiptLineFor, type ReceiptLine } from '../../lib/spectrum/run-receipt-line'
 import { TradePrism } from '../TradePrism'
 import { BridgeRunnerGame } from '../BridgeRunnerGame'
 import { defaultComposeDeps, defaultMarketReader, settlementFor } from '../../lib/spectrum/portfolio-run-market'
 import { nativeEthUsdOnChain } from '../../lib/pools/v4-usd'
 import type { MarketRow } from '../../lib/spectrum/portfolio-run-wiring'
-import { readThesisFunds } from '../../lib/spectrum/thesis-funding'
 import { mergeCrossChainHits, searchTokens, type TokenHit } from '../../lib/spectrum/token-search'
 import { BasketBento, type BentoItem } from '../BasketBento'
 import { ChainBadge } from '../ChainBadge'
@@ -1607,12 +1616,17 @@ export function PortfolioFlow({
     if ((ph !== 'done' && ph !== 'partial') || !runReview || landedWroteRef.current === runner.state) return
     landedWroteRef.current = runner.state
     const changed = new Set<string>()
+    const changeRows: RunLandedChange[] = []
     for (const c of draft.funding?.changes ?? []) {
-      if (Math.abs(c.toUsd - c.fromUsd) > 0.5) changed.add(`${c.chainId}:${c.address.toLowerCase()}`)
+      if (Math.abs(c.toUsd - c.fromUsd) > 0.5) {
+        const key = `${c.chainId}:${c.address.toLowerCase()}`
+        changed.add(key)
+        changeRows.push({ key, symbol: c.symbol, fromUsd: c.fromUsd, toUsd: c.toUsd })
+      }
     }
     for (const ch of runReview.chains) for (const l of ch.legs) changed.add(`${ch.chainId}:${l.asset.toLowerCase()}`)
     for (const sale of runReview.sells) changed.add(`${sale.chainId}:${sale.asset.toLowerCase()}`)
-    writeRunLanded([...changed], [], { announce: false })
+    writeRunLanded([...changed], changeRows, { announce: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runner.state?.phase, runReview])
   // …and ANNOUNCES when the flow leaves the screen — the first moment the
@@ -1620,6 +1634,48 @@ export function PortfolioFlow({
   // backdrop, the button, an inline station change); a mounted portfolio
   // hears it then, a navigation reads storage at mount instead.
   useEffect(() => () => announceRunLanded(), [])
+  // THE RECEIPT IS READ THE MOMENT IT LANDS (docs/MONEY-LAWS.md law 11 — the
+  // 2026-08-18 diverts were both answerable at t=0 from the receipt alone and
+  // nothing read them). For each landed batch step whose submission is a
+  // plain transaction, fetch the receipt once and summarize it against the
+  // laws the receipt can answer: fee exactness, the burn outcome (executed,
+  // or diverted WITH the reason's error name). An atomic bundle's receipt
+  // lives with the wallet — said out loud, never silently skipped.
+  const [receiptLines, setReceiptLines] = useState<Record<string, ReceiptLine>>({})
+  useEffect(() => {
+    const ph = runner.state?.phase
+    if (ph !== 'done' && ph !== 'partial') return
+    for (const st of runner.state?.steps ?? []) {
+      if (st.kind !== 'batch' || st.status !== 'done' || !st.submissionId || receiptLines[st.key]) continue
+      const id = st.submissionId
+      if (id.startsWith('calls:')) {
+        setReceiptLines((m) => ({ ...m, [st.key]: { tone: 'unread', sentence: 'atomic bundle — the wallet holds the receipt; not audited this pass' } }))
+        continue
+      }
+      if (!id.startsWith('tx:')) continue
+      const [, cidStr, hash] = id.split(':')
+      const chainId = Number(cidStr)
+      const batcher = batcherFor(chainId)
+      if (!batcher || !address || !/^0x[0-9a-fA-F]{64}$/.test(hash ?? '')) continue
+      void clientFor(chainId)
+        .getTransactionReceipt({ hash: hash as `0x${string}` })
+        .then((rc) => {
+          const line = receiptLineFor({
+            chainId,
+            status: rc.status === 'success' ? 'success' : 'reverted',
+            logs: rc.logs.map((l) => ({ address: l.address, topics: l.topics as string[], data: l.data })),
+            batcher,
+            recipient: address,
+            fundingDecimals: settlementDecimalsFor(chainId),
+          })
+          setReceiptLines((m) => ({ ...m, [st.key]: line }))
+        })
+        .catch(() => {
+          setReceiptLines((m) => ({ ...m, [st.key]: { tone: 'unread', sentence: 'the receipt could not be fetched — saying so rather than guessing' } }))
+        })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runner.state?.phase, runner.state?.steps, address])
   // THE CARVE QUEUE (the owner 2026-08-18: "it should just happen auto as
   // part of the flow"): once the batch attempt is terminal, carved legs run
   // themselves one at a time — sequential because each is its own wallet
@@ -4355,6 +4411,19 @@ export function PortfolioFlow({
                                         </span>
                                       )}
                                     </div>
+                                    {st?.status === 'done' && receiptLines[st.key] && (
+                                      <p
+                                        className={`relative mt-2 font-mono text-[10px] uppercase tracking-[0.12em] ${
+                                          receiptLines[st.key].tone === 'clean'
+                                            ? 'text-teal'
+                                            : receiptLines[st.key].tone === 'unread'
+                                              ? 'text-ink-faint'
+                                              : 'text-amber-200/90'
+                                        }`}
+                                      >
+                                        {receiptLines[st.key].sentence}
+                                      </p>
+                                    )}
                                     {/* watch-time context: gone once the step has landed */}
                                     {(runCashDrawCents > 0 || inbound.length > 0) && runner.state?.phase !== 'done' && (
                                       <div className="relative mt-2 flex flex-wrap items-center gap-2">
@@ -5268,12 +5337,19 @@ export function PortfolioFlow({
                                             // hand the portfolio page WHAT changed, so its bento
                                             // greets the landing (run-landed.ts's one job)
                                             const changed = new Set<string>()
+                                            const changeRows: RunLandedChange[] = []
                                             for (const c of draft.funding?.changes ?? []) {
-                                              if (Math.abs(c.toUsd - c.fromUsd) > 0.5) changed.add(`${c.chainId}:${c.address.toLowerCase()}`)
+                                              if (Math.abs(c.toUsd - c.fromUsd) > 0.5) {
+                                                const key = `${c.chainId}:${c.address.toLowerCase()}`
+                                                changed.add(key)
+                                                changeRows.push({ key, symbol: c.symbol, fromUsd: c.fromUsd, toUsd: c.toUsd })
+                                              }
                                             }
                                             for (const ch of runReview.chains) for (const l of ch.legs) changed.add(`${ch.chainId}:${l.asset.toLowerCase()}`)
                                             for (const sale of runReview.sells) changed.add(`${sale.chainId}:${sale.asset.toLowerCase()}`)
-                                            writeRunLanded([...changed])
+                                            // the arrival plate reads these rows on the portfolio —
+                                            // the same dollars the review showed, now marked landed
+                                            writeRunLanded([...changed], changeRows)
                                             // LAND ON THE PICTURE, WITH NOTHING
                                             // ON TOP OF IT (the owner 2026-08-15:
                                             // "it still keeps the pop up… it

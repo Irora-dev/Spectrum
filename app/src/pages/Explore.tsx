@@ -49,6 +49,7 @@ import { AssetLogo } from '../components/AssetLogo'
 import { BasketBento } from '../components/BasketBento'
 import { BasketSpark } from '../components/BasketSpark'
 import { BasketListRow } from '../components/BasketListRow'
+import { SealBadge, type SealKind } from '../components/SealBadge'
 import { BasketWash } from '../components/BasketWash'
 import { LaunchCta } from '../components/LaunchCta'
 import { VersionJourneyMini } from '../components/VersionJourney'
@@ -507,7 +508,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
             Tiles re-reveal each time this slide activates. */}
         {face === 'chart' ? (
           /* the REAL interactive chart — un-linked so its controls work */
-          <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-3 sm:p-3.5 ${compact ? 'min-h-[200px] sm:min-h-[250px]' : 'min-h-[230px] sm:min-h-[340px]'}`}>
+          <div className={`relative overflow-hidden showcase-plate rounded-2xl border border-white/10 bg-black/25 p-3 sm:p-3.5 ${compact ? 'min-h-[200px] sm:min-h-[250px]' : 'min-h-[230px] sm:min-h-[340px]'}`}>
             <BasketChart
               chainId={ix.chainId}
               address={ix.address}
@@ -521,7 +522,7 @@ function SpotlightSlide({ ix, active, booted = true, compact = false, nav, face 
             />
           </div>
         ) : (
-        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25 sm:p-3.5">
+        <div className="relative overflow-hidden showcase-plate rounded-2xl border border-white/10 bg-black/25 p-3 transition-colors hover:border-white/25 sm:p-3.5">
           <Link to={basketHref(ix)} className="relative block">
             <BasketBento items={bentoItems(ix)} fill className={compact ? 'min-h-[160px] sm:min-h-[200px]' : 'min-h-[180px] sm:min-h-[270px]'} reveal={{ delayMs: 150, stepMs: 60 }} show={active && booted} />
           </Link>
@@ -928,10 +929,14 @@ export function ThesisCard({
   chain,
   face = 'bento',
   held,
+  seal,
 }: {
   ix: BasketSummary
   chain?: BasketSummary[]
   face?: 'bento' | 'chart'
+  /** A derived highlight seal (SealBadge) — computed by the PAGE from the same
+   *  measured list the grid shows, never curation inside the card. */
+  seal?: SealKind | null
   /** The viewer's position in THIS basket, resolved by the page from ONE portfolio
    *  read (see the page below). Same prop, same marker, same rules as BasketCard:
    *  a card never reads the wallet itself. */
@@ -951,6 +956,7 @@ export function ThesisCard({
     <div className="relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025] p-5 transition-colors hover:border-white/20 sm:p-6">
       {/* the paper-wash identity, faintly through the whole card (owner 12:34) */}
       <BasketWash ix={ix} opacity={0.28} />
+      {seal && <SealBadge kind={seal} className="absolute right-3 top-3 z-20" />}
       {face === 'chart' ? (
         /* the REAL interactive chart (identical to the basket page's, 19:4x) —
            NOT link-wrapped: its ranges/underlying/tooltip need the pointer */
@@ -2317,7 +2323,21 @@ export function Explore() {
                the list; this lens stays cards end to end) */
             <div className="space-y-3">
               <div className="grid gap-4 lg:grid-cols-2">
-                {orderedBaskets.map((b, i) => (
+                {orderedBaskets.map((b, i) => {
+                  /* seals are MEASURED winners over this very list: best 24h
+                     change and largest AUM (owner 2026-08-19: corner badges) */
+                  const top24h = orderedBaskets.reduce<(typeof orderedBaskets)[number] | null>(
+                    (m, x) => (x.change24hPct != null && Number.isFinite(x.change24hPct) && (m?.change24hPct == null || x.change24hPct > m.change24hPct) ? x : m),
+                    null,
+                  )
+                  const backed = orderedBaskets.reduce<(typeof orderedBaskets)[number] | null>((m, x) => (x.aumUsd > 0 && (!m || x.aumUsd > m.aumUsd) ? x : m), null)
+                  const seal: SealKind | null =
+                    top24h && top24h.address === b.address && (top24h.change24hPct ?? 0) > 0
+                      ? 'top24h'
+                      : backed && backed.address === b.address
+                        ? 'backed'
+                        : null
+                  return (
                   /* min-w-0 IS LOAD-BEARING (mobile sweep 2026-08-06): a grid
                      item defaults to min-width:auto, so the column floored at
                      the card's min-content (~450px) and every card was
@@ -2332,9 +2352,11 @@ export function Explore() {
                          per-card query (QOL round 2026-08-05) */
                       held={heldPosition(heldIndex, b)}
                       chain={versionChain(b.address, all.filter((x) => x.deployer && b.deployer && x.deployer.toLowerCase() === b.deployer!.toLowerCase()))}
+                      seal={seal}
                     />
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}

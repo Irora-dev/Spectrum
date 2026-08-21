@@ -49,7 +49,23 @@ function sourceToken(pay: PayToken, srcChainId: number): { address: Address; sym
   return dep.usdc ? { address: dep.usdc as Address, symbol: chainCfg(srcChainId).usdcSymbol, decimals: 6 } : null
 }
 
-export function BridgeFund({ destChainId, onClose }: { destChainId: number; onClose: () => void }) {
+export function BridgeFund({
+  destChainId,
+  onClose,
+  arrivalsShown = true,
+}: {
+  destChainId: number
+  onClose: () => void
+  /** Does the HOST render <BridgeBanner/>, i.e. will it hand the arrived funds
+   *  back with one tap? True on the standalone swap page. FALSE in the compact
+   *  hosts (the chat cards, the deploy cards), because the arrivals banner is
+   *  deliberately kept off them — owner 2026-08-16, "shouldnt show above the
+   *  swap on basket/bundle page". This prop exists so the sent-state stops
+   *  PROMISING a hand-back that is not coming there: the funds do land as
+   *  ordinary settlement balance either way, so the compact wording says to ask
+   *  again rather than pointing at a console the host does not show. */
+  arrivalsShown?: boolean
+}) {
   const dest = chainCfg(destChainId)
   const destUsdc = deploymentFor(destChainId).usdc
   const { address: holder, isConnected } = useAccount()
@@ -248,8 +264,17 @@ export function BridgeFund({ destChainId, onClose }: { destChainId: number; onCl
             <div className="rounded-2xl border border-teal/30 bg-teal/[0.06] px-4 py-4 text-center">
               <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-teal">Transfer signed</div>
               <p className="mt-2 text-sm text-ink-dim">
-                We&rsquo;ll track arrival here, you can close this and keep browsing. The buy console will offer
-                the arrived {dest.usdcSymbol} when it lands.
+                {arrivalsShown ? (
+                  <>
+                    We&rsquo;ll track arrival here, you can close this and keep browsing. The buy console will offer
+                    the arrived {dest.usdcSymbol} when it lands.
+                  </>
+                ) : (
+                  <>
+                    We&rsquo;ll track arrival here, you can close this and keep browsing. It lands as ordinary{' '}
+                    {dest.usdcSymbol} in your wallet, so just ask again once it is in and it will be there to spend.
+                  </>
+                )}
               </p>
               <button
                 type="button"

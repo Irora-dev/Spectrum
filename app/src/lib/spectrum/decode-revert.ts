@@ -56,13 +56,22 @@ const HINTS: Record<string, string> = {
   'MissingHookData()': 'the trade was sent without its protection payload — refresh and retry',
   'NothingToBurn()': 'nothing is pending for this crank',
   'BelowBridgeThreshold()': 'the pending amount is below the bridge threshold — let more fees accrue first',
-  // No time estimate: 10 blocks is seconds on Base/Robinhood and minutes on
-  // Ethereum, and the old "(about two minutes)" was only ever true on one of
-  // them. The block count is the fact; the clock is the chain's business.
-  'SlotNotOpen()':
-    'another basket just launched — the factory takes a 10-block breather between launches; try again shortly',
+  // No mechanism claim (owner 2026-08-21: "there is no cooldown on basket
+  // creation"): generations differ on WHY a slot can be closed — the
+  // spectrum-contracts src at HEAD carries a 10-block SLOT_DURATION
+  // (SpectrumFactory.sol:69) while the owner states the deployed generation
+  // has no cooldown — so the hint states only what the revert itself proves:
+  // the factory refused a launch at this moment and retrying shortly is safe.
+  'SlotNotOpen()': 'the factory is not accepting a new launch at this moment — try again shortly',
   'MaxCostExceeded()': 'the launch price moved past your guard — refresh and retry',
   'InsufficientPayment()': 'the transaction carried less ETH than the launch price — refresh and retry',
+  // Not one of ours — a settlement token's own error (0x356680b7), thrown when
+  // the route pulls more than the wallet holds. It has burned this lane TWICE
+  // as a bare selector: the $59.97-vs-$60.00 seed (use-deploy's note,
+  // 2026-08-15) and a zero-USDG holder read as a market mystery (2026-08-21).
+  // The words are what make it actionable: check the BALANCE, not the pools.
+  'InsufficientFunds()':
+    'the wallet does not hold enough of the settlement token for this trade — the route pulled more than the balance. Check the settlement balance (USDC/USDG on this chain), not the pools: no retry or slippage change can help until the wallet is funded',
 }
 
 const ERROR_SIGS = [
@@ -101,6 +110,7 @@ const ERROR_SIGS = [
   'WeightsNotFull()',
   'WrongPool()',
   'ZeroSupply()',
+  'InsufficientFunds()',
 ] as const
 
 // ── THE PORTFOLIO BATCHER'S VOCABULARY (pass-one LOW-3, 2026-08-14): the app

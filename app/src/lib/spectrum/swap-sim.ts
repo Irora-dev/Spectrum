@@ -68,30 +68,35 @@ export interface SwapSimInput {
   fundingSplitBps?: readonly number[] | null
 }
 
-/** Realised tokenOut for this trade (shares on a buy, settlement on a sell), or null. */
-export async function simulateSwapOut(
-  client: PublicClient,
-  { side, basket, settlement, router, amountIn, legCount, holder, allowanceCovers, fundingSplitBps }: SwapSimInput,
-): Promise<bigint | null> {
-  if (amountIn <= 0n || legCount <= 0) return null
+/** The PROBE call, built once and shared (exported for the MCP server's bundle
+ *  simulation, which must measure the IDENTICAL trade this module measures).
+ *
+ *  1-wei floors BOTH aggregate and per-leg: we want the realised number, not a
+ *  pass/fail. Per-leg was zero here, which is legal on a non-first mint but
+ *  REVERTS FirstMintLegMinRequired on a first one (SpectrumBasket.sol:527,
+ *  proven on-chain 2026-08-02) — so on any never-bought basket this probe
+ *  always failed, `realisedOutRaw` came back undefined, and the caller fell
+ *  back to FRICTIONLESS per-leg floors that the two-hop acquisition can never
+ *  reach. That is the LegMinNotMet a real user hit on their first buy. 1 wei
+ *  is non-zero (satisfies the first-mint rule) and below any real fill, so it
+ *  measures reality on every basket, first mint or not.
+ *
+ *  The SPLIT rides the same words on a D-R1 basket: a probe without it funds no leg
+ *  and reverts NoOutput (contracts' KitZeroSplitProbe, 2026-08-05), so the probe would
+ *  report "unpriceable" on every healthy basket. A leg the split funds with 0 must
+ *  carry NO floor — the acquire loop skips it and a floor there reverts LegMinNotMet. */
+export function probeSwapArgs({
+  side,
+  basket,
+  settlement,
+  amountIn,
+  legCount,
+  holder,
+  fundingSplitBps,
+}: Omit<SwapSimInput, 'router' | 'allowanceCovers'>): readonly [Address, Address, bigint, bigint, `0x${string}`, Address] {
   const tokenIn = side === 'buy' ? settlement : basket
   // A split describing a different basket would measure the wrong trade.
   const split = side === 'buy' && fundingSplitBps?.length === legCount ? fundingSplitBps : null
-
-  // 1-wei floors BOTH aggregate and per-leg: we want the realised number, not a
-  // pass/fail. Per-leg was zero here, which is legal on a non-first mint but
-  // REVERTS FirstMintLegMinRequired on a first one (SpectrumBasket.sol:527,
-  // proven on-chain 2026-08-02) — so on any never-bought basket this probe
-  // always failed, `realisedOutRaw` came back undefined, and the caller fell
-  // back to FRICTIONLESS per-leg floors that the two-hop acquisition can never
-  // reach. That is the LegMinNotMet a real user hit on their first buy. 1 wei
-  // is non-zero (satisfies the first-mint rule) and below any real fill, so it
-  // measures reality on every basket, first mint or not.
-  //
-  // The SPLIT rides the same words on a D-R1 basket: a probe without it funds no leg
-  // and reverts NoOutput (contracts' KitZeroSplitProbe, 2026-08-05), so the probe would
-  // report "unpriceable" on every healthy basket. A leg the split funds with 0 must
-  // carry NO floor — the acquire loop skips it and a floor there reverts LegMinNotMet.
   const legWords = split
     ? split.map((s) => (s === 0 ? 0n : packLegMin(s, 1n)))
     : new Array<bigint>(legCount).fill(1n)
@@ -99,7 +104,17 @@ export async function simulateSwapOut(
     [{ type: 'uint256' }, { type: 'uint256[]' }, { type: 'address' }],
     [1n, legWords, zeroAddress],
   )
-  const args = [basket, tokenIn, amountIn, 1n, hookData, holder] as const
+  return [basket, tokenIn, amountIn, 1n, hookData, holder] as const
+}
+
+/** Realised tokenOut for this trade (shares on a buy, settlement on a sell), or null. */
+export async function simulateSwapOut(
+  client: PublicClient,
+  { side, basket, settlement, router, amountIn, legCount, holder, allowanceCovers, fundingSplitBps }: SwapSimInput,
+): Promise<bigint | null> {
+  if (amountIn <= 0n || legCount <= 0) return null
+  const tokenIn = side === 'buy' ? settlement : basket
+  const args = probeSwapArgs({ side, basket, settlement, amountIn, legCount, holder, fundingSplitBps })
 
   const attempt = async (useOverride: boolean) => {
     const { result } = await client.simulateContract({

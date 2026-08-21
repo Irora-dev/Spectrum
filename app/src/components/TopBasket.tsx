@@ -64,7 +64,7 @@ export function TopBasket({ ix, label = 'Largest by total value' }: { ix: Basket
         <div
           aria-hidden
           className="pointer-events-none absolute -inset-x-8 -top-10 bottom-0 opacity-20 blur-3xl transition-opacity duration-500 group-hover/spot:opacity-35"
-          style={{ background: `radial-gradient(55% 60% at 50% 0%, ${sig}, transparent 72%)` }}
+          style={{ background: `radial-gradient(44% 32% at 50% 0%, ${sig}, transparent 68%)` }}
         />
         <Link
           to={to}

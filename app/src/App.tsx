@@ -11,6 +11,7 @@ import { pageEnabled, setupStudioEnabled, type PageKey } from './theme/brand'
 import { DecorativeBoundary } from './components/DecorativeBoundary'
 import { RouteErrorBoundary } from './components/ErrorBoundary'
 import { CREATE_FLOW } from './lib/config/features'
+import { SpecterWidget } from './components/chat/SpecterWidget'
 
 // Route-level page toggle (default-on): a disabled page redirects to Home so a stale
 // or shared URL never lands on a page the operator turned off. Nav hides the link too.
@@ -37,6 +38,7 @@ export { CREATE_FLOW }
 const Home = lazy(() => import('./pages/HomeSpine').then((m) => ({ default: m.HomeSpine })))
 const Explore = lazy(() => import('./pages/Explore').then((m) => ({ default: m.Explore })))
 const SlashCreators = lazy(() => import('./pages/SlashCreators').then((m) => ({ default: m.SlashCreators })))
+const CreatorsExplore = lazy(() => import('./pages/CreatorsExplore').then((m) => ({ default: m.CreatorsExplore })))
 const Token = lazy(() => import('./pages/Token').then((m) => ({ default: m.Token })))
 const Creator = lazy(() => import('./pages/Creator').then((m) => ({ default: m.Creator })))
 // The /creator URL resolver: a claimed name OR an address (see the route below).
@@ -57,11 +59,15 @@ const Create = lazy(() => import('./pages/Create').then((m) => ({ default: m.Cre
 const Composer = lazy(() => import('./pages/Composer').then((m) => ({ default: m.Composer })))
 const Setup = lazy(() => import('./pages/Setup').then((m) => ({ default: m.Setup })))
 const Swap = lazy(() => import('./pages/Swap').then((m) => ({ default: m.Swap })))
+// The agent chat: conversational reads + trades over the same money modules.
+// Lazy for the mascot sprites and the embedded trade card's deps.
+const Chat = lazy(() => import('./pages/Chat').then((m) => ({ default: m.Chat })))
 const Flush = lazy(() => import('./pages/Flush').then((m) => ({ default: m.Flush })))
 const Embed = lazy(() => import('./pages/Embed').then((m) => ({ default: m.Embed })))
 const ExtensionPage = lazy(() => import('./pages/Extension').then((m) => ({ default: m.ExtensionPage })))
 const Learn = lazy(() => import('./pages/Learn').then((m) => ({ default: m.Learn })))
 const Docs = lazy(() => import('./pages/Docs').then((m) => ({ default: m.Docs })))
+const Mcp = lazy(() => import('./pages/Mcp').then((m) => ({ default: m.Mcp })))
 const Integrate = lazy(() => import('./pages/Integrate').then((m) => ({ default: m.Integrate })))
 const League = lazy(() => import('./pages/League').then((m) => ({ default: m.League })))
 const Bundle = lazy(() => import('./pages/Bundle').then((m) => ({ default: m.Bundle })))
@@ -107,6 +113,7 @@ const queryClient = new QueryClient({
 // The page label is the part before the separator; the suffix is the operator's.
 const ROUTE_LABELS: Record<string, string> = {
   '/explore': 'Explore',
+  '/creators/explore': 'Creators',
   '/creators': 'For creators',
   '/token': 'Basket',
   '/portfolio': 'Portfolio',
@@ -115,10 +122,12 @@ const ROUTE_LABELS: Record<string, string> = {
   '/compose': 'Composer',
   '/createbasket': 'Create a Basket',
   '/swap': 'Swap',
+  '/chat': 'Agent chat',
   '/flush': 'Fees',
   '/embed': 'Basket',
   '/learn': 'Learn',
   '/docs': 'Docs',
+  '/mcp': 'Agents',
   '/docs/valuation': 'Docs',
   '/integrate': 'Route baskets',
   '/earn': 'Earn',
@@ -262,6 +271,12 @@ export function App() {
                   {/* Slash Creators — the KOL/creator funnel + embedded launch flow
                       (reclaims /creators, owner call 2026-07-06). */}
                   <Route path="/creators" element={gate('creators', <SlashCreators />)} />
+                  {/* the creators DISCOVERY page — one creator per row, their
+                      thesis + performance + a carousel of their baskets (owner
+                      2026-08-21). Distinct from /creators (the become-a-creator
+                      funnel) and /explore (the basket catalogue). Rides the
+                      same 'discover' gate as /explore — it is discovery. */}
+                  <Route path="/creators/explore" element={gate('discover', <CreatorsExplore />)} />
                   <Route path="/token" element={<Token />} />
                   {/* /creator/:idOrHandle (claimable creator names, spec
                       workspace/spectrum-release/creator-handles-spec.md). ONE
@@ -335,6 +350,10 @@ export function App() {
                       on-chain note so it survives the share link being lost */}
                   <Route path="/bundle/:creator/:slug" element={gate('bundle', <PublishedBundlePage />)} />
                   <Route path="/swap" element={gate('trade', <Swap />)} />
+                  {/* the agent chat rides the trade toggle: it embeds the same
+                      trade card, so an operator who turned trading off must not
+                      serve a chat that brings it back */}
+                  <Route path="/chat" element={gate('trade', <Chat />)} />
                   <Route path="/flush" element={gate('fees', <Flush />)} />
                   {/* The extension install surface — renders from the packaging
                       step's /extension/index.json (static files win over this
@@ -353,6 +372,8 @@ export function App() {
                       /faq is a worse outcome than one extra line here. */}
                   <Route path="/faq" element={gate('docs', <Navigate to="/learn" replace />)} />
                   <Route path="/learn" element={gate('docs', <Learn />)} />
+                  {/* the agent surface: part pitch, part reference (owner 2026-08-19) */}
+                  <Route path="/mcp" element={gate('docs', <Mcp />)} />
                   <Route path="/docs" element={gate('docs', <Docs />)} />
                   {/* /docs/valuation was never a second page — same component. It stays
                       for the links already in the wild; in-app links now use /docs#nav. */}
@@ -382,6 +403,11 @@ export function App() {
               </Suspense>
             </RouteErrorBoundary>
           </Layout>
+          {/* the site-wide Specter (owner 2026-08-20): mounted OUTSIDE the
+              route wrapper — its lg translate makes a transformed ancestor,
+              which would re-scope the widget's position:fixed (the backdrop
+              lesson). Hides itself on /chat and /embed. */}
+          <SpecterWidget />
         </BrowserRouter>
       </QueryClientProvider>
     </WagmiProvider>

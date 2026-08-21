@@ -443,6 +443,8 @@ export function CreateAssetPicker({
   onRemove,
   searchOnly = false,
   fill = false,
+  colsOverride,
+  autoFocus = true,
 }: {
   /** the composer's current picks — chosen tiles render selected */
   picked: readonly PickedRef[]
@@ -465,6 +467,13 @@ export function CreateAssetPicker({
    *  search fixed, grid flex-1 — so three rows SPEND the viewport instead of
    *  squeezing under it. Off (the shape page's add bar) it flows as before. */
   fill?: boolean
+  /** A CONTAINER narrower than the viewport (the chat's asset-picker card)
+   *  hands the picker its own honest column count — the viewport breakpoints
+   *  cannot see a 400px widget on a 1400px screen. Absent = viewport law. */
+  colsOverride?: 1 | 2 | 3
+  /** The chat card must never steal the page's caret (the chat input owns
+   *  focus); the create page keeps the arrival-focus law. Default true. */
+  autoFocus?: boolean
 }) {
   // THREE VISIBLE ROWS, NO SCROLLING (the owner 2026-08-12: "this needs to be
   // visible three rows no scrolling") — the browse cap is column-aware
@@ -493,8 +502,8 @@ export function CreateAssetPicker({
   // instead of a hardcoded 56, and the text column goes from 139px to ~160.
   // Three visible rows is unchanged as a law; three columns simply makes a page
   // NINE tiles instead of twelve, and the pager below counts that honestly.
-  const cols = lg || xl ? 3 : sm ? 2 : 1
-  const phone = !sm
+  const cols = colsOverride ?? (lg || xl ? 3 : sm ? 2 : 1)
+  const phone = !sm && !colsOverride
   // A PHONE IS NOT A NARROW DESKTOP (the owner 2026-08-13: "ensure mobile has a
   // beautiful mobile optimized version with a carousel and search etc") — the
   // suggestions become a two-row snap RAIL you swipe, so a phone page shows a
@@ -514,9 +523,9 @@ export function CreateAssetPicker({
   // helping. The add bar on page two must not steal focus from the weights.
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
-    if (searchOnly || phone) return
+    if (searchOnly || phone || !autoFocus) return
     inputRef.current?.focus({ preventScroll: true })
-  }, [searchOnly, phone])
+  }, [searchOnly, phone, autoFocus])
   const { data: allBaskets } = useAllBaskets()
   // one map, two reads: membership (the highlight) and the resolved facts the
   // chosen card's pool line says (venueLabel/route/depth ride the picked ref)

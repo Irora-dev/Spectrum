@@ -131,7 +131,7 @@ export function PositionPnl({
       {/* the sign owns the card's accent — bar + corner bloom (neutral violet
           while no basis exists to be up or down about) */}
       <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${pnl ? accent : 'var(--color-violet)'}, transparent 70%)` }} />
-      <div aria-hidden className="pointer-events-none absolute -right-14 -top-16 h-40 w-40 rounded-full opacity-15 blur-3xl" style={{ background: pnl ? accent : 'var(--color-violet)' }} />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-14 -top-16 h-40 w-40 rounded-full opacity-15 blur-3xl" style={{ background: pnl ? accent : 'var(--color-violet)' }} />
 
       <div className="relative p-5">
         <div className="flex items-center justify-between gap-3">
@@ -273,7 +273,7 @@ export function PortfolioPnlSummary({
   return (
     <section className={`relative overflow-hidden rounded-2xl border border-white/15 bg-panel p-6 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] ${className}`}>
       <div aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${accent}, transparent 70%)` }} />
-      <div aria-hidden className="pointer-events-none absolute -right-14 -top-16 h-40 w-40 rounded-full opacity-15 blur-3xl" style={{ background: accent }} />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-14 -top-16 h-40 w-40 rounded-full opacity-15 blur-3xl" style={{ background: accent }} />
       <div className="relative">
         <div className="flex items-center justify-between gap-3">
           <span className="font-display text-sm font-bold uppercase tracking-[0.14em] text-ink">

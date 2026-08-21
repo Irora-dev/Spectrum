@@ -24,6 +24,40 @@ const GRADIENT = {
 } as const
 
 export const STYLE_PRESETS: Record<DesignStyle, OperatorTheme> = {
+  // The LIGHT plane — enterprise register, not a lightened spectral: paper
+  // surfaces, near-black ink at AA on every panel, accents dimmed to authority
+  // colours. Structure (flat cards, tighter radii, Inter display) lives in
+  // structure.ts under the same key; scheme: 'light' rides through applyBrand.
+  enterprise: {
+    ...FONTS,
+    fontDisplay: '"Inter", ui-sans-serif, system-ui, sans-serif',
+    void: '#f6f7f9',
+    panel: '#ffffff',
+    panel2: '#eef0f4',
+    line: '#dfe2ea',
+    lineBright: '#c6cbd8',
+    ink: '#171821',
+    inkDim: '#4b4e5f',
+    inkFaint: '#666a7c',
+    violet: '#4630c9',
+    violetBright: '#5b45e0',
+    violetDeep: '#2c1e86',
+    alert: '#b3162f',
+    teal: '#0c7d70',
+    // THE LIGHT-SOURCE HUES FOLD INTO AUTHORITY INKS (owner 2026-08-19:
+    // "removing the cyan and yellow text and button/outlines for a more
+    // suitable colour"). The void speaks cyan/amber as LIGHT; paper has no
+    // light, only pigment — so on this plane the cyan role (active · info ·
+    // live) carries the violet authority, and the amber role (caution ·
+    // pending) carries the berry pigment: flagged without a milligram of
+    // yellow, distinct from violet-info, teal-success, and crimson-error.
+    // Every token-driven surface (text-cyan, bg-amber/15, var() inline
+    // styles, the refract gradient) follows from HERE; the numbered stock
+    // classes are remapped in index.css's enterprise block.
+    amber: '#9d2463',
+    magenta: '#9d2463',
+    cyan: '#4630c9',
+  },
   // Exact current index.css @theme values — do not drift.
   spectral: {
     ...FONTS,

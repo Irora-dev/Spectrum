@@ -242,9 +242,9 @@ export function IntroArt({
           <span
             aria-hidden
             className="trim-thumb pointer-events-none absolute top-1/2 z-20 grid h-6 w-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full transition-shadow"
-            style={{ left: `${pos}%`, background: SPECTRAL, boxShadow: '0 4px 14px rgba(0,0,0,0.6)' }}
+            style={{ left: `${pos}%`, background: SPECTRAL }}
           >
-            <span className="h-4 w-4 rounded-full bg-[#0c0a18] shadow-[inset_0_1px_2px_rgba(255,255,255,0.25)]" />
+            <span className="trim-thumb-core h-4 w-4 rounded-full shadow-[inset_0_1px_2px_rgba(255,255,255,0.25)]" />
           </span>
         </div>
       </div>

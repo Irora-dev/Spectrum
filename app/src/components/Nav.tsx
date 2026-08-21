@@ -4,9 +4,12 @@ import { NetworkToggle } from './NetworkToggle'
 import { WalletButton } from './WalletButton'
 import { SpectrumWordmark } from './SpectrumWordmark'
 import { PrismMark } from '../hud'
+import modeSun from '../assets/theme/mode-sun.webp'
+import modeMoon from '../assets/theme/mode-moon.webp'
 import { SWAP_ENABLED, TRADING_ENABLED, WALLET_ENABLED } from '../lib/config/features'
 import { useReferralEarned } from './ReferralCard'
 import { useAccount } from 'wagmi'
+import { setViewerDesignMode, viewerDesignMode, type ViewerDesignMode } from '../theme/design-mode'
 import { useHandleRegistry } from '../lib/spectrum/use-handles'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { useBookTotal } from '../lib/spectrum/use-book-total'
@@ -37,6 +40,9 @@ export const links: { to: string; label: string; end?: boolean; badge?: string }
   // PnL, earnings and claims already live here, which is what let /earn leave
   // the bar; leading with it is what makes the rest of the site read as one
   // flow rather than three products sharing a header.
+  // CHAT LEADS (owner 2026-08-19 22:4x: "chat on top menu should be first") —
+  // the agent surface is the front door now.
+  ...(P('trade') ? [{ to: '/chat', label: 'Chat' }] : []),
   ...(WALLET_ENABLED && P('portfolio') ? [{ to: '/portfolio', label: 'Portfolio' }] : []),
   // LABEL is "Baskets" (owner 2026-08-02): the nav should name the THING, not
   // the verb. The /explore ROUTE is deliberately unchanged, so every existing
@@ -84,6 +90,10 @@ export const moreVisitorLinks: { to: string; label: string }[] = [
   // /create is the default for creating a basket AND bundle) — the menu is
   // where a creator learns the door exists, so the door says what it makes.
   ...(P('launch') ? [{ to: '/create', label: 'Create a basket or bundle' }] : []),
+  // the creators DISCOVERY page — browse the people, not the baskets (owner
+  // 2026-08-21: in the dropdown, not the top bar). Rides the same 'discover'
+  // gate as /explore; a visitor link, always visible.
+  ...(P('discover') ? [{ to: '/creators/explore', label: 'Creators' }] : []),
   ...(P('integrate') ? [{ to: '/integrate', label: 'Integrate' }] : []),
   // The one GENERAL fee surface (owner 2026-08-01, relayed by R: "maybe we still
   // should have a general fee page with flush but reworded in the menu"). The
@@ -139,6 +149,62 @@ export function useMoreLinks() {
 // and wallet button. The compact info-only set fits from md; any flag-enabled
 // set needs lg. Flags are build-time constants, so this is too (+1 = More).
 export const fullNavAt = links.length + 1 <= 3 ? 'md' : 'lg'
+
+// ── the design-mode toggle (owner 2026-08-17: "main menu top right… just a
+// light icon and dark icon on the toggle, the one that's on has colour").
+// Icon-only: moon = the spectral dark default, sun = the enterprise light
+// plane. The switch owns no theming — setViewerDesignMode re-applies the whole
+// brand through the style seam, which is what makes it a DESIGN change, not a
+// palette swap. ─────────────────────────────────────────────────────────────
+function DesignModeToggle() {
+  const [mode, setMode] = useState<ViewerDesignMode>(() => viewerDesignMode())
+  const light = mode === 'enterprise'
+  // THE WAVE (owner 2026-08-19): the new design floods out from the press as
+  // an expanding circle — View Transition API, clip-path on the new snapshot.
+  // No support (Firefox) or reduced motion = the instant switch, unchanged.
+  const flip = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const next: ViewerDesignMode = light ? 'default' : 'enterprise'
+    const apply = () => {
+      setViewerDesignMode(next, brand)
+      setMode(next)
+    }
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => { ready: Promise<void> } }
+    if (!doc.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      apply()
+      return
+    }
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = r.left + r.width / 2
+    const y = r.top + r.height / 2
+    const maxR = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
+    const vt = doc.startViewTransition(apply)
+    void vt.ready.then(() => {
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${maxR}px at ${x}px ${y}px)`] },
+        { duration: 650, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', pseudoElement: '::view-transition-new(root)' },
+      )
+    })
+  }
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={light}
+      aria-label={light ? 'Switch to the dark design' : 'Switch to the light design'}
+      onClick={flip}
+      className="press flex h-9 shrink-0 items-center gap-1 rounded-full border border-white/12 bg-white/5 px-1.5 transition-colors hover:border-white/25"
+    >
+      {/* the owner's coin art (2026-08-19): the active plane's coin full +
+          scaled, the other dimmed — same switch mechanics */}
+      <span aria-hidden className={`grid h-6 w-6 place-items-center transition-all ${light ? 'scale-90 opacity-35' : 'scale-110 opacity-100'}`}>
+        <img src={modeMoon} alt="" draggable={false} width={22} height={22} className="select-none" />
+      </span>
+      <span aria-hidden className={`grid h-6 w-6 place-items-center transition-all ${light ? 'scale-110 opacity-100' : 'scale-90 opacity-35'}`}>
+        <img src={modeSun} alt="" draggable={false} width={22} height={22} className="select-none" />
+      </span>
+    </button>
+  )
+}
 
 // ── the More dropdown ─────────────────────────────────────────────────────────
 // Hover-safe by construction: the panel's gap sits INSIDE the hover area (pt-2
@@ -401,6 +467,7 @@ export function Nav() {
 
         {/* right — network + wallet (mobile primary nav = the bottom tab bar) */}
         <div className="flex items-center gap-2">
+          <DesignModeToggle />
           <NetworkToggle />
           {WALLET_ENABLED && <WalletButton />}
         </div>

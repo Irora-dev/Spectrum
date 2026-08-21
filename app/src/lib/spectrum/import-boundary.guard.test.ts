@@ -51,7 +51,7 @@ const A_MODULES = new Set([
   'capability-ladder', 'execution-arming', 'portfolio-run-wiring', 'portfolio-run-market',
   'use-execution-runner', 'hop-reserve', 'refuel', 'economic-leg-cap', 'zeroex-quote',
   'assemble-batch', 'shadow-pipeline', 'rebalance-batcher', 'batch-fee-verification',
-  'caller-split', 'realised-price', 'routing', 'adversarial-wallet', 'mempool-exposure',
+  'realised-price', 'routing', 'adversarial-wallet', 'mempool-exposure',
   'pool-safety', 'acquisition-route', 'acquisition-inputs', 'leg-preflight', 'failure-log',
   // the CoW limit-order lane
   'cow', 'cow-api', 'cow-pending', 'use-cow-orders', 'app-data', 'allowances', 'permit2',
@@ -78,6 +78,10 @@ const A_MODULES = new Set([
  *  staged severs — classifying it B keeps those edges visible until they cut. */
 const B_MODULES = new Set([
   'use-basket-swap', 'use-dex-swap', 'swap-quote', 'swap-sim', 'use-swap-sim',
+  // caller-split re-read 2026-08-19: it is the D-R1 mint-split GUARD (basket
+  // launch domain, mint-funding's sibling) — the first classification put it
+  // DARK-A by its importer graph; its subject decides instead
+  'caller-split',
   'mint-funding', 'use-mint-funding', 'first-mint-split', 'contract-split',
   'launch-first-mint', 'split-guard', 'shown-floor', 'delta-trade', 'pay-token',
   'pay-prefill', 'use-sweep', 'use-swap-migrate', 'use-migrate', 'fee-model',
@@ -178,29 +182,14 @@ function measureCrossEdges(): string[] {
 // one must fail here and go to the split's boundary decision instead.
 // ─────────────────────────────────────────────────────────────────────────────
 const BASELINE: string[] = [
-  'components/DexSwapCard -> lib/spectrum/use-raw-holdings',
   'components/PortfolioClaims -> lib/spectrum/use-fee-actions',
   'components/PortfolioClaims -> lib/spectrum/use-fee-state',
   'components/PositionsMode -> components/BasketContents',
-  'components/allocate/PortfolioFlow -> components/launch/BasketBuilder',
-  'components/allocate/PortfolioFlow -> components/reshape/PublishBundleModal',
-  'components/allocate/PortfolioFlow -> components/reshape/publish-bundle-model',
-  'components/allocate/PortfolioFlow -> components/reshape/seed-plan',
-  'components/allocate/PortfolioFlow -> components/thesis/ThesisRunOverlay',
-  'components/allocate/PortfolioFlow -> lib/spectrum/seed-guard',
-  'components/allocate/PortfolioFlow -> lib/spectrum/thesis-funding',
-  'components/allocate/PortfolioFlow -> lib/spectrum/thesis-run',
-  'components/allocate/PortfolioFlow -> lib/spectrum/thesis-url',
   'components/portfolio/BasketHolderStats -> components/DexSwapCard',
   'components/reshape/ReshapeThesisModal -> components/AssetSearchModal',
   'components/reshape/ReshapeThesisModal -> components/TrimBar',
   'components/reshape/ShapeEditor -> components/AssetSearchModal',
   'components/reshape/ShapeEditor -> components/TrimBar',
-  'lib/spectrum/caller-split -> lib/spectrum/contract-split',
-  'lib/spectrum/caller-split -> lib/spectrum/split-guard',
-  'lib/spectrum/pay-prefill -> lib/spectrum/found-book',
-  'lib/spectrum/pay-prefill -> lib/spectrum/raw-holdings',
-  'lib/spectrum/plan-legs -> lib/spectrum/swap-quote',
   'lib/spectrum/use-exit-costs -> lib/spectrum/swap-quote',
   'lib/spectrum/use-exit-costs -> lib/spectrum/swap-sim',
   'pages/Composer -> components/TrimBar',

@@ -948,7 +948,13 @@ export function Composer({
   // + optional ?chain=eth|base. Each resolves to a routable asset; any the app
   // can't trade are skipped and surfaced. The bot only validates + deep-links —
   // wallet + the create/sign tx are the app's job.
-  async function seedFromAddresses(rawAddrs: string[], chain: number) {
+  async function seedFromAddresses(rawAddrs: string[], chain: number, wantWeights?: number[]) {
+    // weights pair with rawAddrs BY INDEX (the chat composer's split), keyed to
+    // the address so dedup/drop below cannot mis-assign them
+    const weightByAddr = new Map<string, number>()
+    if (wantWeights && wantWeights.length === rawAddrs.length) {
+      rawAddrs.forEach((a, i) => weightByAddr.set(a.trim().toLowerCase(), wantWeights[i]))
+    }
     const addrs = [...new Set(rawAddrs.map((a) => a.trim().toLowerCase()).filter((a) => /^0x[0-9a-f]{40}$/.test(a)))].slice(0, MAX_ASSETS)
     if (addrs.length === 0) {
       setAddError('That create link had no valid token addresses.')
@@ -976,7 +982,14 @@ export function Composer({
         return
       }
       setAssets(ok)
-      setWeights(equalWeights(ok.length))
+      // the link's weights apply only when EVERY seeded asset kept one and they
+      // still sum to 100 after drops — anything else falls back to equal split
+      // (a re-scaled remainder would silently differ from what the sender saw)
+      const carried = ok.map((r) => weightByAddr.get(r.address.toLowerCase()))
+      const carriedOk =
+        carried.every((w): w is number => Number.isInteger(w) && (w as number) >= 1 && (w as number) <= 99) &&
+        carried.reduce((s, w) => s + (w as number), 0) === 100
+      setWeights(carriedOk ? (carried as number[]) : equalWeights(ok.length))
       setScenario({})
       const dropped = addrs.length - ok.length
       if (dropped > 0) setAddError(`Added ${ok.length}. ${dropped} not tradeable on ${chainCfg(chain).name} — skipped.`)
@@ -997,7 +1010,10 @@ export function Composer({
     deepLinkedRef.current = true
     const wantChain = parseChainParam(searchParams.get('chain'))
     if (wantChain) setActiveChainId(wantChain)
-    void seedFromAddresses(raw.split(','), wantChain ?? chainId)
+    // optional &weights=60,40 — integers pairing one-to-one with &tokens
+    const rawWeights = searchParams.get('weights')
+    const weights = rawWeights ? rawWeights.split(',').map((w) => Number(w)) : undefined
+    void seedFromAddresses(raw.split(','), wantChain ?? chainId, weights)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -2351,7 +2367,7 @@ export function Composer({
 
           {canLaunch && (
           <Card className="relative overflow-hidden p-5">
-            <div aria-hidden className={`pointer-events-none absolute -right-14 -top-16 h-48 w-48 rounded-full blur-[90px] ${bundle ? 'bg-violet/15' : 'bg-cyan/12'}`} />
+            <div aria-hidden className={`ambient-bloom pointer-events-none absolute -right-14 -top-16 h-48 w-48 rounded-full blur-[90px] ${bundle ? 'bg-violet/15' : 'bg-cyan/12'}`} />
             {bundle && (
               <div className="relative mb-1 flex items-center gap-2">
                 {bundleGroups.map((g) => (

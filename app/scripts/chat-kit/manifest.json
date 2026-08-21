@@ -1,0 +1,58 @@
+{
+    "$comment": "The chat kit's shopping list (see app/src/components/chat/CHAT-KIT.md). resync.mjs copies exactly these into a consumer tree; files stay read-only there and fixes flow through THIS source (the napkyn resync contract). Paths are app-relative.",
+    "shell": [
+        "src/pages/Chat.tsx",
+        "src/components/chat/SpecterWidget.tsx",
+        "src/components/chat/WidgetChat.tsx"
+    ],
+    "brain": [
+        "src/components/chat/agent.ts",
+        "src/components/chat/useChatSession.ts"
+    ],
+    "cards": [
+        "src/components/chat/DeployCard.tsx",
+        "src/components/chat/BundleCard.tsx",
+        "src/components/chat/RedeemCard.tsx",
+        "src/components/chat/ThesisCard.tsx",
+        "src/components/chat/ProfileCard.tsx",
+        "src/components/chat/AssetPickerCard.tsx",
+        "src/components/chat/CrossChainDraftCard.tsx",
+        "src/components/chat/CrossChainLaunchFlow.tsx",
+        "src/components/chat/ClaimCard.tsx",
+        "src/components/chat/MultiBuyCard.tsx",
+        "src/components/chat/VersionCard.tsx",
+        "src/components/chat/CopyRow.tsx"
+    ],
+    "mascot": [
+        "src/components/chat/ChatMascot.tsx",
+        "src/components/chat/sfx.ts",
+        "src/assets/mascot",
+        "src/assets/chat-paper-bg.webp",
+        "src/assets/chains"
+    ],
+    "docs": [
+        "src/components/chat/CHAT-KIT.md"
+    ],
+    "driver": [
+        "scripts/chat-drive/build-agent.mjs",
+        "scripts/chat-drive/drive.mjs",
+        "scripts/chat-drive/.gitignore"
+    ],
+    "cssBlocks": {
+        "$comment": "index.css is shared page-wide, so these travel as MARKED BLOCKS to lift, not files: search each marker in src/index.css.",
+        "markers": [
+            "THE CHAT BACKDROP LAYER",
+            ".enter (the entrance stagger classes, ~line 548)"
+        ]
+    },
+    "appDependencies": {
+        "$comment": "What the vendored set imports from the host app: the consumer maps these to its own equivalents (they are the domain seam, not part of the kit).",
+        "modules": [
+            "lib/spectrum/* (basket reads, token-search, hooks, safe-copy, format)",
+            "lib/chain/* (chains table, active-chain, constants)",
+            "components/BasketAvatar, BasketBento, BasketSpark, ChainBadge, DexSwapCard, SpectrumLoader, MigrateModal (the REAL cards)",
+            "components/launch/CreateAssetPicker (the tile picker the create ask mounts)",
+            "theme tokens: --color-* families, panel/ink/void vars"
+        ]
+    }
+}

@@ -59,7 +59,12 @@ export function BundleHero({
       <div
         aria-hidden
         className="absolute inset-0"
-        style={{ background: 'linear-gradient(90deg, rgba(5,5,11,0.82) 0%, rgba(5,5,11,0.55) 45%, rgba(5,5,11,0.15) 100%)' }}
+        /* void-token scrim: identical on the dark planes (void ≈ #05050b), no
+           black vignette on the light one (owner 2026-08-19) */
+        style={{
+          background:
+            'linear-gradient(90deg, color-mix(in srgb, var(--color-void) 82%, transparent) 0%, color-mix(in srgb, var(--color-void) 55%, transparent) 45%, color-mix(in srgb, var(--color-void) 15%, transparent) 100%)',
+        }}
       />
       <div
         className={`relative z-10 mx-auto max-w-[1100px] px-4 pb-12 pt-16 sm:px-6 ${centerContent ? 'grid place-items-center' : ''}`}

@@ -264,3 +264,14 @@ export const factoryInitCodeAbi = parseAbi([
 export const launchedEvent = parseAbiItem(
   'event Launched(address indexed basket, address indexed deployer, string name, string symbol, uint160 startSqrtPriceX96, uint256 ethPaid, uint16 basketFeeBps)',
 )
+
+/** The portfolio batcher's burn-divert disclosure (SpectrumPortfolioBatcher:318,
+ *  verified against the live event: a 2026-08-18 Base batch's divert decoded
+ *  with exactly this shape, topic0 0x4bb8dc32…). `reason` carries the burn
+ *  swap's own revert bytes verbatim — e.g. MinBurnNotMet(delivered, floor),
+ *  selector 0xddafd724 — so a diagnosis can name WHY the share diverted, not
+ *  just that it did. Exported here so the receipt readers (post-trade
+ *  reconciliation, the crank pipelines) stop carrying topic-pinned mirrors. */
+export const burnDivertedEvent = parseAbiItem(
+  'event BurnDiverted(address indexed sink, address indexed fundingAsset, uint256 amount, bytes reason)',
+)

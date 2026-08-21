@@ -5,6 +5,8 @@ import { WALLET_ENABLED } from '../lib/config/features'
 import { useAllBaskets } from '../lib/spectrum/hooks'
 import { Carousel } from '../components/Carousel'
 import { Bezel, Eyebrow, IslandCta, LoopLadder, Reveal, SectionHead, SPECTRAL, SplitCta } from '../components/home/Spine'
+import { CodeBlock } from '../components/DocKit'
+import mcpManifest from '../generated/mcp-tools.json'
 import learnArt from '../assets/bundle-hero.jpg'
 import learnArt1280 from '../assets/bundle-hero.1280.jpg'
 
@@ -966,7 +968,13 @@ export function Learn() {
       {/* WAY DARKER (owner 2106 #12: "background way, way darker") — a fixed
           void layer under the whole page; fixed so the site's ambient light
           bands and glows are dimmed with it, not just the scroll body. */}
-      <div aria-hidden className="fixed inset-0 -z-10 bg-black/60" />
+      <div
+        aria-hidden
+        className="fixed inset-0 -z-10"
+        /* the page-wide dim rides the VOID token — a hardcoded black/60 painted
+           the light plane with a full-page vignette (owner 2026-08-19) */
+        style={{ background: 'color-mix(in srgb, var(--color-void) 60%, transparent)' }}
+      />
       <Pitch />
 
       {/* ── THE REFERENCE ────────────────────────────────────────────────────
@@ -1147,6 +1155,56 @@ export function Learn() {
           PRISM buy-and-burn path that anyone can execute, with no operator, a mechanical property
           of the contracts, stated here as fact, not as a reason to hold anything.
         </p>
+      </Section>
+
+      <Section id="mcp" label="08 · AI agents" title="Drive it from an AI agent">
+        {/* The footer's "For AI agents" door, upgraded into a real section (owner
+            2026-08-20). Copy register mirrors /mcp; the tool count is read from
+            the GENERATED manifest (mcp/build.mjs writes it from the server's own
+            registry), the same file /mcp renders its table from, so this
+            sentence and the server cannot disagree. No em dashes. */}
+        <p>
+          This site ships with a Model Context Protocol server. Any MCP-speaking agent (Claude,
+          Cursor, your own) gets {mcpManifest.tools.length} tools to discover baskets, read them,
+          and compose buys, sells, creations and exits.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint">Nothing to host</div>
+            <p className="mt-2 text-sm leading-relaxed">
+              No daemon, no port. Your MCP client spawns the server per session over stdio, and it
+              reads the chains directly.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint">Never holds keys</div>
+            <p className="mt-2 text-sm leading-relaxed">
+              Every action returns a transaction and a plain-English review. Your wallet signs, or
+              nothing happens.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint">Floors from live simulation</div>
+            <p className="mt-2 text-sm leading-relaxed">
+              A buy or sell floor comes from simulating the actual trade on-chain. An agent supplies
+              an amount and a tolerance, never a floor.
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint">Agents compose, wallets sign</div>
+            <p className="mt-2 text-sm leading-relaxed">
+              The agent does the reading and the assembly. Execution stays with you, from your own
+              wallet.
+            </p>
+          </div>
+        </div>
+        <CodeBlock code="claude mcp add spectrum -- bash /path/to/kit/mcp/run.sh" title="Claude Code, one line" />
+        <Link
+          to="/mcp"
+          className="mt-1 inline-block rounded-lg border border-white/20 bg-white/[0.04] px-5 py-2.5 font-mono text-xs uppercase tracking-[0.15em] text-ink press hover:border-cyan hover:text-cyan"
+        >
+          The full tool reference →
+        </Link>
       </Section>
 
       </div>
@@ -1359,6 +1417,9 @@ export function Learn() {
         </IslandCta>
         <IslandCta to="/docs" tone="quiet">
           Developer docs
+        </IslandCta>
+        <IslandCta to="/mcp" tone="quiet">
+          For AI agents
         </IslandCta>
       </div>
       </div>

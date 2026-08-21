@@ -15,7 +15,18 @@ import type { Holding, NavPoint } from '../lib/spectrum/basket-data'
 import { useNavHistory } from '../lib/spectrum/hooks'
 import { computeReturns } from '../lib/spectrum/history'
 import { tokenVisual } from '../lib/spectrum/token-meta'
+import { refLinkFor } from '../lib/spectrum/referral'
+import { useHandleForAddress } from '../lib/spectrum/use-handles'
 import { formatNav, formatPct, shortAddr } from '../lib/spectrum/format'
+
+/** The one slice of a Holding the drawn card actually reads — so a BUNDLE's
+ *  legs (basket tickers + weights across chains) satisfy it too. A leg may
+ *  carry its own paint: the basket's signature color, the same hue the page's
+ *  bundle bento shows; without one the tile falls back to tokenVisual. */
+export type CardLeg = Pick<Holding, 'symbol' | 'asset' | 'targetWeightPct'> & {
+  color?: string
+  ink?: string
+}
 
 // Celebratory, shareable launch card shown on the basket page right after a deploy
 // (?deployed=1). Mini bento + a one-click "Share on X" (prefilled) and "Copy link".
@@ -93,10 +104,18 @@ function drawShareImage(
     sig: string
     priceUsd: number
     sincePct: number | null
-    holdings: Holding[]
+    holdings: CardLeg[]
     /** The deployer's claimed creator name — drawn into the footer so the
      *  shared IMAGE carries who made it (≤30 chars by claim law). */
     by?: string | null
+    /** BUNDLE VARIANT overrides (additive) — absent, the basket card draws
+     *  unchanged. chip replaces the ticker pill's text; stat replaces the
+     *  PRICE block; tag replaces the since-creation chip (neutral cyan, no
+     *  up/down claim); footerLeft replaces the footer's product line. */
+    chip?: string
+    stat?: { label: string; value: string }
+    tag?: string
+    footerLeft?: string
   },
 ): void {
   const W = 1200
@@ -108,10 +127,14 @@ function drawShareImage(
   const DISPLAY = '"Space Grotesk", "Inter", system-ui, sans-serif'
   const MONO = '"JetBrains Mono", ui-monospace, monospace'
 
+  // A leg's own paint wins (a bundle leg carries its basket's signature so the
+  // card matches the page's bento); tokenVisual stays the basket-holding law.
+  const paintOf = (h: CardLeg) => (h.color ? { color: h.color, ink: h.ink ?? '#0b0b12' } : tokenVisual(h.symbol, h.asset))
+
   // surface + on-palette glow (screen-ish, mimicking the hero warp)
   ctx.fillStyle = '#0c0a14'
   ctx.fillRect(0, 0, W, H)
-  const palette = [o.sig, ...o.holdings.slice(0, 3).map((h) => tokenVisual(h.symbol, h.asset).color)]
+  const palette = [o.sig, ...o.holdings.slice(0, 3).map((h) => paintOf(h).color)]
   ctx.globalCompositeOperation = 'lighter'
   const blobs: [number, number, number, number][] = [
     [W * 0.78, 90, 480, 0.35],
@@ -134,9 +157,9 @@ function drawShareImage(
   ctx.fillStyle = bar
   ctx.fillRect(0, 0, W, 10)
 
-  // ticker pill
+  // ticker pill (a bundle says what it is instead — it has no ticker)
   ctx.font = `700 26px ${MONO}`
-  const tick = `$${showSymbol(o.symbol)}`
+  const tick = o.chip ?? `$${showSymbol(o.symbol)}`
   const tw = ctx.measureText(tick).width
   ctx.fillStyle = 'rgba(255,255,255,0.1)'
   ctx.beginPath()
@@ -151,11 +174,11 @@ function drawShareImage(
   // formatNav's precision because "$0.00" would be a wrong number, not a
   // rounder one. Drawn and MEASURED first so the name's lane below is fit
   // against the space the price actually takes.
-  const priceText = `$${o.priceUsd >= 0.01 ? o.priceUsd.toFixed(2) : formatNav(o.priceUsd)}`
+  const priceText = o.stat ? o.stat.value : `$${o.priceUsd >= 0.01 ? o.priceUsd.toFixed(2) : formatNav(o.priceUsd)}`
   ctx.textAlign = 'right'
   ctx.fillStyle = 'rgba(244,240,244,0.6)'
   ctx.font = `600 20px ${MONO}`
-  ctx.fillText('PRICE', W - 64, 70)
+  ctx.fillText(o.stat ? o.stat.label : 'PRICE', W - 64, 70)
   ctx.fillStyle = '#f4f0f4'
   ctx.font = `300 84px ${DISPLAY}`
   const priceW = ctx.measureText(priceText).width
@@ -182,8 +205,18 @@ function drawShareImage(
     ctx.fillText(`${trimmed}…`, 64, 168)
   }
 
-  // return since creation chip
-  if (o.sincePct != null) {
+  // the fact chip under the name: a bundle's tag (neutral — a leg count and
+  // its chains are facts, not a performance claim), else return since creation
+  if (o.tag) {
+    ctx.font = `700 24px ${MONO}`
+    const lw = ctx.measureText(o.tag).width
+    ctx.fillStyle = '#35e0ff2b'
+    ctx.beginPath()
+    ctx.roundRect(64, 208, lw + 44, 50, 25)
+    ctx.fill()
+    ctx.fillStyle = '#35e0ff'
+    ctx.fillText(o.tag, 86, 235)
+  } else if (o.sincePct != null) {
     const up = o.sincePct >= 0
     const col = up ? '#35e0ff' : '#ff4db8'
     const label = `${formatPct(o.sincePct)} since creation`
@@ -198,18 +231,19 @@ function drawShareImage(
   }
 
   // ── the bento: the page's squarified layout, tiled in brand colors ─────────
+  // Tiles key by INDEX, not symbol: a bundle's legs can share a ticker across
+  // chains (the thesis pattern is the same name on every network), and a
+  // symbol-keyed match would hand one leg's tile another leg's weight/paint.
   const band = { x: 64, y: 296, w: W - 128, h: 268 }
-  const remaining = [...o.holdings]
   const rects = squarify(
-    o.holdings.map((h) => ({ ticker: h.symbol, weight: Math.max(h.targetWeightPct, 0.0001) })),
+    o.holdings.map((h, i) => ({ ticker: String(i), weight: Math.max(h.targetWeightPct, 0.0001) })),
     band.w,
     band.h,
   )
   for (const r of rects) {
-    const hi = remaining.findIndex((h) => h.symbol === r.ticker)
-    const h = hi >= 0 ? remaining.splice(hi, 1)[0] : undefined
+    const h = o.holdings[Number(r.ticker)]
     if (!h) continue
-    const vis = tokenVisual(h.symbol, h.asset)
+    const vis = paintOf(h)
     const pad = 4
     const tx = band.x + r.x + pad
     const ty = band.y + r.y + pad
@@ -269,17 +303,20 @@ function drawShareImage(
   }
 
   // footer — the creator's NAME rides the shared image when one exists (the
-  // address stays: provenance and identity are different facts)
+  // address stays: provenance and identity are different facts). A bundle has
+  // no single contract, so with no addr only the lines that are true draw.
   ctx.fillStyle = 'rgba(244,240,244,0.45)'
   ctx.font = `600 20px ${MONO}`
-  ctx.fillText('SPECTRUM · ONCHAIN BASKETS', 64, H - 34)
+  ctx.fillText(o.footerLeft ?? 'SPECTRUM · ONCHAIN BASKETS', 64, H - 34)
   ctx.textAlign = 'right'
   if (o.by) {
     ctx.fillStyle = '#35e0ff'
     ctx.fillText(`/creator/${o.by}`, W - 64, H - 34)
-    ctx.fillStyle = 'rgba(244,240,244,0.45)'
-    ctx.fillText(shortAddr(o.addr), W - 64, H - 64)
-  } else {
+    if (o.addr) {
+      ctx.fillStyle = 'rgba(244,240,244,0.45)'
+      ctx.fillText(shortAddr(o.addr), W - 64, H - 64)
+    }
+  } else if (o.addr) {
     ctx.fillText(shortAddr(o.addr), W - 64, H - 34)
   }
   ctx.textAlign = 'left'
@@ -320,9 +357,28 @@ function ShareChip({
   )
 }
 
+/** The bundle page's own link as the share URL, with the connected sharer's
+ *  ?ref riding it (Share & earn, owner 2026-07-07 — the same law the basket
+ *  link follows). The URL API keeps the ?b= legs intact on the query form and
+ *  the published /bundle/:creator/:slug form alike; an unparseable URL ships
+ *  unchanged rather than break the share. */
+function bundleShareUrl(url: string, viewer?: string): string {
+  if (!url || !viewer) return url
+  try {
+    const u = new URL(url)
+    u.searchParams.set('ref', viewer)
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
 /** Share popup for ANY viewer (Token page's Share button): the launch card's
  *  surface — sig-tinted panel, mini bento, X intent + copy + a downloadable
- *  share image (price + performance since creation) — with neutral copy. */
+ *  share image (price + performance since creation) — with neutral copy.
+ *  The BUNDLE pages raise the SAME modal through the `bundle` prop (owner
+ *  2026-08-20: the bundle share must be the real card pop-up, extended here
+ *  additively rather than recreated). */
 export function ShareModal({
   open,
   onClose,
@@ -337,6 +393,7 @@ export function ShareModal({
   ageHours,
   navSeries,
   by = null,
+  bundle = null,
 }: {
   open: boolean
   onClose: () => void
@@ -352,6 +409,19 @@ export function ShareModal({
   navSeries: NavPoint[]
   /** Deployer's claimed creator name — rides the drawn share image's footer. */
   by?: string | null
+  /** BUNDLE VARIANT: present = share a cross-chain bundle through the same
+   *  card machinery (bundle heading and copy, the legs as the bento, no
+   *  price/history reads, no embed — bundles have no /embed). The basket
+   *  props stay in charge of everything not named here. */
+  bundle?: {
+    /** The bundle page's own link (query or published form) — the share URL;
+     *  a connected sharer's ?ref rides it, same as the basket law. */
+    url: string
+    /** The chains the legs span, by display name (chainCfg lives page-side). */
+    chainNames: string[]
+    /** The legs across chains, pre-painted with their basket signatures. */
+    legs: CardLeg[]
+  } | null
 }) {
   useEffect(() => {
     if (!open) return
@@ -363,12 +433,17 @@ export function ShareModal({
   }, [open, onClose])
 
   // Return since creation, mirroring BasketStats exactly (same query key →
-  // same cached history → the image never disagrees with the page).
+  // same cached history → the image never disagrees with the page). A bundle
+  // has no since-creation story (its legs are cross-chain baskets, not this
+  // chain's assets), so its mount reads no history at all — empty assets keep
+  // the hook's queries disabled.
   const DAY = 86400
   const ageSec = ageHours != null ? ageHours * 3600 : null
   const { data: hist } = useNavHistory({
     chainId,
-    assets: holdings.map((h) => ({ address: h.asset, weight: h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct })),
+    assets: bundle
+      ? []
+      : holdings.map((h) => ({ address: h.asset, weight: h.liveWeightPct > 0 ? h.liveWeightPct : h.targetWeightPct })),
     navPerToken,
     ageSec,
     range: ageSec != null && ageSec <= 30 * DAY ? 'ALL' : '30D',
@@ -376,12 +451,17 @@ export function ShareModal({
   const returns = computeReturns(hist.length >= 2 ? hist : navSeries, ageSec)
   const sincePct = returns.find((r) => r.range === 'ALL')?.pct ?? null
 
+  // What the card tiles and the copy count: the basket's holdings, or the
+  // bundle's legs — one shape (CardLeg) either way.
+  const cardLegs: CardLeg[] = bundle ? bundle.legs : holdings
+
   // The preview canvas IS the exported image: drawn once the modal opens
   // (fonts settled first), then download/copy read the same pixels back.
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [copiedImg, setCopiedImg] = useState(false)
   const [copiedEmbed, setCopiedEmbed] = useState(false)
   const [copiedUrl, setCopiedUrl] = useState(false)
+  const [copiedRef, setCopiedRef] = useState(false)
   const copyUrl = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl)
@@ -401,12 +481,32 @@ export function ShareModal({
         /* draw with fallback fonts */
       }
       if (stale || !canvasRef.current) return
-      drawShareImage(canvasRef.current, { symbol, name, addr, sig, priceUsd: navPerToken, sincePct, holdings, by })
+      // The bundle card swaps the basket's price/return facts for its own:
+      // what it is, how many chains, which legs — never a performance claim.
+      const chainsLabel = bundle ? bundle.chainNames.join(' + ') : ''
+      drawShareImage(canvasRef.current, {
+        symbol,
+        name,
+        addr,
+        sig,
+        priceUsd: navPerToken,
+        sincePct,
+        holdings: cardLegs,
+        by,
+        ...(bundle
+          ? {
+              chip: 'BUNDLE',
+              stat: { label: 'CHAINS', value: String(bundle.chainNames.length) },
+              tag: `${bundle.legs.length} baskets · ${chainsLabel.length > 36 ? `${bundle.chainNames.length} chains` : chainsLabel}`,
+              footerLeft: 'SPECTRUM · CROSS-CHAIN BUNDLE',
+            }
+          : {}),
+      })
     })()
     return () => {
       stale = true
     }
-  }, [open, symbol, name, addr, sig, navPerToken, sincePct, holdings, by])
+  }, [open, symbol, name, addr, sig, navPerToken, sincePct, cardLegs, by, bundle])
 
   // Share & earn (owner 2026-07-07): a connected sharer's link carries their ?ref,
   // so sharing a basket you like earns you the interface slice on buys through it.
@@ -415,20 +515,49 @@ export function ShareModal({
   // added the moment someone clicks Share — which React throws on. That threw
   // away the whole token page on the click that opens this.
   const { address: viewer } = useAccount()
+  // The sharer's claimed creator name, for the visible ref-link row below —
+  // ReferralCard's exact builder law (claimed name first, address form when
+  // unnamed). Same shared 5-minute registry query every name surface reads,
+  // and above the `open` gate like every hook here.
+  const { lookup: myName } = useHandleForAddress(viewer)
 
   if (!open) return null
 
-  const shareUrl = `${window.location.origin}/token?addr=${addr}&chain=${chainId}${viewer ? `&ref=${viewer}` : ''}`
+  const shareUrl = bundle
+    ? bundleShareUrl(bundle.url, viewer)
+    : `${window.location.origin}/token?addr=${addr}&chain=${chainId}${viewer ? `&ref=${viewer}` : ''}`
+
+  // THE SHARER'S REF LINK, VISIBLE (owner 2026-08-20: the share pop-up must
+  // carry the creator's referral link, not only embed it in the page URL).
+  // Claimed name first, address form when unnamed; with no wallet there is no
+  // referral, so the row hides rather than show a broken link. /explore is the
+  // app's canonical referral form (the Refer page and the chat agent mint the
+  // same one), so the link works wherever it is pasted.
+  const refWord = myName.status === 'found' ? myName.owner.display : viewer
+  const refLink = viewer && refWord ? refLinkFor(refWord, window.location.origin) : null
+  const copyRef = async () => {
+    if (!refLink) return
+    try {
+      await navigator.clipboard.writeText(refLink)
+      setCopiedRef(true)
+      window.setTimeout(() => setCopiedRef(false), 1600)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
   // THE TWEET READS LIKE A HUMAN WROTE IT (owner 2026-08-15: "way nicer
   // formatted text" — the old line printed ticker, comma, name, colon, count).
   // Multi-line intent text: the name leads, the top holdings say what's
   // inside, the one-liner says what it is. The URL rides X's own url param so
   // the card unfurls under it.
-  const topSyms = holdings
+  const topSyms = cardLegs
     .slice(0, 4)
     .map((h) => `$${showSymbol(h.symbol)}`)
     .join(' · ')
-  const text = `${showName(name)} ($${showSymbol(symbol)})\n${topSyms}${holdings.length > 4 ? ` +${holdings.length - 4} more` : ''}\n\n${holdings.length} assets, one onchain basket — fees flow to holders.`
+  const more = cardLegs.length > 4 ? ` +${cardLegs.length - 4} more` : ''
+  const text = bundle
+    ? `${showName(name)}\n${topSyms}${more}\n\n${bundle.legs.length} baskets across ${bundle.chainNames.length} chains, one weighted allocation.`
+    : `${showName(name)} ($${showSymbol(symbol)})\n${topSyms}${more}\n\n${holdings.length} assets, one onchain basket — fees flow to holders.`
   const xHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`
   // the iframe-able card (pages/Embed.tsx) — creators paste this on their own sites
   //
@@ -487,10 +616,10 @@ export function ShareModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Share $${showSymbol(symbol)}`}
+        aria-label={bundle ? `Share ${showName(name)}` : `Share $${showSymbol(symbol)}`}
         onClick={(e) => e.stopPropagation()}
         className="search-pop relative m-auto w-full max-w-2xl overflow-hidden rounded-2xl border p-6 sm:p-8"
-        style={{ borderColor: `${sig}55`, background: `linear-gradient(135deg, ${sig}1f, #0c0a14 55%)` }}
+        style={{ borderColor: `${sig}55`, background: `linear-gradient(135deg, ${sig}1f, var(--color-panel) 55%)` }}
       >
         <span
           aria-hidden
@@ -510,13 +639,15 @@ export function ShareModal({
 
         <div className="relative">
           <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-ink [text-shadow:0_1px_10px_rgba(0,0,0,0.7)]">
-            Share this basket
+            Share this {bundle ? 'bundle' : 'basket'}
           </div>
           <h2 className="mt-2 font-display text-3xl font-bold uppercase leading-tight tracking-tight text-ink [text-shadow:0_1px_10px_rgba(0,0,0,0.7)]">
-            ${showSymbol(symbol)}
+            {bundle ? showName(name) : `$${showSymbol(symbol)}`}
           </h2>
           <p className="mt-1 max-w-lg text-sm leading-relaxed text-ink [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
-            {name} · {holdings.length} assets in one onchain basket token.
+            {bundle
+              ? `${bundle.legs.length} baskets across ${bundle.chainNames.join(' + ')} · one weighted allocation.`
+              : `${name} · ${holdings.length} assets in one onchain basket token.`}
           </p>
           {/* WYSIWYG: this canvas IS the image download/copy exports */}
           <canvas
@@ -553,11 +684,38 @@ export function ShareModal({
               <path d="M7 10l5 5 5-5" />
               <path d="M12 15V3" />
             </ShareChip>
-            <ShareChip label="Copy embed" done={copiedEmbed} onClick={() => void copyEmbed()}>
-              <path d="M16 18l6-6-6-6" />
-              <path d="M8 6l-6 6 6 6" />
-            </ShareChip>
+            {/* bundles have no /embed — the chip only offers what exists */}
+            {!bundle && (
+              <ShareChip label="Copy embed" done={copiedEmbed} onClick={() => void copyEmbed()}>
+                <path d="M16 18l6-6-6-6" />
+                <path d="M8 6l-6 6 6 6" />
+              </ShareChip>
+            )}
           </div>
+          {/* THE SHARER'S REF LINK, VISIBLE (owner 2026-08-20): the link you
+              can SEE and hand out anywhere, claimed name first — the Copy-link
+              chip above already rides ?ref on the page link, but a link you
+              cannot see is a door people miss. Hidden with no wallet: never a
+              broken link. */}
+          {refLink && (
+            <div className="mt-4 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+              <span className="min-w-0 flex-1">
+                <span className="block font-mono text-[10px] uppercase tracking-[0.14em] text-ink-dim">
+                  Your ref link
+                </span>
+                <code className="block truncate font-mono text-[11px] text-ink" title={refLink}>
+                  {refLink}
+                </code>
+              </span>
+              <button
+                type="button"
+                onClick={() => void copyRef()}
+                className="press shrink-0 rounded-lg border border-white/15 px-3.5 py-2 font-mono text-[10px] uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan"
+              >
+                {copiedRef ? 'Copied ✓' : 'Copy'}
+              </button>
+            </div>
+          )}
           {/* THE REFERRAL FACT AS AN OBJECT (owner: "way more beautiful/visual"):
               a percent coin + the number said in num font + the door. */}
           {viewer && (

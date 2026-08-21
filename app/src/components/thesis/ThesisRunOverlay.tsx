@@ -1408,7 +1408,7 @@ function LaneRow({
           )}
         </div>
       )}
-      {bridgeOpen && <BridgeFund destChainId={lane.chainId} onClose={() => setBridgeOpen(false)} />}
+      {bridgeOpen && <BridgeFund destChainId={lane.chainId} onClose={() => setBridgeOpen(false)} arrivalsShown={false} />}
       {lane.tone === 'awaiting' && <RunBeam accent={accent} />}
     </div>
   )
@@ -1837,7 +1837,7 @@ function SuccessPlate({
             </div>
           ))}
         </div>
-        {bridgeChain != null && <BridgeFund destChainId={bridgeChain} onClose={() => setBridgeChain(null)} />}
+        {bridgeChain != null && <BridgeFund destChainId={bridgeChain} onClose={() => setBridgeChain(null)} arrivalsShown={false} />}
         {/* ⚠⚠ A SHORTFALL IS A QUESTION ON A PARTIAL RUN TOO (the owner 2026-08-16:
             "if nothing is free to bridge then it should just first ask what you
             want to sell to fund the seed/bridging like my eth on mainnet").

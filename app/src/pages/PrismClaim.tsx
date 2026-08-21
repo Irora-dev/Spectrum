@@ -300,7 +300,7 @@ export function PrismClaim() {
         <div className="min-w-0 space-y-6">
           {/* ── whose allocation ── */}
           <div className="card-surface relative overflow-hidden rounded-2xl p-6">
-            <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-magenta/10 blur-3xl" />
+            <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-magenta/10 blur-3xl" />
             <label htmlFor="claim-addr" className="relative block font-display text-sm font-bold uppercase tracking-[0.14em] text-ink">
               Holder address
             </label>

@@ -13,7 +13,12 @@ import { creatorHref } from '../lib/spectrum/short-url'
 import { BundleBento as SharedBundleBento } from '../components/BundleBento'
 import { BasketAvatar } from '../components/BasketAvatar'
 import { ChainBadge } from '../components/ChainBadge'
+import { ShareModal } from '../components/LaunchBanner'
 import { useAllBaskets } from '../lib/spectrum/hooks'
+import { useHandleForAddress } from '../lib/spectrum/use-handles'
+import { basketSignatureColor } from '../lib/spectrum/signature'
+import { readableInk } from '../lib/spectrum/token-meta'
+import { readBrandHex } from '../theme/brand-colors'
 import type { BasketSummary } from '../lib/spectrum/basket-data'
 import { chainCfg, SUPPORTED_CHAIN_IDS } from '../lib/chain/chains'
 import { shortAddr } from '../lib/spectrum/format'
@@ -74,6 +79,49 @@ function CrossChainNote({ chains }: { chains: number[] }) {
       . You buy each leg separately on its own chain (you'll need funds + gas on each). It tracks the target
       weights; it doesn't auto-rebalance.
     </p>
+  )
+}
+
+/** "Your ref link" on the bundle hero (owner 2026-08-20: the ref copy control
+ *  rides the hero of both pages, not buried in a panel) — the Token pill row's
+ *  RefLinkChip law: the connected viewer's claimed creator name first, address
+ *  form when unnamed, hidden with no wallet (no identity, no referral, and a
+ *  door to nowhere is worse than no door). Copies THIS bundle's link with
+ *  ?ref=you attached; the URL API keeps the ?b= legs intact on the query form
+ *  and the published /bundle/:creator/:slug form alike. */
+function BundleRefChip() {
+  const { address, isConnected } = useAccount()
+  const { lookup } = useHandleForAddress(address)
+  const [copied, setCopied] = useState(false)
+  if (!isConnected || !address) return null
+  const refWord = lookup.status === 'found' ? lookup.owner.display : address
+  const copy = async () => {
+    try {
+      const u = new URL(window.location.href)
+      u.searchParams.set('ref', refWord)
+      await navigator.clipboard.writeText(u.toString())
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label="Copy your referral link for this bundle"
+      title="Copy this bundle with your referral attached, buys through it credit you"
+      className={`press inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] transition-colors ${
+        copied ? 'border-teal/50 bg-teal/10 text-teal' : 'border-white/15 bg-white/[0.04] text-ink-dim hover:border-cyan/50 hover:text-cyan'
+      }`}
+    >
+      <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </svg>
+      {copied ? 'Copied ✓' : 'Your ref link'}
+    </button>
   )
 }
 
@@ -247,24 +295,43 @@ function AllocationHeadline({
 function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: number; published?: boolean }) {
   const resolved = useResolved(bundle.legs)
   const holdings = useBundleHoldings(resolved)
-  const chains = bundleChains(bundle.legs)
+  // Memoized: the share card's payload keys off this identity — a fresh array
+  // per render would redraw the drawn image on every budget keystroke.
+  const chains = useMemo(() => bundleChains(bundle.legs), [bundle.legs])
   const [budget, setBudget] = useState('1000')
   const budgetNum = Number(budget) || 0
   const splits = splitBudget(bundle.legs, budgetNum)
   const refq = bundle.by ? `&ref=${bundle.by}` : ''
-  const [copied, setCopied] = useState(false)
+  // SHARE = THE REAL CARD POP-UP (owner 2026-08-20): the bundle's Share raises
+  // the same drawn-image ShareModal the basket pages raise — the X intent, the
+  // copy chips and the exportable image all live there now, so this page only
+  // hands it the bundle's facts. The old X-intent + copy-link pair left with it.
+  const [shareOpen, setShareOpen] = useState(false)
   const shareUrl = typeof window !== 'undefined' ? window.location.href : ''
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
-  const xText = `${bundle.name || 'A cross-chain bundle'} on Spectrum — ${bundle.legs.length} baskets across ${chains.length} chains, one weighted allocation.`
-  const xHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(xText)}&url=${encodeURIComponent(shareUrl)}`
+  // the creator's claimed name rides the drawn card's footer (Token's law:
+  // named creators by name, nothing when unnamed)
+  const { lookup: creatorName } = useHandleForAddress(bundle.by)
+  const sigHex = readBrandHex('--color-violet-bright', '#a48bff')
+  const shareBundle = useMemo(
+    () => ({
+      url: shareUrl,
+      chainNames: chains.map((c) => chainCfg(c).name),
+      legs: resolved.map((r) => {
+        // each tile painted as its basket's signature — the page bento's own law
+        const paint = r.ix
+          ? basketSignatureColor(r.ix.address, r.ix.top[0])
+          : readBrandHex('--color-violet', '#7b5cff')
+        return {
+          symbol: r.ix?.symbol ?? shortAddr(r.leg.address),
+          asset: r.leg.address,
+          targetWeightPct: r.pct,
+          color: paint,
+          ink: /^#[0-9a-fA-F]{6}$/.test(paint) ? readableInk(paint) : '#0b0b12',
+        }
+      }),
+    }),
+    [shareUrl, chains, resolved],
+  )
 
   return (
     <div className="py-4">
@@ -290,6 +357,9 @@ function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: 
               <Link to={creatorHref(bundle.by)} className="text-cyan hover:underline">{shortAddr(bundle.by)}</Link>
             </span>
           )}
+          {/* the connected viewer's own ref copy, on the hero with the other
+              identity facts (owner 2026-08-20: not buried in the buy panel) */}
+          <BundleRefChip />
         </div>
       </BundleHero>
       <div className="mb-6" />
@@ -397,15 +467,40 @@ function BundleView({ bundle, dropped, published }: { bundle: BundleT; dropped: 
           </p>
 
           <div className="mt-1 flex flex-wrap gap-2">
-            <a href={xHref} target="_blank" rel="noreferrer" className="press inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3.5 py-2 font-mono text-[10px] uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan">
-              Share on X
-            </a>
-            <button type="button" onClick={() => void copy()} className="press rounded-lg border border-white/15 px-3.5 py-2 font-mono text-[10px] uppercase tracking-wide text-ink-dim hover:border-cyan/50 hover:text-cyan">
-              {copied ? 'Link copied' : 'Copy link'}
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className="press inline-flex items-center gap-1.5 rounded-lg border border-cyan/40 bg-cyan/[0.08] px-3.5 py-2 font-mono text-[10px] uppercase tracking-wide text-cyan hover:border-cyan"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+                <path d="M16 6l-4-4-4 4" />
+                <path d="M12 2v13" />
+              </svg>
+              Share this bundle
             </button>
           </div>
         </aside>
       </div>
+
+      {/* the real share pop-up — the drawn card, X intent, copy link/image,
+          and the sharer's ref link row, all the modal's own machinery */}
+      <ShareModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        symbol={bundle.name || 'bundle'}
+        name={bundle.name || 'Cross-chain bundle'}
+        addr=""
+        chainId={chains[0] ?? 8453}
+        sig={sigHex}
+        buyInk={/^#[0-9a-fA-F]{6}$/.test(sigHex) ? readableInk(sigHex) : '#0b0b12'}
+        holdings={[]}
+        navPerToken={0}
+        ageHours={null}
+        navSeries={[]}
+        by={creatorName.status === 'found' ? creatorName.owner.display : null}
+        bundle={shareBundle}
+      />
     </div>
   )
 }

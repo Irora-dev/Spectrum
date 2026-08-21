@@ -20,8 +20,8 @@ export function LaunchCta() {
     >
       <div aria-hidden className="absolute inset-x-0 top-0 h-px" style={{ background: 'linear-gradient(90deg,var(--color-cyan),var(--color-violet-bright),var(--color-magenta))' }} />
       {/* quiet aurora, no WebGL — this card repeats in a list */}
-      <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-violet/15 blur-3xl transition-opacity duration-300 group-hover:opacity-80" />
-      <div aria-hidden className="pointer-events-none absolute -left-10 -bottom-16 h-36 w-36 rounded-full bg-cyan/10 blur-3xl" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-violet/15 blur-3xl transition-opacity duration-300 group-hover:opacity-80" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -left-10 -bottom-16 h-36 w-36 rounded-full bg-cyan/10 blur-3xl" />
 
       {/* PHONE: centred, no description, more air (owner 2026-08-06 23:13:
           "the 'have a thesis, bundle it into a basket' needs to be centred,

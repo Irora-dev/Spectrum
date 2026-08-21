@@ -58,8 +58,14 @@ function feeChargedLog(burnCut: bigint): ReceiptLogLike {
   return { address: BATCHER, topics: [FEE_CHARGED_TOPIC0, addressTopic(SINK)], data: `0x${word(burnCut)}` }
 }
 
-function burnDivertedLog(amount: bigint): ReceiptLogLike {
-  return { address: BATCHER, topics: [BURN_DIVERTED_TOPIC0, addressTopic(SINK)], data: `0x${word(amount)}` }
+function burnDivertedLog(amount: bigint, reason: `0x${string}` = '0x'): ReceiptLogLike {
+  // the REAL 4-arg shape (live-proven 2026-08-18): indexed sink + fundingAsset,
+  // data = (amount, bytes reason) ABI-encoded — offset 0x40, then length+bytes
+  const rbytes = reason.slice(2)
+  const rlen = rbytes.length / 2
+  const padded = rbytes.padEnd(Math.ceil(rlen / 32) * 64, '0')
+  const data = `0x${word(amount)}${word(64n)}${word(BigInt(rlen))}${rlen ? padded : ''}` as `0x${string}`
+  return { address: BATCHER, topics: [BURN_DIVERTED_TOPIC0, addressTopic(SINK), addressTopic(FUNDING)], data }
 }
 
 function transferLog(token: string, to: string, value: bigint): ReceiptLogLike {
@@ -457,7 +463,7 @@ describe('the refusal postures — silence is never proof', () => {
       success([
         batchFact(),
         { kind: 'fee-charged', burnSink: SINK, burnCut: FEE },
-        { kind: 'burn-diverted', sink: SINK, amount: 1n },
+        { kind: 'burn-diverted', sink: SINK, amount: 1n, fundingAsset: FUNDING, reason: '0x' },
         ...deliveryFacts,
       ]),
     )

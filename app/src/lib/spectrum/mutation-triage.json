@@ -885,6 +885,96 @@
       "test": "runner-effects.test.ts › a destination that ALREADY CARRIES the top-up is covered: exactly-at-need proceeds with NO gas ask; one wei short refuses (the covered-wallet law, 2026-08-18)",
       "why": "REAL boundary, NEW with the covered-wallet fix: destNative EXACTLY equal to weiNeeded is covered — the mutant (<=) refuses a plan whose destination already holds precisely what the top-up would deliver, resurrecting the live 2026-08-18 wall the fix closed. Pinned both ways (exactly-covered proceeds with no fromAmountForGas; one wei short refuses), proven red-under-mutant in the isolated tree (1 failed / 135 passed).",
       "at": "2026-08-18"
+    },
+    "funding-plan:282:47:<= → <": {
+      "verdict": "equivalent",
+      "class": "degenerate-zero",
+      "why": "line-shift re-key of funding-plan:288:47:<= → < (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): a zero need pads to zero and min(0, available) is 0 — the guard is an early exit for a value the arithmetic already maps to the same answer. NaN/negatives still refused by the unmutated isFinite half and the strict <.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:283:57:<= → <": {
+      "verdict": "equivalent",
+      "class": "degenerate-zero",
+      "why": "line-shift re-key of funding-plan:289:57:<= → < (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): with zero available, min(padded, floor(0)) = 0 — identical to the early exit. Same family as :288.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:292:47:<= → <": {
+      "verdict": "equivalent",
+      "class": "degenerate-zero",
+      "why": "line-shift re-key of funding-plan:298:47:<= → < (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): a zero draw computes ceil(0·bps/10000) = 0 and min(0, surplus) = 0. Same family.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:293:53:<= → <": {
+      "verdict": "equivalent",
+      "class": "degenerate-zero",
+      "why": "line-shift re-key of funding-plan:299:53:<= → < (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): zero surplus gives min(ceil(pad), floor(0)) = 0. The quartet is one family: every operand of these two helpers already maps its zero to a zero result.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:430:19:> → >=": {
+      "verdict": "equivalent",
+      "class": "degenerate-empty",
+      "why": "line-shift re-key of funding-plan:436:19:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): with empty sells the block iterates `new Set([])` — zero iterations, no refusal, no set mutation. The guard is an optimisation, not a law.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:526:32:> → >=": {
+      "verdict": "equivalent",
+      "class": "defensive-redundancy",
+      "why": "line-shift re-key of funding-plan:532:32:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): each routing branch (540/557/573) re-guards on shortCents > 0 and the final refusal fires only past 0, so a zero-short row walks the loop touching nothing and stays resolved — the same outcome as never entering.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:534:21:> → >=": {
+      "verdict": "equivalent",
+      "class": "implied-conjunct",
+      "why": "line-shift re-key of funding-plan:540:21:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): rows arrive through the 532 filter (shortCents > 0) and nothing decrements before this line, so the conjunct is implied by the iteration set. (The other `>` on this line — newMoneyLeft — is a different mutant with its own record; the column matters, per the sweep's own :316 lesson.)",
+      "at": "2026-08-19"
+    },
+    "funding-plan:551:21:> → >=": {
+      "verdict": "equivalent",
+      "class": "layered-guard",
+      "why": "line-shift re-key of funding-plan:557:21:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): both inner draws re-guard (`cash > 0`, `lp > 0`) and min(x, 0) = 0 defeats each take, so nothing is drawn and nothing pushed.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:567:21:> → >=": {
+      "verdict": "equivalent",
+      "class": "layered-guard",
+      "why": "line-shift re-key of funding-plan:573:21:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): the loop's first line is `if (r.shortCents <= 0) break` — the inner layer refuses identically before any source is read.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:570:48:<= → <": {
+      "verdict": "equivalent",
+      "class": "unobservable-then-refused",
+      "why": "line-shift re-key of funding-plan:576:48:<= → < (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): an exactly-drained source (reachable — takes drain to precisely 0) is admitted, take = min(short, 0) = 0, and a zero-cent drawn row + zero-cent bridge ARE created. Both records are then discarded before any reader: the still-short row hits the final refusal and is DELETED from resolvedById (its drawn rows die with it), and the zero-cent bridge is excluded by every consumer's cents > 0 filter (597 inbound, 632 gas walk, 680 liveBridges). Fragile by nature — any new consumer of raw `bridges` without the cents filter would surface it; the discard steps are named so that reader knows what it is inheriting.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:591:77:> → >=": {
+      "verdict": "equivalent",
+      "class": "defensive-redundancy",
+      "why": "line-shift re-key of funding-plan:597:77:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): a zero-cent bridge cannot exist — both push sites take min of two positives (the :555/:603 family invariant, unchanged by this sweep). The widened filter selects the same set.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:626:16:<= → <": {
+      "verdict": "equivalent",
+      "class": "defensive-redundancy",
+      "why": "line-shift re-key of funding-plan:632:16:<= → < (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): same foreclosed zero-cent-bridge invariant; the skip never has a zero to skip.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:674:80:> → >=": {
+      "verdict": "equivalent",
+      "class": "defensive-redundancy",
+      "why": "line-shift re-key of funding-plan:680:80:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): same invariant, same family — the belt stays because the invariant it guards is proven elsewhere, not because it does work.",
+      "at": "2026-08-19"
+    },
+    "funding-plan:683:33:> → >=": {
+      "verdict": "equivalent",
+      "class": "equivalent-permutation",
+      "why": "line-shift re-key of funding-plan:689:33:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): comment scrub shifted lines]",
+      "at": "2026-08-19"
+    },
+    "funding-plan:748:23:> → >=": {
+      "verdict": "equivalent",
+      "class": "layered-guard",
+      "why": "line-shift re-key of funding-plan:754:23:> → >= (the ChainNeed/error-class definition move to plan-shared-types shifted the file -6): `liveSells.length >= 0` admits the empty case into a block whose chain set is empty and whose loop iterates zero times — byte-identical plan.",
+      "at": "2026-08-19"
     }
   }
 }

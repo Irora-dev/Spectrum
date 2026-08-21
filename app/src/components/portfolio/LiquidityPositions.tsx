@@ -44,7 +44,12 @@ export function LiquidityPositions({ data: lifted }: { data?: LpPositionsRead })
   const anyPartial = data.positions.some((p) => p.partialPricing || p.valueUsd == null) || data.unreadableV4.length > 0
 
   return (
-    <div className="mt-6">
+    /* the BAND (owner 2026-08-17, both modes): the portfolio column reads as
+       one undifferentiated scroll — transactions · LP · insights need region
+       separation. The middle section sits on a soft wash with its own
+       breathing room; bg-white/[0.03] is plane-aware by the remap (white
+       whisper on dark, ink whisper on paper). Region padding on the scale. */
+    <div className="mt-8 rounded-3xl border border-white/8 bg-white/[0.03] px-4 py-8 sm:px-6">
       <div className="mb-4 flex flex-wrap items-baseline gap-3">
         <h2 className="font-display text-[13px] font-bold uppercase tracking-[0.18em] text-ink-dim">
           Liquidity positions

@@ -1,0 +1,26 @@
+{
+  "extends": "../app/tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [],
+    "typeRoots": [
+      "../app/node_modules/@types"
+    ],
+    "paths": {
+      "viem": [
+        "../app/node_modules/viem/_types/index.d.ts"
+      ]
+    },
+    "baseUrl": "."
+  },
+  "include": [
+    "server.ts",
+    "compose.ts",
+    "env.d.ts"
+  ]
+}

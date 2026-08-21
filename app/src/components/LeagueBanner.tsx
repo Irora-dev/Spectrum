@@ -58,7 +58,7 @@ export function LeagueBanner() {
           maskImage: 'linear-gradient(90deg, black 0%, black 55%, transparent 100%)',
         }}
       />
-      <div aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-violet/14 blur-[100px]" />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-violet/14 blur-[100px]" />
 
       <div className="relative flex min-h-[200px] flex-col items-end justify-center gap-3.5 px-6 py-6 text-right sm:px-10">
         <div className="font-display text-3xl font-bold uppercase leading-[0.92] tracking-tight text-ink sm:text-5xl">

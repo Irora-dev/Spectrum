@@ -22,7 +22,7 @@ import {
   type PayToken,
 } from '../lib/spectrum/pay-token'
 import { payTokenFromHoldings } from '../lib/spectrum/pay-prefill'
-import { useRawHoldings } from '../lib/spectrum/use-raw-holdings'
+import { useRawHoldings } from '../lib/spectrum/portfolio-handoff'
 import { erc20BalanceAbi } from '../lib/spectrum/abis-v2'
 import { clampSlippageBps, DEFAULT_SLIPPAGE_BPS } from '../lib/spectrum/hook-data'
 import { formatNav, formatUsdCompact, shortAddr } from '../lib/spectrum/format'
@@ -129,11 +129,15 @@ export function DexSwapCard({
   fixedBasket = null,
   initialBasket = null,
   initialAmount = null,
+  initialDir = 'buy',
+  initialSlippageBps,
   large = false,
   strip = false,
   defaultHub,
+  stayHere,
   payFromHoldings = false,
   onBasketChange,
+  onTraded,
 }: {
   chainId: number
   /** Lock the console to one already-loaded basket (Token page) — no picker. */
@@ -142,6 +146,12 @@ export function DexSwapCard({
   initialBasket?: string | null
   /** Prefill the pay amount (quick-buy deep link) — never blank-by-default. */
   initialAmount?: string | null
+  /** Which side the console OPENS on. The chat's sell turns pass 'sell' — a
+   *  sell card that opens on buy hands the user a flip they never asked for. */
+  initialDir?: 'buy' | 'sell'
+  /** Seed the tolerance dial ("with 1% slippage" in chat); clamped to the
+   *  card's own bounds. The dial stays fully editable after. */
+  initialSlippageBps?: number
   /** Roomier paddings + typography for the standalone /swap page. */
   large?: boolean
   /** The one-row streamlined buy (owner 19:24): pay left → basket right → Buy.
@@ -152,6 +162,10 @@ export function DexSwapCard({
    *  host has no opinion, which is what lets the holdings prefill below have
    *  one; a value here is host context and beats any suggestion. */
   defaultHub?: HubToken
+  /** The HOST owns the whole flow and must not hand the user off after a buy
+   *  (the chat). Forwarded to the success overlay, which then makes Done the
+   *  primary instead of the portfolio hand-off. */
+  stayHere?: boolean
   /** Opt in to opening the pay side on what the wallet actually holds (owner
    *  QOL round 2026-08-05). Off by default: it costs a wallet-wide holdings
    *  read, which only the standalone console is roomy enough to earn — the
@@ -160,6 +174,10 @@ export function DexSwapCard({
   /** Fired when the selected basket changes — lets a host page (the /swap
    *  context panel) follow the console's selection. */
   onBasketChange?: (address: string | null) => void
+  /** Fired ONCE per completed swap (the dex.done transition) — lets a host
+   *  (the chat) narrate the outcome. Purely observational: no money logic
+   *  moves through it, and absent means exactly today's behavior. */
+  onTraded?: (info: { side: 'buy' | 'sell'; symbol: string; label: string; hash: string }) => void
 }) {
   const cfg = chainCfg(chainId)
   const { isConnected } = useAccount()
@@ -193,7 +211,7 @@ export function DexSwapCard({
   const { data: fees } = useBasketFees(ix?.address, chainId)
   const feeFrac = fees ? fees.basketFeeBps / 10_000 : Number.NaN
 
-  const [dir, setDir] = useState<'buy' | 'sell'>('buy')
+  const [dir, setDir] = useState<'buy' | 'sell'>(initialDir)
   // Hub availability per chain: full Uniswap infra (Base/Ethereum) = ETH/WETH/
   // settlement; a LiFi external-hub chain (Robinhood) = ETH + settlement (the
   // ETH hop rides LiFi's verified diamond, WETH doesn't exist there); neither =
@@ -213,13 +231,21 @@ export function DexSwapCard({
   const payMemKey = `spectrum:pay-token:${chainId}`
   const [pay, setPay] = useState<PayToken>(() => {
     if (!(hubInfra || lifiHubChain)) return hubPay('USDC')
+    // CONTEXT BEATS HABIT — and it has to be checked FIRST to mean anything. The
+    // saved pick used to be returned before `defaultHub` was consulted at all,
+    // which made the comment above false: pick ETH once in a chat card and every
+    // later chat buy reopened on ETH, so "buy $25" preset 25 ETH again — the very
+    // confusion this prop was added to kill. Only surfaces that QUOTE IN DOLLARS
+    // pass defaultHub (the chat card, the seed prompt); /swap and the token page
+    // pass nothing and go on remembering, which is right for them.
+    if (defaultHub) return hubPay(defaultHub)
     try {
       const saved = parseStoredPayToken(window.localStorage.getItem(payMemKey), chainId, hubInfra ? HUBS : ['ETH', 'USDC'])
       if (saved && (saved.kind === 'hub' || anyTokenPay)) return saved
     } catch {
       /* privacy mode — fall through to the default */
     }
-    return hubPay(defaultHub ?? 'ETH')
+    return hubPay('ETH')
   })
   // The hub view of the pay side (null = a custom ERC-20 riding LiFi).
   const hub: HubToken | null = pay.kind === 'hub' ? pay.hub : null
@@ -262,7 +288,7 @@ export function DexSwapCard({
   // A prefilled amount (quick-buy from a card) — an empty field is a decision
   // forced on the buyer, so a caller can hand one over.
   const [amount, setAmount] = useState(initialAmount ?? '')
-  const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
+  const [slippageBps, setSlippageBps] = useState(initialSlippageBps != null ? clampSlippageBps(initialSlippageBps) : DEFAULT_SLIPPAGE_BPS)
   const [customSlip, setCustomSlip] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
   const [hubMenuOpen, setHubMenuOpen] = useState(false)
@@ -569,6 +595,7 @@ export function DexSwapCard({
   useEffect(() => {
     if (dex.done && pendingRef.current) {
       setLastSwap({ hash: dex.done.hash, label: pendingRef.current })
+      if (ix) onTraded?.({ side: dir, symbol: ix.symbol, label: pendingRef.current, hash: dex.done.hash })
       pendingRef.current = null
       // SINGLE SWAPS JOIN THE HISTORY (owner 2026-08-16: "recent transactions
       // still only show basket trades, should show all txs") — one exec-log
@@ -891,6 +918,7 @@ export function DexSwapCard({
           </div>
         )}
         <SwapPendingOverlay
+          stayHere={stayHere}
           onRetry={() => void runSwap()}
           open={pending && (dex.running || dex.done != null || dex.error != null)}
           dir={dir}
@@ -912,7 +940,7 @@ export function DexSwapCard({
         />
         {/* the strip's own mount — the full card's (below) is unreachable
             from this early return */}
-        {bridgeOpen && <BridgeFund destChainId={chainId} onClose={() => setBridgeOpen(false)} />}
+        {bridgeOpen && <BridgeFund destChainId={chainId} onClose={() => setBridgeOpen(false)} arrivalsShown={large} />}
       </div>
     )
   }
@@ -1328,10 +1356,11 @@ export function DexSwapCard({
         />
       )}
       {payTokenPicker}
-      {bridgeOpen && <BridgeFund destChainId={chainId} onClose={() => setBridgeOpen(false)} />}
+      {bridgeOpen && <BridgeFund destChainId={chainId} onClose={() => setBridgeOpen(false)} arrivalsShown={large} />}
 
       {/* on-brand wait animation while the swap's steps confirm (token page + /swap) */}
       <SwapPendingOverlay
+          stayHere={stayHere}
         onRetry={() => void runSwap()}
         open={pending && (dex.running || dex.done != null || dex.error != null)}
         dir={dir}

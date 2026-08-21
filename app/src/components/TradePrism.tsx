@@ -465,7 +465,7 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
         aria-expanded={open}
         className="press group relative flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
       >
-        <div aria-hidden className="pointer-events-none absolute -left-12 -top-14 h-36 w-36 rounded-full bg-magenta/15 blur-3xl" />
+        <div aria-hidden className="ambient-bloom pointer-events-none absolute -left-12 -top-14 h-36 w-36 rounded-full bg-magenta/15 blur-3xl" />
         <div
           aria-hidden
           className="bento-sheen pointer-events-none absolute inset-0"
@@ -503,7 +503,7 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
         <div className="border-t border-white/10 p-4">
           {done ? (
             <div className="relative overflow-hidden rounded-xl border border-teal/30 bg-teal/[0.06] p-4">
-              <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-teal/15 blur-2xl" />
+              <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-teal/15 blur-2xl" />
               <div className="relative flex items-center gap-3">
                 <PixelRainbow className="h-6 w-auto shrink-0" />
                 <div className="min-w-0">
@@ -616,7 +616,7 @@ export function TradePrism({ className = '', buyOnly = false, initialAmount }: {
 
               {/* you receive */}
               <div className="relative overflow-hidden rounded-xl border border-magenta/25 bg-magenta/[0.05] p-4">
-                <div aria-hidden className="pointer-events-none absolute -right-12 -top-14 h-32 w-32 rounded-full bg-magenta/15 blur-3xl" />
+                <div aria-hidden className="ambient-bloom pointer-events-none absolute -right-12 -top-14 h-32 w-32 rounded-full bg-magenta/15 blur-3xl" />
                 <div className="relative flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">

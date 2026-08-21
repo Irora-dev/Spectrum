@@ -6,8 +6,11 @@ import { hasInjectedProvider, isMobileUA, walletAppLinks } from '../lib/wallet/m
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
+// h-9 + pill: the whole top-right cluster (design toggle · network · wallet)
+// shares one height and one shape (owner 2026-08-17: "all different shapes,
+// ugly, standardize size/shape")
 const btn =
-  'press inline-flex min-h-[36px] items-center border border-white/20 bg-white/[0.04] px-3 py-1.5 font-mono text-xs uppercase tracking-[0.15em] text-ink hover:border-cyan hover:text-cyan'
+  'press inline-flex h-9 items-center rounded-full border border-white/20 bg-white/[0.04] px-4 font-mono text-xs uppercase tracking-[0.15em] text-ink hover:border-cyan hover:text-cyan'
 
 // Connected state: the address opens a small profile menu (copy / explorer /
 // disconnect) — clicking your own address must never disconnect you directly.

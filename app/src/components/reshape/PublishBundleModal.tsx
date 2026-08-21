@@ -955,7 +955,7 @@ export function PublishBundleModal({
           SETTLEMENT token — not its gas coin, which is what a short deploy
           actually needs — so the button that opens it says so out loud rather
           than promising a fix this flow cannot perform (fundingPlan). */}
-      {fundFor != null && <BridgeFund destChainId={fundFor} onClose={() => setFundFor(null)} />}
+      {fundFor != null && <BridgeFund destChainId={fundFor} onClose={() => setFundFor(null)} arrivalsShown={false} />}
     </div>,
     document.body,
   )

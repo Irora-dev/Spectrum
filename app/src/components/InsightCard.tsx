@@ -128,13 +128,19 @@ export function InsightCard({
   useEffect(() => {
     if (!pulseOnMount || !rootRef.current) return
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    // concrete hex (the kit's cyan #35e0ff) — element.animate keyframes are
-    // canvas territory, where var() indirection is unreliable
+    // element.animate keyframes are canvas territory where var() indirection
+    // is unreliable — so read the RESOLVED accent once at mount instead of
+    // hardcoding a hex: the pulse then follows the plane (void cyan, paper
+    // violet) like every class-driven surface does (the 2026-08-19 re-ink's
+    // one JS residual, closed).
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--color-cyan').trim() || '#35e0ff'
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(accent)
+    const [r, g, b] = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [53, 224, 255]
     rootRef.current.animate(
       [
-        { boxShadow: '0 0 0 0 rgba(53, 224, 255, 0)', borderColor: 'rgba(255, 255, 255, 0.1)' },
-        { boxShadow: '0 0 24px 2px rgba(53, 224, 255, 0.25)', borderColor: 'rgba(53, 224, 255, 0.5)', offset: 0.35 },
-        { boxShadow: '0 0 0 0 rgba(53, 224, 255, 0)', borderColor: 'rgba(255, 255, 255, 0.1)' },
+        { boxShadow: `0 0 0 0 rgba(${r}, ${g}, ${b}, 0)`, borderColor: 'rgba(255, 255, 255, 0.1)' },
+        { boxShadow: `0 0 24px 2px rgba(${r}, ${g}, ${b}, 0.25)`, borderColor: `rgba(${r}, ${g}, ${b}, 0.5)`, offset: 0.35 },
+        { boxShadow: `0 0 0 0 rgba(${r}, ${g}, ${b}, 0)`, borderColor: 'rgba(255, 255, 255, 0.1)' },
       ],
       { duration: 1600, easing: 'ease-in-out', delay: 400 },
     )

@@ -12,6 +12,7 @@ import {
   isThinMarketLeg,
   legToleranceCeilingBps,
   maxCommittedFor,
+  type AssembledZeroExBatchBuy,
   type ComposedPortfolioBatchBuy,
 } from './portfolio-batcher'
 import { singleSwapImpactBps } from './floor-discipline'
@@ -780,14 +781,17 @@ export function burnAssetFor(chainId: number): Address | null {
   return chainId === 1 || chainId === 8453 || chainId === 4663 ? COW_NATIVE_BUY : null
 }
 
-/** The PORTFOLIO engine's composeStep: one funding step → the composed batch,
- *  through the live 0x assembler (which owns the flag gate, the fixpoint, the
- *  floors and the consent-divergence refusal). */
-export function composePortfolioStepFor(
+/** The PORTFOLIO engine's composeStep, WHOLE-ARTIFACT form: one funding step →
+ *  the full AssembledZeroExBatchBuy, refusals and floor audit trail included.
+ *  Exists because the composed-only seam below DROPS the assembler's own
+ *  refusal sentences, so an app surface driving the runner could state only
+ *  THE FACT of a dropped leg, never the core's words (Daylight, 2026-08-19 —
+ *  their diff-based fallback retires on this). */
+export function composePortfolioStepAssembledFor(
   review: PortfolioRunReview,
   account: Address,
   deps: ComposeDeps,
-): (step: FundingStep) => Promise<ComposedPortfolioBatchBuy> {
+): (step: FundingStep) => Promise<AssembledZeroExBatchBuy> {
   return async (step) => {
     if (step.action.kind !== 'batch')
       throw new BatchComposeRefusal('only a batch step composes — a transfer between networks is not a batch')
@@ -846,8 +850,22 @@ export function composePortfolioStepFor(
       ),
       deps.fetchQuote,
     )
-    return assembled.composed
+    return assembled
   }
+}
+
+/** The PORTFOLIO engine's composeStep: one funding step → the composed batch,
+ *  through the live 0x assembler (which owns the flag gate, the fixpoint, the
+ *  floors and the consent-divergence refusal). Composed-only view of the
+ *  whole-artifact seam above; callers that need the refusal sentences use
+ *  composePortfolioStepAssembledFor. */
+export function composePortfolioStepFor(
+  review: PortfolioRunReview,
+  account: Address,
+  deps: ComposeDeps,
+): (step: FundingStep) => Promise<ComposedPortfolioBatchBuy> {
+  const assembledFor = composePortfolioStepAssembledFor(review, account, deps)
+  return async (step) => (await assembledFor(step)).composed
 }
 
 /** The legacy engine's composeStep slot, which this surface deliberately does

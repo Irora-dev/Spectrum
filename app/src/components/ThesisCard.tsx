@@ -51,7 +51,7 @@ const foldSymbol = (s: string) => showSymbol(s).toUpperCase()
 const BUNDLE_SHELL =
   'press group block rounded-2xl border border-violet/35 ' +
   'bg-[linear-gradient(160deg,rgba(164,139,255,0.09),rgba(255,255,255,0.02)_55%)] ' +
-  'shadow-[0_0_28px_-10px_rgba(164,139,255,0.45)] transition-colors hover:border-violet-bright/70'
+  'thesis-glow transition-colors'
 
 function BundleEyebrow({ chains }: { chains: number }) {
   return (

@@ -33,7 +33,7 @@ export function ConceptOrbit({
   return (
     <div className={`relative mx-auto h-72 w-full max-w-md ${className}`}>
       {/* soft glow that breathes with the token */}
-      <div aria-hidden className="concept-core absolute left-1/2 top-1/2 h-40 w-40 rounded-full bg-violet/25 blur-3xl" />
+      <div aria-hidden className="ambient-bloom concept-core absolute left-1/2 top-1/2 h-40 w-40 rounded-full bg-violet/25 blur-3xl" />
 
       {/* orbiting assets that converge into the centre */}
       <div className="concept-spin absolute inset-0">

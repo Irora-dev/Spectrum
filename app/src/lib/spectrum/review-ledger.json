@@ -66,6 +66,22 @@
       "moneyDigest": "887a5fa6",
       "scope": "test/rh-deploy 97499e9 flip candidate (bare 2e05d2f0 + the 2-line live-flip -> 887a5fa6). Final delta ef4f4e03->d676aa53->97499e9; money core PASS by shape (0 crit/high/med); LOW-1 skipped-leg pin + INFO-1 comment remedied and re-verified (survivor mutant now dies red-under-mutant). No money defect, no false-pass.",
       "notes": "Independent cold pass, sole reviewer (the owner one-pass ruling 2026-08-14). 887a5fa6 = the reviewed money core + ONLY the two flip flags, reproduced independently. Full suite 3234 passed/33 skipped at 97499e9. Transcribed verbatim by UIGuy from the reviewer's desk verdict w-1786707272489-27; the owner cross-checks row-vs-desk at ack time per RELEASING.md."
+    },
+    {
+      "at": "2026-08-20",
+      "reviewer": "SpectrumContracts",
+      "findings": 0,
+      "moneyDigest": "a1deecbb",
+      "scope": "RETROACTIVE — the SHIPPED v2026.08.18 bytes (mirror f789f6a, source ce3597d5): the read promised when the owner's third ruling shipped ahead of the row. Digest reproduced independently by the reviewer's own FNV instrument (validated against 1b1670d6); basis = the manifest-pinned 08-16 snapshot, 10 of 13 files code-identical by comment-stripped token compare, the 3 movers read in full.",
+      "notes": "findings 0. Substance read as code diffs: the 0x fallback lane (unreadable settler minimum REFUSES, pinned holder, native never falls back), displayed-vs-signed committable at expectedFeeBps, the protection dial (waiving needs a MEASURED market — unreadable depth refuses UNDER consent), the wrapper-first sale lane (fee backed OUT with the walk-down so pull never exceeds plan outflow; S2 binds on the wrapper-ENFORCED minimum; approval only from the lane compose), floor law max(probe-haircut, plan-floor) verified never-lowered at direct-swap-lane:529, gen-2 whole-fee burn sizing + the 800ms retry, the covered-wallet refuel branch (exact-equal covered, one-wei-short refuses). Transcribed verbatim by UIGuy from the reviewer's desk verdict w-1787230117305-159."
+    },
+    {
+      "at": "2026-08-20",
+      "reviewer": "SpectrumContracts",
+      "findings": 0,
+      "moneyDigest": "62e4f52c",
+      "scope": "CURRENT — the frozen post-cut-train tree (62e4f52c at 4513b217 AND at today's origin tip; the two-day freeze claim verified true by the reviewer's own measurement). moneyCoreNotClean=0 REPLICATED at the tip: 12 sweep records, digests match live bytes, all 81 survivors triaged.",
+      "notes": "findings 0 — THE ROW THE LIGHT-MODE RELEASE UNBLOCKS ON (the reviewer's words). Waves read as code diffs incl. the seam moves verbatim in plan-shared-types with re-exports, deployments unknown-generation coercion flipped fail-closed to 2, and BurnDiverted's real 4-arg ABI matching the contract event argument-for-argument. Two observations, neither a defect: the wrapper-lane catch-all falls through to LI.FI silently (right direction — the signing lane still floors) and floorBasis external bypasses the plausibility bracket by declaration (settler-enforced floor covers that leg). The reviewer's first sweep replication was vacuous (wrong json shape iterated zero records) and was caught by their own instrument law before it could lie. Digest-set WIDENING ruled by the reviewer (w-117): YES — direct-swap-lane.ts, universal-router.ts, direct-swap-wrapper.ts join AFTER this release ships, as its own digest event with full-cap sweeps. Transcribed verbatim by UIGuy from the reviewer's desk verdict w-1787230117305-159."
     }
   ]
 }

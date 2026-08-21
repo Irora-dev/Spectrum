@@ -28,7 +28,7 @@ export function CompleteBanner({
   return (
     <div className="relative overflow-hidden rounded-2xl border border-white/12 bg-white/[0.03] px-5 py-5 text-center">
       {/* spectral bloom */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-16 mx-auto h-40 w-40 rounded-full opacity-30 blur-3xl" style={{ background: grad }} />
+      <div aria-hidden className="ambient-bloom pointer-events-none absolute inset-x-0 -top-16 mx-auto h-40 w-40 rounded-full opacity-30 blur-3xl" style={{ background: grad }} />
 
       {/* burst: expanding rings + a check */}
       <div className="relative mx-auto grid h-16 w-16 place-items-center">

@@ -691,7 +691,7 @@ export function DeployPortal({
                 </div>
               )}
               <div className="relative px-6 pt-6">
-                <div className="absolute -top-20 left-1/2 h-40 w-[120%] -translate-x-1/2 opacity-50 blur-3xl" style={{ background: grad }} aria-hidden />
+                <div className="ambient-bloom absolute -top-20 left-1/2 h-40 w-[120%] -translate-x-1/2 opacity-50 blur-3xl" style={{ background: grad }} aria-hidden />
                 <div className="relative flex items-center gap-3">
                   <div className="relative shrink-0">
                     <div className="absolute -inset-1 rounded-2xl opacity-60 blur-md" style={{ background: grad }} aria-hidden />

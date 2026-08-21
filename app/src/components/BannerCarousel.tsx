@@ -113,8 +113,12 @@ export function BannerCarousel() {
       </div>
       {/* gap-0: the dots' own horizontal padding (below) is the separation now
           — adding a gap on top of a 28px target only pushes neighbours apart
-          without making either easier to hit. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0.5 flex justify-center gap-0">
+          without making either easier to hit.
+          IN FLOW, not overlaid (owner 2026-08-19: the active dot sat ON the
+          short risk line and read as "a weird white dot in front of the
+          sentence") — the dots now take their own thin band under the slide;
+          -mt-3 folds most of the buttons' 36px thumb padding back in. */}
+      <div className="pointer-events-none -mt-3 flex justify-center gap-0">
         {slides.map((s, i) => (
           <button
             key={s.key}
@@ -122,17 +126,21 @@ export function BannerCarousel() {
             onClick={() => setIndex(i)}
             aria-label={`Show message ${i + 1} of ${slides.length}`}
             aria-pressed={i === active}
-            /* THE DOT IS 4px TALL — the BUTTON must not be (mobile audit
-               2026-08-05, measured 4x4). Vertical padding plus a background-clip
-               content box gives a 36px thumb target around an unchanged dot.
-               ⚠ THE 2026-08-05 FIX ONLY GREW THE VERTICAL AXIS (mobile sweep
-               2026-08-06 measured 20px WIDE): px-3 takes the inactive target to
-               28px across, and the row's gap goes to 0 so the visible spacing
-               stays where it was. The dot itself is still 4px. */
-            className={`press pointer-events-auto box-content h-1 rounded-full bg-clip-content px-3 py-4 transition-all duration-500 ${
-              i === active ? 'w-4 bg-white/40' : 'w-1 bg-white/15 hover:bg-white/30'
-            }`}
-          />
+            /* THE BUTTON IS A TRANSPARENT TAP TARGET (36px thumb, px-3/py-4); the
+               VISIBLE dot is the inner span. The old bg-clip-content trick let
+               the whole rounded button paint faint white on the light plane —
+               a "weird transparent circle" below the banner (owner 2026-08-21).
+               The button now paints nothing, and the dot is INK-token so it
+               reads on both planes (white on paper was invisible / a ghost). */
+            className="press pointer-events-auto grid place-items-center px-3 py-4"
+          >
+            <span
+              aria-hidden
+              className={`block h-1 rounded-full transition-all duration-500 ${
+                i === active ? 'w-4 bg-ink/45' : 'w-1 bg-ink/20 group-hover:bg-ink/35'
+              }`}
+            />
+          </button>
         ))}
       </div>
     </div>

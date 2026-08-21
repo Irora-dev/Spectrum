@@ -1,7 +1,6 @@
 import { isAddress, type Address } from 'viem'
-import { deriveFoundBook } from './found-book'
+import { deriveFoundBook, type RawHolding } from './portfolio-handoff'
 import { asTokenDecimals, hubPay, type HubToken, type PayToken } from './pay-token'
-import type { RawHolding } from './raw-holdings'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "THE SWAP CONSOLE DOESN'T KNOW WHAT YOU HOLD" (owner QOL round 2026-08-05,

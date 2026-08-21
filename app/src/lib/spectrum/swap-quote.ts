@@ -56,10 +56,12 @@ import type { Side } from './use-basket-swap'
 // reuse this module.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Default bound applied to a caller-supplied `priceAgeMs` (ms). DexScreener's own
- *  cache TTL is ~30s, so 60s leaves headroom. Nothing supplies that age today, so
- *  this refuses nothing in production — see the header. */
-export const DEFAULT_MAX_PRICE_AGE_MS = 60_000
+// The staleness window lives in quote-freshness.ts (the split's S1 — one
+// number both products honor gets a home that is neither's); re-exported so
+// this module's callers are unchanged. Nothing supplies a price age today, so
+// the bound refuses nothing in production — see the header.
+export { DEFAULT_MAX_PRICE_AGE_MS } from './quote-freshness'
+import { DEFAULT_MAX_PRICE_AGE_MS } from './quote-freshness'
 
 /** Human number → raw units, scaled to the token's TRUE decimals; 0n on any
  *  non-finite or non-positive input (those paths can't encode a swap). Only the

@@ -8,7 +8,7 @@ import { KIT_PAGE_DEFAULTS } from './kit-defaults'
 
 // Dark styles. `halation` (a LIGHT paper style from Mini) is deferred — the app is
 // dark-built (color-scheme: dark), so light mode needs its own pass.
-export type DesignStyle = 'spectral' | 'aurora' | 'prism' | 'umbra' | 'sylvan'
+export type DesignStyle = 'spectral' | 'aurora' | 'prism' | 'umbra' | 'sylvan' | 'enterprise'
 
 export interface BrandPalette {
   /** Gradient stops — drive the spectral optics tokens (amber / magenta / cyan). */

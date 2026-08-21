@@ -278,9 +278,12 @@ export function SectionHead({
     <div className={display ? 'max-w-none' : 'max-w-[46ch]'}>
       {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
       <h2
-        className={`mt-4 font-display font-semibold tracking-tight text-ink sm:mt-6 ${
-          display ? 'leading-[1.0]' : 'leading-[1.06] [text-wrap:balance]'
-        }`}
+        /* ONE scale for every section title (owner 2026-08-17: "i dont like
+           how these different section titles have different sizing") — the
+           display/default split gave 60px next to 48px on the same page. The
+           unified clamp tops at 46px, which also lets the longest ink line
+           ("Managing a portfolio across chains") hold a single line at lg. */
+        className="mt-4 font-display font-semibold leading-[1.04] tracking-tight text-ink [text-wrap:balance] sm:mt-6"
         style={{
           // PHONE FLOORS LOWERED (owner 2026-08-06 23:13, by line count:
           // "managing a portfolio across chains has never been this easy needs
@@ -288,9 +291,7 @@ export function SectionHead({
           // and get paid also needs three"). The clamp minimum was doing all
           // the work below ~480px, and at 2rem a hand-broken line simply could
           // not fit a 342px column — so every explicit line wrapped again.
-          fontSize: display
-            ? 'clamp(1.3rem, 0.55rem + 4.8vw, 3.75rem)'
-            : 'clamp(1.375rem, 0.9rem + 2.8vw, 3rem)',
+          fontSize: 'clamp(1.375rem, 0.9rem + 2.6vw, 2.875rem)',
         }}
       >
         {title}

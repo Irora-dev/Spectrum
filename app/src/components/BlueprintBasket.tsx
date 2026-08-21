@@ -13,8 +13,13 @@ import { Link } from 'react-router'
 // performance, no holders. The weights are spec annotations on a blueprint.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INK = 'rgba(140,225,255,0.85)' // blueprint line ink
-const INK_FAINT = 'rgba(140,225,255,0.35)'
+const BLUE_INK = 'rgba(140,225,255,0.85)' // blueprint line ink (the navy sheet)
+const BLUE_FAINT = 'rgba(140,225,255,0.35)'
+// bare mode draws on the CHAT STAGE's own plate, so its ink rides the theme
+// token: light strokes on void, dark strokes on paper (owner 2026-08-19:
+// "needs to be a darker colour on light mode")
+const TOKEN_INK = 'color-mix(in srgb, var(--color-ink) 90%, transparent)'
+const TOKEN_FAINT = 'color-mix(in srgb, var(--color-ink) 40%, transparent)'
 
 // Four schematic tiles on a 4×2 sheet — spec weights sum to 100. The weights
 // SLOWLY CYCLE through example allocations (owner 2026-07-29: the invitation
@@ -36,8 +41,12 @@ const hatch: CSSProperties = {
   backgroundImage:
     'repeating-linear-gradient(45deg, transparent, transparent 7px, rgba(140,225,255,0.06) 7px, rgba(140,225,255,0.06) 8px)',
 }
+const hatchToken: CSSProperties = {
+  backgroundImage:
+    'repeating-linear-gradient(45deg, transparent, transparent 7px, color-mix(in srgb, var(--color-ink) 7%, transparent) 7px, color-mix(in srgb, var(--color-ink) 7%, transparent) 8px)',
+}
 
-export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
+export function BlueprintBasket({ compact = false, bare = false }: { compact?: boolean; bare?: boolean }) {
   // the living spec: cycle allocations on a calm cadence; static under
   // prefers-reduced-motion (the first set is a fine drawing on its own)
   const [wi, setWi] = useState(0)
@@ -47,11 +56,16 @@ export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
     return () => window.clearInterval(t)
   }, [])
   const weights = WEIGHT_SETS[wi]
+  const INK = bare ? TOKEN_INK : BLUE_INK
+  const INK_FAINT = bare ? TOKEN_FAINT : BLUE_FAINT
   return (
     <section
       aria-label="Basket blueprint — no live basket holds the spotlight yet"
-      className={`relative overflow-hidden rounded-3xl ${compact ? '' : 'border border-white/12'}`}
-      style={{ background: 'linear-gradient(160deg, #0a1826 0%, #081220 55%, #0a0f1e 100%)' }}
+      className={`relative overflow-hidden rounded-3xl ${compact ? '' : 'border border-white/12'} ${bare ? 'flex h-full flex-col' : ''}`}
+      /* blueprint paper derives from the plane's own tokens — night-sky on the
+         dark styles, pale drafting-paper on the light one (the 2026-08-17
+         dark-gradient sweep; the old #0a1826 bake ignored every style) */
+      style={bare ? undefined : { background: 'linear-gradient(160deg, color-mix(in srgb, var(--color-panel-2) 86%, var(--color-cyan) 14%) 0%, var(--color-panel-2) 55%, var(--color-panel) 100%)' }}
     >
       {/* blueprint paper: fine grid + major grid */}
       <div
@@ -75,9 +89,17 @@ export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
         />
       </svg>
 
-      {/* words LEFT · schematic RIGHT (owner 14:31) */}
-      <div className="relative grid items-center gap-7 p-7 sm:p-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] md:gap-12 lg:p-12">
-        <div>
+      {/* words LEFT · schematic RIGHT (owner 14:31) — `bare` drops the pitch
+          copy entirely (owner 2026-08-19: the chat stage wants the DRAWING,
+          not a launch ad) */}
+      <div
+        className={
+          bare
+            ? 'relative flex min-h-0 flex-1 flex-col p-4 sm:p-5'
+            : 'relative grid items-center gap-7 p-7 sm:p-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] md:gap-12 lg:p-12'
+        }
+      >
+        <div className={bare ? 'hidden' : undefined}>
           <div className="inline-flex items-center gap-2 rounded-full border border-dashed px-3 py-1 font-mono text-[10px] uppercase tracking-[0.24em]" style={{ borderColor: INK_FAINT, color: INK }}>
             <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ background: INK }} />
             Basket blueprint
@@ -97,20 +119,22 @@ export function BlueprintBasket({ compact = false }: { compact?: boolean }) {
           </Link>
         </div>
 
-        <div>
+        <div className={bare ? 'flex min-h-0 flex-1 flex-col' : undefined}>
           {/* dimension line along the top */}
-          <div aria-hidden className="mb-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em]" style={{ color: INK_FAINT }}>
+          <div aria-hidden className="mb-2 flex shrink-0 items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em]" style={{ color: INK_FAINT }}>
             <span className="h-px flex-1" style={{ background: INK_FAINT }} />
             <span>one token · whole basket</span>
             <span className="h-px flex-1" style={{ background: INK_FAINT }} />
           </div>
 
-          <div className="grid aspect-[1.9/1] grid-cols-4 grid-rows-2 gap-2.5">
+          {/* bare fills whatever box the stage gives it — the fixed drawing
+              aspect clipped on short cards (owner 2026-08-19) */}
+          <div className={`grid grid-cols-4 grid-rows-2 gap-2.5 ${bare ? 'min-h-0 flex-1' : 'aspect-[1.9/1]'}`}>
             {TILES.map((t, i) => (
               <div
                 key={t.label}
                 className={`relative flex flex-col justify-between rounded-xl border border-dashed p-3 ${t.cls}`}
-                style={{ borderColor: i === 0 ? INK : INK_FAINT, ...hatch }}
+                style={{ borderColor: i === 0 ? INK : INK_FAINT, ...(bare ? hatchToken : hatch) }}
               >
                 <div className="flex items-center gap-1.5">
                   {/* dashed avatar placeholder */}

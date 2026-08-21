@@ -57,6 +57,62 @@ const EASE = 'cubic-bezier(0.32,0.72,0,1)'
 
 const legKey = (chainId: number, address: string) => `${chainId}:${address.toLowerCase()}`
 
+/** THE publish path — one setNote on the notes registry of the viewing chain,
+ *  subject = the creator. Exported so every surface that publishes a bundle
+ *  (this forge, the in-chat BundleCard) signs through the SAME code rather
+ *  than a copy (the house rule: reuse the real thing, never a lookalike). */
+export function useBundlePublish(chainId: number): {
+  registry: Address | null
+  state: 'idle' | 'busy' | 'done'
+  error: string | null
+  slug: string | null
+  /** Runs the write; resolves the published slug, or null on failure. */
+  publish: (creator: Address, legs: BundleLeg[], name: string) => Promise<string | null>
+} {
+  const publicClient = usePublicClient({ chainId })
+  const { writeContractAsync } = useWriteContract()
+  const queryClient = useQueryClient()
+  const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const [slug, setSlug] = useState<string | null>(null)
+  const registry = useMemo(() => {
+    try {
+      return chainCfg(chainId).notesRegistry
+    } catch {
+      return null
+    }
+  }, [chainId])
+
+  async function publish(creator: Address, legs: BundleLeg[], name: string): Promise<string | null> {
+    if (!registry || !publicClient || state === 'busy') return null
+    setState('busy')
+    setError(null)
+    try {
+      // A stable slug from the composition: re-publishing the same set EDITS in
+      // place instead of stacking duplicates.
+      const s = slugForLegs(legs)
+      const h = await writeContractAsync({
+        address: registry,
+        abi: notesRegistryAbi,
+        functionName: 'setNote',
+        args: [creator, NOTE_KINDS.bundle, encodeBundleNote({ slug: s, name: name.trim() || undefined, legs })],
+        chainId,
+      })
+      await publicClient.waitForTransactionReceipt({ hash: h })
+      void queryClient.invalidateQueries({ queryKey: ['spectrum', 'bundles', chainId] })
+      setSlug(s)
+      setState('done')
+      return s
+    } catch (e) {
+      setError(e instanceof Error ? ('shortMessage' in e && typeof e.shortMessage === 'string' ? e.shortMessage : e.message) : String(e))
+      setState('idle')
+      return null
+    }
+  }
+
+  return { registry, state, error, slug, publish }
+}
+
 /** Outer shell + inner core, so a card reads as machined hardware rather than a
  *  div on a background. Radii are concentric: inner = outer − shell padding. */
 function Bezel({ children, className = '', glow }: { children: React.ReactNode; className?: string; glow?: string }) {
@@ -156,11 +212,15 @@ function PickerRow({
 
 export function BundleForge({
   seed,
+  seeds,
   overlay = false,
   onClose,
 }: {
   /** Pre-load one leg — this is what makes "Bundle this basket" a single tap. */
   seed?: { chainId: number; address: string }
+  /** Pre-load several legs (the `?add=` intake / the chat handoff). Deduped
+   *  against `seed` and each other; same shape a manual pick produces. */
+  seeds?: { chainId: number; address: string }[]
   overlay?: boolean
   onClose?: () => void
 }) {
@@ -169,9 +229,18 @@ export function BundleForge({
   const { data: all } = useAllBaskets()
   const { data: portfolio } = usePortfolio(address)
 
-  const [legs, setLegs] = useState<BundleLeg[]>(() =>
-    seed ? [{ chainId: seed.chainId, address: seed.address, weight: 100 }] : [],
-  )
+  const [legs, setLegs] = useState<BundleLeg[]>(() => {
+    const init: BundleLeg[] = []
+    const seen = new Set<string>()
+    for (const s of [...(seed ? [seed] : []), ...(seeds ?? [])]) {
+      const k = legKey(s.chainId, s.address)
+      if (seen.has(k)) continue
+      seen.add(k)
+      init.push({ chainId: s.chainId, address: s.address, weight: 100 })
+      if (init.length >= MAX_BUNDLE_LEGS) break
+    }
+    return init
+  })
   const [name, setName] = useState('')
   const [q, setQ] = useState("")
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -402,49 +471,15 @@ export function BundleForge({
     }
   }
 
-  // PUBLISH — identical path to the old builder: one setNote on the notes
-  // registry of the VIEWING chain, subject = you. A bundle that lives only in a
-  // URL dies with the link.
-  const registry = (() => {
-    try {
-      return chainCfg(activeChainId).notesRegistry
-    } catch {
-      return null
-    }
-  })()
-  const publicClient = usePublicClient({ chainId: activeChainId })
-  const { writeContractAsync } = useWriteContract()
-  const queryClient = useQueryClient()
-  const [pubState, setPubState] = useState<'idle' | 'busy' | 'done'>('idle')
-  const [pubError, setPubError] = useState<string | null>(null)
-  const [publishedSlug, setPublishedSlug] = useState<string | null>(null)
+  // PUBLISH — the shared useBundlePublish hook above (one setNote on the notes
+  // registry of the VIEWING chain, subject = you). A bundle that lives only in
+  // a URL dies with the link.
+  const { registry, state: pubState, error: pubError, slug: publishedSlug, publish: publishBundle } = useBundlePublish(activeChainId)
   const canPublish = !!registry && !!address && shareable && pubState !== 'busy'
 
   async function publish() {
-    if (!canPublish || !publicClient) return
-    setPubState('busy')
-    setPubError(null)
-    try {
-      const slug = slugForLegs(legs)
-      const h = await writeContractAsync({
-        address: registry as Address,
-        abi: notesRegistryAbi,
-        functionName: 'setNote',
-        args: [
-          address as Address,
-          NOTE_KINDS.bundle,
-          encodeBundleNote({ slug, name: name.trim() || undefined, legs }),
-        ],
-        chainId: activeChainId,
-      })
-      await publicClient.waitForTransactionReceipt({ hash: h })
-      void queryClient.invalidateQueries({ queryKey: ['spectrum', 'bundles', activeChainId] })
-      setPublishedSlug(slug)
-      setPubState('done')
-    } catch (e) {
-      setPubError(e instanceof Error ? (('shortMessage' in e && typeof e.shortMessage === 'string' ? e.shortMessage : e.message)) : String(e))
-      setPubState('idle')
-    }
+    if (!canPublish || !address) return
+    await publishBundle(address as Address, legs, name)
   }
 
   // Escape closes the overlay mount; the page mount ignores it.
@@ -973,6 +1008,27 @@ export function BundleForgePage() {
   const chain = Number(params.get('chain'))
   const from = params.get('from')
   const seed = from && /^0x[0-9a-fA-F]{40}$/.test(from) && chain > 0 ? { chainId: chain, address: from } : undefined
+  // `?add=<chainId>:<addr>,<chainId>:<addr>…` — the multi-leg intake (the chat
+  // hands deployed baskets across with it). Junk items are ignored, chains must
+  // be ones this build supports, duplicates collapse, the leg cap holds.
+  const addParam = params.get('add')
+  const seeds = useMemo(() => {
+    if (!addParam) return undefined
+    const out: { chainId: number; address: string }[] = []
+    const seen = new Set<string>()
+    for (const part of addParam.split(',')) {
+      const m = /^(\d{1,10}):(0x[0-9a-fA-F]{40})$/.exec(part.trim())
+      if (!m) continue
+      const cid = Number(m[1])
+      if (!(SUPPORTED_CHAIN_IDS as readonly number[]).includes(cid)) continue
+      const k = legKey(cid, m[2])
+      if (seen.has(k)) continue
+      seen.add(k)
+      out.push({ chainId: cid, address: m[2] })
+      if (out.length >= MAX_BUNDLE_LEGS) break
+    }
+    return out.length > 0 ? out : undefined
+  }, [addParam])
   const [learnOpen, setLearnOpen] = useState(false)
 
   return (
@@ -1010,7 +1066,7 @@ export function BundleForgePage() {
               'radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--color-violet-bright) 22%, transparent), transparent 70%)',
           }}
         />
-        <BundleForge seed={seed} />
+        <BundleForge seed={seed} seeds={seeds} />
       </div>
 
       {/* the explainer that used to be a paragraph in the hero */}

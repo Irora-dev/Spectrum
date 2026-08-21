@@ -20,6 +20,11 @@ export const MAX_ROWS = 200
 // Opacity of the top border outline (just under solid, so it reads as a soft
 // edge rather than a hard line). See the note on colour vs opacity below.
 export const BORDER_ALPHA = 0.72
+// Paper needs MORE ink, not more glow: on the enterprise plane the border and
+// off-cells step up so the curve reads against white (void values unchanged).
+import { onPaper } from "./palette"
+export const borderAlpha = (): number => (onPaper() ? 0.95 : BORDER_ALPHA)
+export const offTier = (): number => (onPaper() ? 0.55 : OFF_TIER)
 // Opacity of a dither "off" cell relative to an "on" cell. The scatter modulates
 // between these two tiers of the *same* colour instead of leaving holes, so the
 // background never shows through as stark white on a light theme.
@@ -63,7 +68,7 @@ export function paintColumn(
   const f = Math.round(floor)
   const depth = f - t
   if (depth <= 0) {
-    octx.fillStyle = rgb(seed.fill, 1, BORDER_ALPHA * dim)
+    octx.fillStyle = rgb(seed.fill, 1, borderAlpha() * dim)
     octx.fillRect(x, t, 1, 1)
     return
   }
@@ -83,17 +88,17 @@ export function paintColumn(
     if (variant === "dotted" && !lit) continue
     // Density → alpha (see the colour-vs-opacity note above).
     const k = (0.3 + density * 0.7) * (1 + 0.22 * intensity)
-    const alpha = clamp01((lit ? k : k * OFF_TIER) * dim)
+    const alpha = clamp01((lit ? k : k * offTier()) * dim)
     octx.fillStyle = rgb(seed.fill, 1, alpha)
     octx.fillRect(x, y, 1, 1)
   }
   // Top border outline — the shape's edge now that the fill fades out here.
   // Kept just under full opacity, with a faint feather row beneath, so it reads
   // as a soft edge rather than a hard line floating over the fade.
-  octx.fillStyle = rgb(seed.fill, 1, BORDER_ALPHA * dim)
+  octx.fillStyle = rgb(seed.fill, 1, borderAlpha() * dim)
   octx.fillRect(x, t, 1, 1)
   if (depth > 1) {
-    octx.fillStyle = rgb(seed.fill, 1, BORDER_ALPHA * 0.5 * dim)
+    octx.fillStyle = rgb(seed.fill, 1, borderAlpha() * 0.5 * dim)
     octx.fillRect(x, t + 1, 1, 1)
   }
 }

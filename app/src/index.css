@@ -1156,3 +1156,613 @@ body {
     display: none;
   }
 }
+
+
+/* ── ENTERPRISE MODE, structural (data-style rides applyBrand) ──────────────
+   The register change beyond tokens: no ambient grid/vignette, no celebration
+   shimmer, panel chrome on hairlines instead of white-alpha glow. This block
+   grows with the light-mode audit; colour lives in theme/presets.ts. */
+/* the chat page's pastel backdrop shows on paper only (owner: 70%), and the
+   homepage's orbs backdrop likewise (owner 2026-08-20 late: 20% more
+   transparent than the 60% cut → 48%) */
+:root[data-style='enterprise'] {
+  --chat-bg-opacity: 0.7;
+  --home-bg-opacity: 0.48;
+}
+:root[data-style='enterprise'] body {
+  background-image: none;
+}
+:root[data-style='enterprise'] .trov-shimmer {
+  display: none;
+}
+/* ── AMBIENT BLOOMS STAND DOWN ON PAPER. Every decorative light-wash in the
+   app carries the same signature — aria-hidden + a heavy blur — and the sweep
+   above marks them all `ambient-bloom`. On black they are the atmosphere; on
+   paper they are smears that read as broken drop shadows (the owner's exact
+   report). Dark styles keep every one. */
+:root[data-style='enterprise'] .ambient-bloom {
+  display: none;
+}
+
+/* The wordmark on paper: solid ink, no refraction streak — the 50%-alpha
+   cyan/amber band that reads as light THROUGH glyphs on black reads as a
+   glow-smudge on white (the "homepage title glow"). The bright variant's
+   drop shadow (built for standing on hero art) goes with it — the art is
+   hidden here and white-on-white would be worse than plain. */
+:root[data-style='enterprise'] .spectrum-wordmark {
+  background-image: none;
+  animation: none;
+  color: var(--color-ink);
+  -webkit-text-fill-color: var(--color-ink);
+  /* HomeSpine's hero mounts a drop-shadow-[…rgba(0,0,0,0.55)] utility — the
+     dark halo the owner kept reporting. On paper the wordmark casts nothing. */
+  filter: none;
+}
+:root[data-style='enterprise'] .spectrum-wordmark--bright {
+  --wm-ink: var(--color-ink);
+  filter: none;
+}
+
+/* The homepage showcase panel's deep staging shadow — a dark-plane effect by
+   design (95% black, 140px throw). Semantic class so the light plane can trade
+   it for the gentle tapered language instead of wearing a smear. */
+.showcase-shadow {
+  box-shadow: 0 64px 140px -40px rgba(0, 0, 0, 0.95);
+}
+:root[data-style='enterprise'] .showcase-shadow {
+  box-shadow:
+    2px 10px 28px rgba(16, 18, 28, 0.09),
+    4px 20px 48px -18px rgba(16, 18, 28, 0.09);
+}
+
+/* ── THE SHADOW-SCALE REMAP (owner 2026-08-17: "drop shadow behind this
+   homepage card is way too heavy, we need a sweep of drop shadows in
+   general"). On black, big soft shadows are nearly invisible, so shadow-2xl
+   accumulated freely; on paper every one of them APPEARS. The whole Tailwind
+   scale re-lands on the tapered bottom/right language — gentle, decaying,
+   never staging. */
+:root[data-style='enterprise'] .shadow-2xl {
+  box-shadow:
+    1px 6px 18px rgba(16, 18, 28, 0.1),
+    3px 14px 36px -12px rgba(16, 18, 28, 0.1);
+}
+:root[data-style='enterprise'] .shadow-xl {
+  box-shadow:
+    1px 4px 12px rgba(16, 18, 28, 0.09),
+    2px 10px 24px -10px rgba(16, 18, 28, 0.08);
+}
+:root[data-style='enterprise'] .shadow-lg,
+:root[data-style='enterprise'] .shadow-md {
+  box-shadow:
+    1px 2px 6px rgba(16, 18, 28, 0.07),
+    2px 6px 14px -6px rgba(16, 18, 28, 0.06);
+}
+
+/* The homepage stat numbers' white bloom — a dark-plane effect by nature. */
+.hero-stat-glow {
+  text-shadow: 0 0 30px rgba(255, 255, 255, 0.1);
+}
+:root[data-style='enterprise'] .hero-stat-glow {
+  text-shadow: none;
+}
+
+/* Primary buttons on paper: SOLID INK (owner 2026-08-17: "dont like the
+   blue/purple button colour on light mode, lets change it for all buttons").
+   The spectral gradient is the dark plane's voice; the enterprise register is
+   a near-black button — text inside rides text-void, which the light plane's
+   tokens already resolve to paper, so contrast comes free. One gentle
+   bottom/right drop, no ring (an ink fill IS its own edge). */
+:root[data-style='enterprise'] .spectral-btn {
+  background: var(--color-ink);
+  box-shadow: 1px 3px 10px rgba(16, 18, 28, 0.18);
+}
+:root[data-style='enterprise'] .spectral-btn:hover {
+  filter: none;
+  background: #2b2d3c;
+}
+
+/* ── THE WHITE-ALPHA REMAP — the sweep behind "check if other buttons need the
+   same". Secondary buttons, panel hairlines and hover fills across the whole
+   site are Tailwind white-alpha utilities: paint that only exists against a
+   dark plane. On paper they vanish (borders) or do nothing (hover fills).
+   Remapped wholesale to the plane's own line/ink tokens — one block instead
+   of hundreds of call-site audits; a surface that WANTS white on light can
+   opt out with an explicit token class. */
+:root[data-style='enterprise'] .border-white\/5,
+:root[data-style='enterprise'] .border-white\/\[0\.06\],
+:root[data-style='enterprise'] .border-white\/\[0\.07\],
+:root[data-style='enterprise'] .border-white\/\[0\.08\] {
+  border-color: color-mix(in srgb, var(--color-line) 60%, transparent);
+}
+:root[data-style='enterprise'] .border-white\/8,
+:root[data-style='enterprise'] .border-white\/10 {
+  border-color: color-mix(in srgb, var(--color-line) 70%, transparent);
+}
+:root[data-style='enterprise'] .border-white\/12,
+:root[data-style='enterprise'] .border-white\/15 {
+  border-color: var(--color-line);
+}
+:root[data-style='enterprise'] .border-white\/20,
+:root[data-style='enterprise'] .border-white\/25,
+:root[data-style='enterprise'] .border-white\/30,
+:root[data-style='enterprise'] .border-white\/35,
+:root[data-style='enterprise'] .border-white\/40 {
+  border-color: var(--color-line-bright);
+}
+/* ── ONE PAPER FOR THE PORTFOLIO'S CARDS (the owner 2026-08-18: "use the
+   light mode background on this menu card as the background colour for the
+   main portfolio hero card"): the hero's `bright` cyan→violet wash is a
+   void-plane treatment — on paper it tints the hero a different colour than
+   the menu card beside it. On enterprise the wash stands down and the two
+   panel tints share the same paper. ── */
+:root[data-style='enterprise'] .shell-bright-wash {
+  display: none;
+}
+:root[data-style='enterprise'] .bg-panel\/60,
+:root[data-style='enterprise'] .bg-panel\/70 {
+  background-color: var(--color-panel);
+}
+
+/* ── THE LIGHT-SOURCE HUES FOLD INTO AUTHORITY INKS (owner 2026-08-19:
+   "removing the cyan and yellow text and button/outlines for a more suitable
+   colour" — superseding the 08-18 pigment pass, which kept the hues and only
+   deepened them). On paper the cyan role (active · info · live) is the VIOLET
+   authority ink and the amber role (caution · pending) is the BERRY pigment —
+   flagged without a milligram of yellow. Token-driven classes follow the
+   enterprise preset (presets.ts); these rules carry the NUMBERED stock
+   classes, which never ride tokens. Borders at matched alphas; hovers deepen
+   instead of brightening — the plane's own convention. ── */
+:root[data-style='enterprise'] .text-cyan,
+:root[data-style='enterprise'] .hover\:text-cyan:hover,
+:root[data-style='enterprise'] .group:hover .group-hover\:text-cyan,
+:root[data-style='enterprise'] .group\/stat:hover .group-hover\/stat\:text-cyan,
+:root[data-style='enterprise'] .group\/idot:hover .group-hover\/idot\:text-cyan,
+:root[data-style='enterprise'] .group\/creator:hover .group-hover\/creator\:text-cyan,
+:root[data-style='enterprise'] .group[open] .group-open\:text-cyan,
+:root[data-style='enterprise'] .group:focus-within .group-focus-within\:text-cyan {
+  color: #4630c9;
+}
+/* the ALPHA spellings the flat rule above can't see (the owner's "% data is
+   still cyan" report, 2026-08-19: text-cyan/70-90 on the thesis-card stats) */
+:root[data-style='enterprise'] .text-cyan\/90 {
+  color: color-mix(in srgb, #4630c9 90%, transparent);
+}
+:root[data-style='enterprise'] .text-cyan\/80 {
+  color: color-mix(in srgb, #4630c9 80%, transparent);
+}
+:root[data-style='enterprise'] .text-cyan\/70 {
+  color: color-mix(in srgb, #4630c9 70%, transparent);
+}
+:root[data-style='enterprise'] .text-amber-100,
+:root[data-style='enterprise'] .text-amber-200,
+:root[data-style='enterprise'] .text-amber-200\/70,
+:root[data-style='enterprise'] .text-amber-200\/80,
+:root[data-style='enterprise'] .text-amber-200\/90,
+:root[data-style='enterprise'] .text-amber-300,
+:root[data-style='enterprise'] .text-amber-300\/80,
+:root[data-style='enterprise'] .text-amber-300\/85,
+:root[data-style='enterprise'] .text-amber-300\/90 {
+  color: #9d2463;
+}
+:root[data-style='enterprise'] .bg-amber-300,
+:root[data-style='enterprise'] .bg-amber-400 {
+  background-color: #9d2463;
+}
+:root[data-style='enterprise'] .bg-amber-400\/10 {
+  background-color: rgba(157, 36, 99, 0.08);
+}
+:root[data-style='enterprise'] .border-amber-300\/25,
+:root[data-style='enterprise'] .border-amber-400\/25,
+:root[data-style='enterprise'] .border-amber-300\/30,
+:root[data-style='enterprise'] .border-amber-400\/30 {
+  border-color: rgba(157, 36, 99, 0.3);
+}
+:root[data-style='enterprise'] .border-amber-300\/40,
+:root[data-style='enterprise'] .border-amber-400\/40,
+:root[data-style='enterprise'] .border-amber-300\/50 {
+  border-color: rgba(157, 36, 99, 0.45);
+}
+:root[data-style='enterprise'] .border-amber-300\/70,
+:root[data-style='enterprise'] .border-amber-400\/70 {
+  border-color: rgba(157, 36, 99, 0.7);
+}
+:root[data-style='enterprise'] .border-cyan\/20,
+:root[data-style='enterprise'] .border-cyan\/25,
+:root[data-style='enterprise'] .border-cyan\/30,
+:root[data-style='enterprise'] .border-cyan\/35 {
+  border-color: rgba(70, 48, 201, 0.35);
+}
+:root[data-style='enterprise'] .border-cyan\/40,
+:root[data-style='enterprise'] .border-cyan\/45,
+:root[data-style='enterprise'] .border-cyan\/50 {
+  border-color: rgba(70, 48, 201, 0.5);
+}
+:root[data-style='enterprise'] .border-cyan\/60,
+:root[data-style='enterprise'] .border-cyan\/70,
+:root[data-style='enterprise'] .border-cyan\/80,
+:root[data-style='enterprise'] .border-cyan-900\/50 {
+  border-color: rgba(70, 48, 201, 0.65);
+}
+:root[data-style='enterprise'] .hover\:border-cyan:hover,
+:root[data-style='enterprise'] .hover\:border-cyan\/70:hover {
+  border-color: rgba(44, 30, 134, 0.8);
+}
+:root[data-style='enterprise'] .hover\:border-cyan\/40:hover,
+:root[data-style='enterprise'] .hover\:border-cyan\/50:hover,
+:root[data-style='enterprise'] .hover\:border-cyan\/60:hover {
+  border-color: rgba(44, 30, 134, 0.65);
+}
+/* the one cyan GLOW that rides a button (the version pill's active state):
+   glows are light — on paper it becomes the violet authority at pigment
+   alpha rather than a stray cyan halo under a violet control */
+:root[data-style='enterprise'] [class*='53\,224\,255'] {
+  box-shadow: 0 0 14px -6px rgba(70, 48, 201, 0.35);
+}
+
+:root[data-style='enterprise'] .border-t.border-white\/8 {
+  border-top-color: color-mix(in srgb, var(--color-line) 70%, transparent);
+}
+:root[data-style='enterprise'] .hover\:border-white\/25:hover,
+:root[data-style='enterprise'] .hover\:border-white\/30:hover,
+:root[data-style='enterprise'] .hover\:border-white\/35:hover,
+:root[data-style='enterprise'] .hover\:border-white\/40:hover,
+:root[data-style='enterprise'] .hover\:border-white\/50:hover {
+  border-color: var(--color-ink-faint);
+}
+:root[data-style='enterprise'] .bg-white\/\[0\.07\] {
+  background-color: var(--color-line);
+}
+:root[data-style='enterprise'] .bg-white\/45 {
+  background-color: var(--color-ink-faint);
+}
+/* the app's STANDARD card plate (bg-white/[0.02], the single most-used fill)
+   and its neighbours — on paper a white wash on white is no card at all; the
+   ink-wash ladder below gives every step a visible plate at the same
+   perceptual spacing the void had */
+:root[data-style='enterprise'] .bg-white\/\[0\.02\] {
+  background-color: color-mix(in srgb, var(--color-ink) 3%, transparent);
+}
+:root[data-style='enterprise'] .bg-white\/5,
+:root[data-style='enterprise'] .bg-white\/\[0\.03\],
+:root[data-style='enterprise'] .bg-white\/\[0\.04\] {
+  background-color: color-mix(in srgb, var(--color-ink) 4%, transparent);
+}
+:root[data-style='enterprise'] .bg-white\/\[0\.05\],
+:root[data-style='enterprise'] .bg-white\/\[0\.06\] {
+  background-color: color-mix(in srgb, var(--color-ink) 5%, transparent);
+}
+:root[data-style='enterprise'] .bg-white\/12,
+:root[data-style='enterprise'] .bg-white\/15 {
+  background-color: color-mix(in srgb, var(--color-ink) 9%, transparent);
+}
+:root[data-style='enterprise'] .bg-white\/8,
+:root[data-style='enterprise'] .bg-white\/10 {
+  background-color: color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+:root[data-style='enterprise'] .hover\:bg-white\/5:hover,
+:root[data-style='enterprise'] .hover\:bg-white\/\[0\.04\]:hover,
+:root[data-style='enterprise'] .hover\:bg-white\/\[0\.06\]:hover,
+:root[data-style='enterprise'] .hover\:bg-white\/8:hover {
+  background-color: color-mix(in srgb, var(--color-ink) 6%, transparent);
+}
+:root[data-style='enterprise'] .hover\:bg-white\/10:hover {
+  background-color: color-mix(in srgb, var(--color-ink) 8%, transparent);
+}
+:root[data-style='enterprise'] .divide-white\/\[0\.07\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--color-line);
+}
+
+/* The hero art was shot on black — until light-mode art exists, the light
+   plane runs without it (owner 2026-08-17: "hide all the hero bgs that had a
+   black bg and ill add light mode ones going forward"). The src match catches
+   every current and future *-hero asset without touching a mount. */
+:root[data-style='enterprise'] img[src*='-hero'] {
+  display: none;
+}
+:root[data-style='enterprise'] .search-pop {
+  border-color: var(--color-line);
+  background-color: var(--color-panel);
+  box-shadow: 0 8px 28px rgba(16, 18, 28, 0.14);
+}
+
+
+/* The example weight slider (IntroArt): its thumb was a void-core blob with a
+   60%-black throw — pure dark-plane furniture. The shadow lives here now so
+   each plane owns its own. */
+.trim-thumb {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+.trim-thumb-core {
+  background: #0c0a18;
+}
+:root[data-style='enterprise'] .trim-thumb {
+  box-shadow: 1px 3px 8px rgba(16, 18, 28, 0.28);
+}
+:root[data-style='enterprise'] .trim-thumb-core {
+  background: var(--color-panel);
+}
+
+/* Door cards on paper: the hover ring takes the card's OWN glow, lightened —
+   not the generic ink hairline (owner 2026-08-17). After the white-alpha
+   remap on purpose: same specificity, later wins. */
+:root[data-style='enterprise'] .door-card:hover {
+  border-color: color-mix(in srgb, var(--door-glow, var(--color-violet)) 45%, white);
+}
+
+/* Bento asset tiles on paper: lighter, less colour — each tile's signature
+   hue washes 45% toward white (inline background needs the important). */
+:root[data-style='enterprise'] .bento-tile-plate {
+  /* oklab, not srgb: mixing to white in srgb guts the chroma — 55% srgb read
+     as drab (owner). 58% oklab per the second pass (owner: lighter, prettier);
+     this block was regressed to 72% by a merge resolution, restored 22:5x. */
+  background: color-mix(in oklab, var(--tile-color, var(--color-panel-2)) 58%, white) !important;
+}
+/* the tile footer fade on paper: grounds on WHITE at a whisper of the hue —
+   lighter than the plate itself (owner: "more lighter than the main colour") */
+:root[data-style='enterprise'] {
+  --bento-vign-base: #fff;
+  --bento-vign-mix: 14%;
+}
+/* the stage's token rows sit on SOLID white on paper (owner: whiter/lighter) */
+:root[data-style='enterprise'] .stage-row {
+  background: #fff;
+  border-color: var(--color-line);
+  box-shadow: 0 1px 4px rgba(16, 18, 28, 0.06);
+}
+:root[data-style='enterprise'] .bento-fill-liquid {
+  filter: saturate(0.95) brightness(1.05);
+}
+/* TILE TEXT GOES INK ON PASTEL PLATES. The enterprise tile is color-mix 72%
+   toward white (above) — a pastel — while the tile's numerals and look-through
+   rows carry text-white + dark-plane text-shadows, and the weight span carries
+   an INLINE ink computed for the FULL-chroma void tile (readableInk of the
+   unmixed colour — white on most). White-on-pastel is no contrast at all; on
+   this plane every tile word is ink, and the void's text-shadows stand down.
+   Semantic colours (the live-teal chip, alerts) keep their own voice. */
+:root[data-style='enterprise'] .bento-tile-plate span:not([class*='text-teal']):not([class*='text-alert']):not([class*='text-amber']) {
+  color: var(--color-ink) !important;
+  text-shadow: none !important;
+}
+/* the void's WebGL edge-spectrum never shows through opaque paper — kill the
+   canvas on enterprise like umbra/sylvan do, and save the GPU loop with it */
+:root[data-style='enterprise'] .spectrum-webgl-bg {
+  display: none;
+}
+/* the chart skeleton's white waves ink themselves on paper (the SVG's own
+   rgba-white stroke/fade are void treatments) */
+:root[data-style='enterprise'] .chart-skel-wave {
+  stroke: color-mix(in srgb, var(--color-ink) 22%, transparent);
+}
+:root[data-style='enterprise'] #chart-skel-fade stop:first-child {
+  stop-color: color-mix(in srgb, var(--color-ink) 8%, transparent);
+}
+:root[data-style='enterprise'] #chart-skel-fade stop:last-child {
+  stop-color: transparent;
+}
+/* the launch flow's ERROR voice was stock rose — #fda4af on paper is 1.9:1,
+   an invisible error message; on this plane errors speak the alert crimson */
+:root[data-style='enterprise'] .text-rose-200\/90,
+:root[data-style='enterprise'] .text-rose-300 {
+  color: var(--color-alert);
+}
+:root[data-style='enterprise'] .border-rose-400\/30 {
+  border-color: color-mix(in srgb, var(--color-alert) 35%, transparent);
+}
+:root[data-style='enterprise'] .bg-rose-400\/10,
+:root[data-style='enterprise'] .bg-rose-400\/\[0\.06\] {
+  background-color: color-mix(in srgb, var(--color-alert) 8%, transparent);
+}
+:root[data-style='enterprise'] .bg-rose-300,
+:root[data-style='enterprise'] .bg-rose-400 {
+  background-color: var(--color-alert);
+}
+
+
+/* Top-right pills on paper — the light segmented convention: a faint ink
+   track, and the ACTIVE chip is a white card with real ink text and a whisper
+   of lift (owner 2026-08-17: the chain colours and the sun were hard to read
+   as pale tints on a pale track). Dark keeps its tinted-chip look. */
+:root[data-style='enterprise'] .net-pill {
+  background: color-mix(in srgb, var(--color-ink) 5%, transparent);
+}
+:root[data-style='enterprise'] .net-chip-active {
+  background: #ffffff;
+  color: var(--color-ink);
+  box-shadow: 0 1px 3px rgba(16, 18, 28, 0.2);
+}
+:root[data-style='enterprise'] .dm-chip-active {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(16, 18, 28, 0.2);
+}
+:root[data-style='enterprise'] .dm-chip-active.text-amber {
+  color: #92400e;
+}
+
+
+/* The basket-asset hover card: its near-opaque dark base is a var now, so the
+   light plane answers paper (the tint whisper and signature border ride on
+   top unchanged on both planes). */
+:root[data-style='enterprise'] {
+  --hover-card-base: rgba(255, 255, 255, 0.985);
+}
+
+
+/* ══ THE ENTERPRISE FINISH — Soft Structuralism (design-master pass) ══════════
+   Silver-white ground with a breath of violet at the horizon, editorial grain
+   at 2.5%, accent words in authority hues, machined focus/selection. Dark is
+   untouched by every rule below. */
+
+/* the ground: not dead white — a whisper of gradient + fixed film grain */
+:root[data-style='enterprise'] body {
+  background-color: var(--color-void);
+  background-image:
+    radial-gradient(120% 50% at 50% 0%, color-mix(in srgb, var(--color-violet) 4%, transparent), transparent 70%),
+    linear-gradient(180deg, #fbfcfe 0%, var(--color-void) 320px);
+}
+:root[data-style='enterprise'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* the sticky chrome: paper glass with a real hairline */
+:root[data-style='enterprise'] header.sticky {
+  background: color-mix(in srgb, #ffffff 86%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border-bottom-color: var(--color-line);
+}
+
+/* accent words: authority hues, not pastels — the dark plane's airy stops
+   wash out on paper (the spectral pan survives, one register deeper) */
+:root[data-style='enterprise'] .spectral-text {
+  background-image: linear-gradient(90deg, #d97706, #db2777, #7c3aed, #0891b2, #059669, #d97706);
+}
+
+/* the dark sub-panel family (bg-black/*) — "layered depth" on black, mud on
+   paper (the explore audit's thesis-blurb box and chart slab). Ink tints keep
+   the layering direction: deeper level = slightly more ink. */
+:root[data-style='enterprise'] .bg-black\/20 {
+  background-color: color-mix(in srgb, var(--color-ink) 4%, transparent);
+}
+:root[data-style='enterprise'] .bg-black\/25 {
+  background-color: color-mix(in srgb, var(--color-ink) 5%, transparent);
+}
+:root[data-style='enterprise'] .bg-black\/30 {
+  background-color: color-mix(in srgb, var(--color-ink) 6%, transparent);
+}
+:root[data-style='enterprise'] .bg-black\/40,
+:root[data-style='enterprise'] .bg-black\/45 {
+  background-color: color-mix(in srgb, var(--color-ink) 8%, transparent);
+}
+/* the FOCUS steps of those field fills — unmapped, a focused input flashed
+   genuinely dark on paper (the void's deepen convention read as a glitch
+   here); on the plane focus deepens the wash one step, like every hover */
+:root[data-style='enterprise'] .focus\:bg-black\/50:focus,
+:root[data-style='enterprise'] .focus\:bg-black\/55:focus,
+:root[data-style='enterprise'] .focus-within\:bg-black\/50:focus-within,
+:root[data-style='enterprise'] .focus-within\:bg-black\/55:focus-within {
+  background-color: color-mix(in srgb, var(--color-ink) 11%, transparent);
+}
+/* SCRIMS stay a real veil — bg-black/60 is the modal/sheet backdrop role
+   (the mobile menu, the asset-search scrim, the Learn underlay) and a paper
+   plane still darkens behind a modal; a faint ink wash here dissolved the
+   layering. Ink at true alpha, not a hue. */
+:root[data-style='enterprise'] .bg-black\/60 {
+  background-color: rgba(16, 18, 28, 0.42);
+}
+
+/* machined interaction details */
+:root[data-style='enterprise'] ::selection {
+  background: color-mix(in srgb, var(--color-violet) 20%, transparent);
+  color: var(--color-ink);
+}
+:root[data-style='enterprise'] :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-violet) 60%, white);
+  outline-offset: 2px;
+}
+
+
+/* ── THE PRESSED-CHIP CONVENTION ON PAPER (owner 2026-08-17, three reports in
+   one hour: network filter, trending rail, asset picker — "no cyan bg/outline
+   on light… default to the dark grey"). ONE semantic hook unifies every
+   toggle: any aria-pressed control drops its accent tint for the segmented
+   white-card treatment the top-right cluster already wears. */
+:root[data-style='enterprise'] button[aria-pressed='true'] {
+  background: #ffffff;
+  color: var(--color-ink);
+  border-color: var(--color-line-bright);
+  box-shadow: 0 1px 3px rgba(16, 18, 28, 0.18);
+}
+/* (the pre-violet "chosen rings go ink" overrides stood here — deleted
+   2026-08-19: they sat later in the cascade and silently grayed the new
+   authority rings. Token-driven cyan classes ride the enterprise preset.) */
+
+/* the Explore showcase plates: a white card, never the gray wash (the band
+   behind them keeps the wash — the PLATE is the object) */
+:root[data-style='enterprise'] .showcase-plate {
+  background: #ffffff;
+  border-color: var(--color-line);
+}
+
+/* the thesis/bundle card halo: violet bloom on dark, tapered ink on paper */
+.thesis-glow {
+  box-shadow: 0 0 28px -10px rgba(164, 139, 255, 0.45);
+}
+.thesis-glow:hover {
+  border-color: color-mix(in srgb, var(--color-violet-bright) 70%, transparent);
+}
+:root[data-style='enterprise'] .thesis-glow {
+  box-shadow:
+    1px 4px 12px rgba(16, 18, 28, 0.08),
+    2px 10px 26px -10px rgba(16, 18, 28, 0.08);
+}
+:root[data-style='enterprise'] .thesis-glow:hover {
+  border-color: var(--color-line-bright);
+}
+
+/* ── THE CHAT BACKDROP LAYER (owner 2026-08-19) ──────────────────────────────
+   A body::before paint, NOT an in-tree fixed <img>: the route-transition
+   wrapper animates a transform, and any transformed ancestor re-scopes
+   position:fixed to itself (the backdrop kept stopping at the column edges on
+   refresh). body::before has no ancestors to trap it. The chat page sets
+   --chat-bg-url + flips --chat-bg-live to the plane's cap (--chat-bg-opacity:
+   0 on the dark styles, 0.7 on paper); the 2s transition is the fade-in. */
+body::after {
+  /* ::after, not ::before: the light plane's paper grain owns body::before
+     (z-60), and a second ::before rule would fight it on the one plane the
+     backdrop shows on */
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--chat-bg-url, none) center / cover no-repeat;
+  opacity: var(--chat-bg-live, 0);
+  transition: opacity 2s ease-out;
+}
+
+
+
+/* ── THE DESIGN-MODE WAVE (View Transition API) ──────────────────────────────
+   The toggle reveals the new design through an expanding circle from the
+   press (Nav's DesignModeToggle animates ::view-transition-new(root) with a
+   clip-path). The default cross-fade must stand down or it fights the wave;
+   old sits under, new clips over it. Firefox never creates these pseudos and
+   keeps the instant switch. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* ── CHAT MOTION + SCROLLBAR (shared: the /chat page AND the site-wide
+   Specter widget — owner 2026-08-20; lived inline on the page before) ── */
+@keyframes chat-float { 0%, 100% { transform: translateY(0) rotate(-1.5deg) } 50% { transform: translateY(-10px) rotate(1.5deg) } }
+@keyframes chat-twinkle { 0%, 100% { opacity: 0.15; transform: scale(0.8) } 50% { opacity: 0.7; transform: scale(1.1) } }
+@keyframes chat-msg-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes chat-dot-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-teal) 45%, transparent) } 50% { box-shadow: 0 0 0 4px transparent } }
+.chat-float { animation: chat-float 6s ease-in-out infinite }
+.chat-tw { animation: chat-twinkle var(--dur, 3s) ease-in-out infinite; animation-delay: var(--del, 0s) }
+.chat-msg { animation: chat-msg-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both }
+@keyframes chat-think-pulse { 0%, 100% { opacity: 0.3; transform: translateY(0) } 50% { opacity: 1; transform: translateY(-2px) } }
+.chat-think { animation: chat-think-pulse 1.1s ease-in-out infinite }
+.chat-dot { animation: chat-dot-pulse 2.4s ease-in-out infinite }
+.chat-scroll::-webkit-scrollbar { width: 5px }
+.chat-scroll::-webkit-scrollbar-track { background: transparent }
+.chat-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--color-ink) 16%, transparent); border-radius: 999px }
+.chat-scroll::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--color-ink) 28%, transparent) }
+@keyframes widget-pop { from { opacity: 0; transform: translateY(10px) scale(0.94) } to { opacity: 1; transform: translateY(0) scale(1) } }
+.widget-pop { transform-origin: bottom right; animation: widget-pop 220ms cubic-bezier(0.22, 1, 0.36, 1) both }
+@media (prefers-reduced-motion: reduce) { .chat-float, .chat-tw, .chat-msg, .chat-dot, .widget-pop { animation: none } }
+

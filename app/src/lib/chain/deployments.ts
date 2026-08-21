@@ -262,9 +262,17 @@ export function deploymentFor(chainId: number): ChainDeployment {
   // mis-scale a floor.
   const dec = Number(entry.usdcDecimals)
   out.settlementDecimals = Number.isInteger(dec) && dec >= 2 && dec <= 36 ? dec : 6
-  // Strict === 2: anything else (absent, 1, "2", junk) is generation 1 — the
-  // default must always be the bytes that are actually deployed today.
-  out.feeGeneration = entry.feeGeneration === 2 ? 2 : 1
+  // Strict === 1: anything else (absent, "1", junk, a FUTURE 3) is treated as
+  // the 100%-burn generation. ⚠ THE DIRECTION FLIPPED 2026-08-19 — the old
+  // unknown→1 default was the DANGEROUS direction, measured live: gen-1
+  // arithmetic against a 100%-burn contract sizes the burn route at 7/8 and
+  // diverts an eighth of every fee BY CONSTRUCTION (the 2026-08-18 incident's
+  // second defect). Unknown→2 fail-closes instead: an over-sized route on a
+  // true gen-1 chain trips the contract's own burn floor and the whole share
+  // diverts LOUDLY (disclosed, recoverable at the sink) rather than leaking
+  // silently. Every seated chain declares its generation explicitly (all 2
+  // today), so this default only ever meets junk or the future.
+  out.feeGeneration = entry.feeGeneration === 1 ? 1 : 2
   return out
 }
 

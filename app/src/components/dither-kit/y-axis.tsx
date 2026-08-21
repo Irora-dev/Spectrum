@@ -22,7 +22,7 @@ export function YAxis({
   // ticks are byte-identical to before.
   const h = ctx.plot.height
   return (
-    <g className="fill-current font-mono text-[10px] text-muted-foreground">
+    <g className="fill-current font-mono text-[10px] text-ink-faint">
       {ctx.y.ticks(tickCount).map((t) => {
         const y = ctx.y(t)
         const baseline = y > h - 8 ? 'auto' : y < 8 ? 'hanging' : 'central'

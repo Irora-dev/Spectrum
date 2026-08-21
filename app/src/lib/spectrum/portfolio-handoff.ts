@@ -37,3 +37,12 @@ export function seedPortfolioDraftFrom(
 export function readPortfolioDraft(address: string | null | undefined): AllocationDraft | null {
   return address ? loadDraft(address) : null
 }
+
+// ── The holdings reads (added with the graduation bridge, 2026-08-19): the
+// basket side prefills pay tokens and shows wallet context from the
+// portfolio's own-wallet holdings model. Same deal as above — one declared
+// door, re-exported unchanged, so the basket product never depends on the
+// holdings model's internal layout. ──────────────────────────────────────────
+export { deriveFoundBook } from './found-book'
+export { useRawHoldings } from './use-raw-holdings'
+export type { RawHolding } from './raw-holdings'

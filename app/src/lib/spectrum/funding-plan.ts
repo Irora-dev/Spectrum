@@ -88,12 +88,10 @@ export interface ChainInventory {
   inboundRefuel?: boolean
 }
 
-/** What one chain must pay for: its buys plus its share of the fee (F9). */
-export interface ChainNeed {
-  chainId: number
-  buysCents: number
-  feeCents: number
-}
+// ChainNeed lives in plan-shared-types.ts (the seam both planners share);
+// re-exported so this module's callers are unchanged.
+export { FundingPlanContractError, type ChainNeed } from './plan-shared-types'
+import { FundingPlanContractError, type ChainNeed } from './plan-shared-types'
 
 /** One asset this plan physically sells into its chain's settlement (the owner's
  *  live order 2026-08-14: real sells). The plan's spendable credit for these
@@ -207,13 +205,9 @@ export interface FundingPlan {
   txCountByChain: { chainId: number; txs: number }[]
 }
 
-/** OUR code is wrong, not the user's money — see the two-kinds-of-failure note. */
-export class FundingPlanContractError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'FundingPlanContractError'
-  }
-}
+// FundingPlanContractError moved to plan-shared-types.ts with ChainNeed (one
+// error class for unreadable money inputs, both planners throw it) — the
+// two-kinds-of-failure note above still governs WHEN it throws.
 
 /** A SHORTFALL rounds UP, always and deliberately: "add $402" when the gap is
  *  $402.50 leaves the user fifty cents short and the plan still refusing. The

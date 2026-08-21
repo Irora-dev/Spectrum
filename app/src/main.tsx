@@ -6,6 +6,7 @@ import brand from './brand.config'
 import { applyBrand } from './theme/theme'
 import { validateSiteName } from './theme/brand'
 import { loadDraft } from './theme/setup-draft'
+import { initViewerDesignMode } from './theme/design-mode'
 
 // Apply the operator's brand (colours + structure + fonts) before first paint (no flash).
 // The default `spectral` brand reproduces the reference tokens exactly → unchanged.
@@ -16,6 +17,10 @@ applyBrand(brand)
 // always see the committed brand.config above.
 const setupDraft = loadDraft()
 if (setupDraft) applyBrand(setupDraft)
+
+// The viewer's own design mode (the menu toggle) re-skins whatever the visitor
+// would otherwise see — committed brand or the operator's in-progress draft.
+initViewerDesignMode(setupDraft ?? brand)
 
 // Dev-time guard: the site name must not be "Spectrum*" and must fit the wordmark.
 if (import.meta.env.DEV) {

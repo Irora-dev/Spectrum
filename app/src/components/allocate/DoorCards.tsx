@@ -155,14 +155,14 @@ export function DoorCard({
       onMouseLeave={() => setActive(false)}
       onFocus={() => setActive(true)}
       onBlur={() => setActive(false)}
-      className={`press-lg enter group relative flex w-full flex-col overflow-hidden rounded-[2rem] border border-white/12 bg-panel/70 text-left backdrop-blur-md transition-transform duration-500 hover:-translate-y-1 hover:border-white/30 disabled:cursor-wait ${
+      className={`door-card press-lg enter group relative flex w-full flex-col overflow-hidden rounded-[2rem] border border-white/12 bg-panel/70 text-left backdrop-blur-md transition-transform duration-500 hover:-translate-y-1 hover:border-white/30 disabled:cursor-wait ${
         // 240 → 192 (owner 2026-08-06 23:13: "the manage-your-portfolio
         // button and the create-basket button can be made a little bit less,
         // have a bit less height"). The compact door is title · tagline · CTA
         // and it was reserving room it did not use.
         compact ? 'min-h-[192px] p-6' : 'min-h-[384px] p-10'
       }`}
-      style={{ transitionTimingFunction: 'cubic-bezier(0.32,0.72,0,1)', '--enter-i': enterIndex } as React.CSSProperties}
+      style={{ transitionTimingFunction: 'cubic-bezier(0.32,0.72,0,1)', '--enter-i': enterIndex, '--door-glow': glow } as React.CSSProperties}
     >
       {/* the image behind, on approach only — colorless until then */}
       <span aria-hidden className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-700 group-hover:opacity-100">
